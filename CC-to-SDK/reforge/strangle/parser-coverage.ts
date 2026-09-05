@@ -6,8 +6,9 @@
 // replaying corpus scenarios against an INSTRUMENTED build and reading what the
 // recorder wrote. That answers "did the engine, driving a real recording,
 // execute this branch?" — and for the shell parser the answer is no for about
-// four fifths of it, because the corpus issues `echo`, `ls`, `chmod` and `pwd`
-// while the module is a complete bash grammar.
+// four fifths of it, because the corpus issues `echo`, `mkdir`, `chmod`, `cd`,
+// `pwd`, `sleep` and one missing binary while the module is a complete bash
+// grammar.
 //
 // Those branches are not ungraded. `strangle/parser-parity.test.ts` drives every
 // one of them against upstream's own pinned bytes and requires the two trees to

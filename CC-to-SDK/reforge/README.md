@@ -5260,6 +5260,140 @@ family deliberately, and the cost is in fact paid by every unrelated wave that
 gates after somebody's kill. One entry opened in its place — the census records
 no per-run provenance, so a residue row still cannot name the run that left it.
 
+### The H1 fix round: two reviews, and the two holes that were the lock's one job (2026-09-05)
+
+Two independent reviews read this unit after it landed. Between them they raised
+eight findings, and the two that mattered were both in `src/lock.ts` — the file
+whose entire job is that two harness processes never write `sandbox/` at once.
+Neither was a hypothetical.
+
+**The inherited exemption was cached.** A child of the holder is recognised by an
+env marker carrying the owner's pid, and that recognition was memoised —
+`settled = lockPath; owned = false`, and every later call returned early. But
+ownership and exemption are different kinds of fact. An owner cannot lose the
+lock without knowing, because only the owner deletes its own record; an exemption
+is a READING of a file any other process may replace. The shape that costs: a
+gate is SIGKILLed, one of its `m1/run.ts` children survives the signal, a new gate
+finds the dead holder's record and takes the lock over, and the orphan — still
+carrying the dead gate's marker, still holding the answer it computed before any
+of that — goes on calling `resetSandbox()` inside the new owner's run. Two
+writers, and the second one silent. Only `owned` short-circuits now; the
+exemption re-reads the lock on every call and is worth exactly that call, and a
+marker whose record has changed hands falls through to a refusal BY NAME.
+
+**The publish was not atomic, and an unreadable record was read as a corpse.**
+`openSync(lockPath, "wx")` created the file EMPTY and the record arrived a
+syscall later, so between the two there was a lock that named nobody — and a
+racing acquirer that looked in that window read no record, called it stale,
+deleted the winner's live lock and took it. `wx` gave create-or-fail; what it
+could not give was create-with-contents. The record is now written to
+`<lock>.<pid>.tmp` and HARD LINKED into place, so the file's existence and its
+contents are one event: at every instant the lock either does not exist or names
+somebody. The reading half is the same bug from the other side — "no record"
+licenses deletion, and an unreadable record is overwhelmingly somebody's publish
+caught in flight. It is now re-read across a grace window (3 × 50 ms) before it
+counts as a corpse, while a file that VANISHED between reads returns at once,
+because nothing holds it.
+
+**Both were shown to bite.** `src/lock.test.ts` goes from 11 checks to **22**, in
+16 s, of which 14 s is a new twenty-round race. The controls: a child spawned
+with a live holder's marker is exempt on its first call and REFUSED on the next
+one after the record is replaced by another live pid, naming the pid that holds
+it now; an empty lock file is not taken over inside the grace window and is taken
+over after it; and twenty rounds of two acquirers parked on a barrier file and
+released together, counting rounds with two winners, rounds with exactly one, and
+winners that found the lock gone out from under them — **0 / 20 / 0**. Mutated:
+restoring the two cached lines fails the two exemption checks (the orphan prints
+`ACQUIRED-AGAIN` and exits 0); replacing the patient read with the bare one takes
+the empty file over after **1 ms**; restoring the old publish with its window
+widened to 100 ms gives **20 of 20 rounds with two winners** and 20 winners who
+lost the lock they were holding. All restored.
+
+The SIGTERM control was the third lock finding and the smallest: "the lock is
+gone" was equally true of a handler that SWALLOWED the signal, because the
+`--hold` child self-exits at 30 s and the exit hook releases on that path too. It
+now asserts how the child died and how long after the kill, and the ending had to
+be measured rather than assumed — the holder is reached through `npx`, so the
+re-raise happens in the innermost node process and the wrapper reports it as
+`code 143` rather than dying of the signal itself. Re-raised: `code 143` at
+~30 ms. Swallowed: `code 0` at 28.5 s.
+
+**The archive was keeping the output and dropping the ending.** `teelog.ts`
+wrapped `console.log`/`error`/`warn`, which archives what a run chooses to print
+and nothing it dies of — and the output that matters most here is the second
+kind, because `acquireSandboxLock` refuses by THROWING one line into
+`strangle/gate.ts`. The tee moves below `console`, onto `process.stdout.write`
+and `process.stderr.write`. That alone is not enough, and the difference was
+probed rather than reasoned: Node prints an uncaught exception from below the
+JavaScript stream objects, and a patched `process.stderr.write` never sees it. So
+the archive also handles `uncaughtException`, prints through the patched stream
+and exits 1. The marker is `THE RUN DIED OF AN UNCAUGHT ERROR (<origin>)` rather
+than the origin itself, because every phase is an ES module and a top-level throw
+arrives as `unhandledRejection` even when nothing about it is asynchronous. The
+header was the second half: `console.log(f())` resolves its callee before
+evaluating its argument, so ``console.log(`gate log: ${teeToBuildLog("gate")}`)``
+could not be relied on to capture the very call that installed the tee — and the
+archive's first line was the determinism banner rather than its own header. The
+gate and the attestation now bind the path, then print it. New phase
+`strangle/teelog.test.ts` (**12 checks**), which ends a real child on purpose and
+reads what it left behind; mutated back to the console tee, 5 checks fail, and
+with the old inline call site too, 7 fail and the first archived line comes back
+as the progress line — the reported symptom, reproduced.
+
+**Three findings in the re-seal itself.** The mechanism graded three signals that
+are all SETS, and a set has no order — so a declaration under which the engine
+asked for exactly the recorded requests in a DIFFERENT sequence was clean on all
+three and re-sealed as "the stream did not change". Measured on a cassette copy
+(`m1-file-tools`, 4 replayable entries): recorded order served `0, 1, 2, 3`; the
+last two requests swapped served `0, 1, 3, 2` with **unmatched 0, fallbacks 0,
+unserved 0**. An entry's `seq` is its position in the recording, so the sixth
+condition is that the non-repeat served seqs RISE, and the refusal names the
+request, the entry that answered it and the whole served order. `ProxyHandle`
+gains `servedOrder()` for it. A scenario whose engine genuinely issues concurrent
+requests would refuse here; that is the conservative direction, since a refusal
+costs a live re-record and the alternative is sealing against a stream nobody
+compared.
+
+The second was a diagnosis printed by nothing. `firstCanonicalDifference`
+returning -1 on a positionally-served request was read as "the bodies are
+identical, so the matching entry was already consumed — the engine repeated a
+request". Sound, and unreachable: both of the proxy's lookups skip consumed
+entries and the positional one additionally requires equal method and path, while
+the match hash covers method, path AND the canonical body — so an entry reached
+positionally with an identical canonical body would have satisfied the exact
+lookup first. Probed rather than argued, because the engine behaviour it
+described is real and deserved an answer about where it actually surfaces: on the
+same cassette copy, a request repeated after every entry was consumed comes back
+UNMATCHED (500), which the re-seal reports first and by name; repeated while
+siblings were still unconsumed it does reach the fallback — served entry seq 2,
+**byte 740**. A byte, not -1. The branch and its README paragraph are gone.
+
+The third is about the sidecar having TWO authors. `resealScenario` rebuilt it
+from the fields it names, so anything `src/record.ts` had written was silently
+deleted — and C13c added `detached` on the record side while this round was in
+flight, which without the matching line would have come back as a DECLARATION
+DRIFT the first time anybody re-sealed, sending an operator to re-record a
+scenario whose declaration never moved. The predecessor's fields are now carried
+verbatim, minus the four this function owns, which are re-derived authoritatively
+including when the right answer is that they are absent. `src/reseal.test.ts` goes
+from 15 checks to **25**, in 6 s: control 0 is the order (no engine, because the
+claim is about the matcher), and control 1 plants a field no code in the file has
+heard of and asserts it survives two successive re-seals.
+
+**And a vacuous green.** `--reseal --scenario <typo>` selected nothing, refused
+nothing and printed `RESEAL OK` with exit 0 — the same vacuity `[].every(...)`
+gave the grading path, and worse here, because RESEAL OK is what an operator reads
+as "the sidecars are proven". The unknown-tag check moves to where `only` is
+bound, above every mode. `--reseal --scenario store-seded-resume` now prints
+`ABORT: unknown scenario` with the 63 known tags and exits 2; mutated back to its
+old position, the same command prints RESEAL OK over 0 scenarios.
+
+`strangle/teelog.test.ts` is one new gate phase, so the block grows by one from
+whatever the sibling waves leave it at. No full gate was run for this round by
+design — the checkout had two sibling waves live in it, one holding the sandbox
+lock for live re-records — so every number above is from the unit suites and the
+probes named beside it, and `npx tsc --noEmit` is clean after each.
+
 ## W10a — the shell parser: 63 KB of bash grammar, and a corpus that cannot see it (2026-09-05)
 
 C13a, the first of the six W10 children, and the campaign's third whole-chunk ownership. The two
@@ -5276,8 +5410,10 @@ sixteen Bash-bearing scenarios stays green.
 ### What was owned, and why it is a chunk rather than seven splices
 
 62,907 bytes of file, 62,292 of code, **105 declarations** at **99.82 %** density — not the 107 the
-scout carried. The chunk has 100 top-level statements plus one import and one export clause, and 105
-declarations inside them (93 functions, 12 declarators); the scout counted statements. Seven exports,
+scout carried. The chunk has 100 top-level statements INCLUDING the one import and the one export
+clause — the fixture's `counts` block is `{statements: 100, imports: 1, exports: 1}`, so the 98 that
+remain are 93 function declarations and 5 variable statements, and the 105 declarations (93
+functions, 12 declarators) live inside those 98; the scout counted statements. Seven exports,
 one import, zero `process.`, zero `require`, zero filesystem. The one effect in the whole chunk is a
 telemetry call on the abort path, and it stays a port.
 
@@ -5346,7 +5482,7 @@ single-quoted run with a backslash in a pattern position. It is the one place th
 decomposition would have shipped a defect, and it is worth naming because what caught it was not a
 differential test but **reading the two texts against each other**.
 
-### What grades it: seventeen partitions, 2,170 strings, node for node
+### What grades it: seventeen partitions, 2,191 strings, node for node
 
 `strangle/parser-parity.test.ts` evaluates the PINNED CHUNK'S OWN BYTES — the 62,907-byte upstream
 module with its one import stubbed and its export clause removed — and compares the two parse trees
@@ -5401,7 +5537,7 @@ exports feed cannot distinguish a correct answer from a fallback on any of it:
   and the real text with `envVars` emptied, so its green is a fact about the assignment list rather
   than about the parser.
 - **`parseAborted`** is only ever compared against, and only where a parse gave up. The corpus's
-  longest Bash command is 31 characters.
+  longest Bash command is 36 characters (`reforge-no-such-command-probe --fail`).
 - **`findCommandNode`** and **`commandArgv`** feed argv extraction, and the permission rules the
   corpus records match on the command STRING: the candidates are the raw command and the
   command-without-redirections, and argv only ever adds a further candidate when a wrapper (`sudo`,
@@ -5508,7 +5644,7 @@ output. What it is consuming, stated once:
 slice, so a consumer should read `text` rather than re-slicing the command unless it needs a
 sub-range, and if it does re-slice it must convert. **89** counts the type names written as string
 literals at the module's primary node constructor; it is not the size of the emitted vocabulary. Over
-the 2,173-string parity corpus the parser emits **166 distinct type strings**, every one of the 89
+the 2,191-string parity corpus the parser emits **166 distinct type strings**, every one of the 89
 among them — the other 77 are the operator and keyword token nodes whose type IS their source text
 (`;;`, `<<-`, `>|`, `esac`, `then`, …) plus four the code chooses by expression rather than by
 literal: `comment`, `expansion`, `arithmetic_expansion`, `extglob_pattern`. **Four** node types exist

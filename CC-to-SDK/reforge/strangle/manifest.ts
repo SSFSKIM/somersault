@@ -5798,7 +5798,7 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
           "returns `null` for every input changes no transcript, no event, no request and no state entry on any of the sixteen. " +
           "One of the eleven says so about itself, in upstream's own comment: `Client-facing — lets clients render git activity without re-parsing stdout; not " +
           "surfaced to the model`. " + C13A_MEASURED +
-          "Graded instead by strangle/parser-parity.test.ts, which drives this handle over 2,170 command strings in seventeen partitions and compares every node " +
+          "Graded instead by strangle/parser-parity.test.ts, which drives this handle over every command string in every partition of strangle/parser-corpus.ts and compares every node " +
           "it builds against the pinned chunk's own.",
       },
       {
@@ -5813,8 +5813,9 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
         darkOver: ["bash-tool", "perm-auto-classifier-deny"],
         darkReason:
           "the set is consulted in EXACTLY ONE place bundle-wide, and it is a rejection guard: `if (SHELL_KEYWORDS.has(name)) return {ok:false, reason: \"Shell keyword '<name>' as command name — tree-sitter mis-parse\"}`. " +
-          "An empty set can therefore only turn a rejection into an acceptance, and no corpus command's name is a shell keyword — the sixteen Bash-bearing scenarios issue " +
-          "`echo`, `pwd`, `ls`, `cd`, `mkdir`, `chmod`, `sleep` and one deliberately missing binary, not one `if`, `for`, `while` or `case`. There is no rejection to lose. " + C13A_MEASURED +
+          "An empty set can therefore only turn a rejection into an acceptance, and no corpus command's name is a shell keyword — read off the cassettes, the sixteen Bash-bearing scenarios issue " +
+          "nineteen distinct commands whose names are `echo`, `pwd`, `cd`, `mkdir`, `chmod`, `sleep` and one deliberately missing binary, not one `if`, `for`, `while` or `case`. " +
+          "There is no rejection to lose. " + C13A_MEASURED +
           "What grades it instead is stronger than a differential would be: strangle/parser-parity.test.ts compares the owned set element by element against the pinned chunk's own declaration, " +
           "so any change at all fails, where a differential could only ever see a keyword some scenario happened to render.",
       },
@@ -5846,7 +5847,7 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
         darkOver: ["bash-tool", "perm-rule-deny"],
         darkReason: C13A_MEASURED +
           "the sentinel is only ever COMPARED against, and only on the path where a parse gave up — over the 10,000-character cap, out of node budget, past the 50 ms deadline, or on a delimiter the parser refuses to guess about. " +
-          "The corpus's longest Bash command is 31 characters and parses in microseconds, so no recorded scenario reaches an abort and a second symbol with the same description is unobservable. " +
+          "The corpus's longest Bash command is 36 characters (`reforge-no-such-command-probe --fail`) and parses in microseconds, so no recorded scenario reaches an abort and a second symbol with the same description is unobservable. " +
           "THE ADJUDICATION IS THE MEASUREMENT: a twin that mints its own `Symbol(\"parse-aborted\")` was built and driven over all sixteen, and nothing moved. " +
           "Graded instead by strangle/parser-parity.test.ts, which drives all three of upstream's abort causes — over-length, a null parse and a thrown parse — and requires that each side answer with ITS OWN sentinel by identity, " +
           "plus the telemetry each abort emits, field for field.",
@@ -5866,10 +5867,17 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
         derive: pick("shell-parser", "parseOrAbort", new RegExp(`async function (${ID})\\(${ID}\\)\\{if\\(!${ID}\\)return null;if\\(${ID}\\.length>`)),
         // THE ONE DOOR the corpus can see this module through, and the reason is
         // legible in upstream's own code: `dde` awaits this function and hands the
-        // result to `KTe`, whose first act is `if (result === PARSE_ABORTED) return
-        // {kind:"too-complex", reason:"Parser aborted (timeout, resource limit, or
-        // over-length)"}`. A twin that aborts on every command therefore rewrites the
-        // `decisionReason` every Bash permission decision carries.
+        // result to `KTe` (chunk-9e2ns8ty.js @112426), which tests it with
+        // `if (result === PARSE_ABORTED) return {kind:"too-complex", reason:"Parser
+        // aborted (timeout, resource limit, or over-length)", nodeType:"PARSE_ABORT"}`.
+        // That is the TENTH guard rather than the first — @113348, behind eight regex
+        // refusals (lone surrogate, control characters, Unicode whitespace,
+        // backslash-escaped whitespace, three zsh-only syntaxes, a brace carrying a
+        // quote) and an empty-command check, each of which returns a `too-complex`
+        // verdict of its own. So the twin's red is the sentinel's only for a command
+        // none of the nine refuse first, which every corpus command is. A twin that
+        // aborts on every command therefore rewrites the `decisionReason` every Bash
+        // permission decision carries.
         //
         // Measured: of the sixteen Bash-bearing scenarios, FIVE go red under that twin
         // — `perm-rule-deny`, `perm-accept-edits`, `perm-bypass-deny-rule`,
@@ -5897,7 +5905,7 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
           "the stripped first word differs. No corpus command is wrapped, so that candidate is never added and a twin returning `null` for every tree removes nothing the transcript carries. " +
           "Its other consumers are the sed-edit analysers, the safe-flag table lookup and the cd/git detectors, all of which answer the same way for `echo`, `chmod`, `mkdir`, `cd` and `pwd` whether " +
           "they get a command node or nothing. " +
-          "Graded instead by strangle/parser-parity.test.ts, which runs this walker over the tree of every one of 2,170 command strings and compares the node it selects — including the three " +
+          "Graded instead by strangle/parser-parity.test.ts, which runs this walker over the tree of every command string in the corpus and compares the node it selects — including the three " +
           "cases the recursion is actually about: a `variable_assignment` whose command is a later sibling, a `pipeline` descended member by member, and a `redirected_statement` whose command is " +
           "found by a direct child search rather than by descent.",
       },

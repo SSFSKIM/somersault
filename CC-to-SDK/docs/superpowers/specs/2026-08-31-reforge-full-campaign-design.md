@@ -1788,6 +1788,84 @@ Pending — written at finish.
     stages a path's current contents, so two of C13a's in-flight edits were swept into H1 commits —
     the two gate phases into `9d1c172`, `attest.ts`'s contract-evidence section into `511820f`.
     Nothing lost, both on `main`, attribution wrong. Diff a shared file before staging it.
+
+- 2026-09-05 (**H1-fix — the fix round on the re-seal + sandbox lock unit**): two independent reviews
+  read the unit after it landed and raised eight findings between them. The two that mattered were
+  both in `src/lock.ts`, the file whose entire job is that two harness processes never write
+  `sandbox/` at once, and neither was hypothetical.
+  - **The inherited exemption was CACHED.** A child of the holder is recognised by the env marker, and
+    that recognition was memoised (`settled = lockPath; owned = false`, then an early return
+    thereafter). Ownership and exemption are different kinds of fact: an owner cannot lose the lock
+    without knowing, because only the owner deletes its own record, while an exemption is a READING of
+    a file any other process may replace. The shape that costs: a gate is SIGKILLed, one of its
+    `m1/run.ts` children survives the signal, a new gate takes the dead holder's lock over, and the
+    orphan keeps calling `resetSandbox()` inside the new owner's run on a decision it made before any
+    of that. Only `owned` short-circuits now; the exemption re-reads on every call and falls through
+    to a refusal BY NAME once the record has changed hands.
+  - **The publish was not atomic, and an unreadable record was read as a corpse.** `openSync(lockPath,
+    "wx")` created the file EMPTY with the record a syscall behind it, so a racing acquirer that
+    looked in that window read no record, called it stale, deleted the winner's live lock and took it
+    — two writers produced by the very code that refuses them. The record is now written to
+    `<lock>.<pid>.tmp` and HARD LINKED into place, so existence and contents are one event; `link`
+    fails EEXIST rather than clobbering, which is the property `wx` was chosen for. The reading half
+    is the same bug from the other side, since "no record" is what licenses deletion: an unreadable
+    record is re-read across a grace window (3 × 50 ms) before it counts as a corpse, while a file
+    that VANISHED between reads returns immediately.
+  - **Measured: `src/lock.test.ts` 11 checks → 22, in 16 s, 14 s of which is a new twenty-round race.**
+    Two acquirers park on a barrier file and are released together; rounds with two winners, rounds
+    with exactly one, and winners that found the lock gone out from under them are all counted —
+    **0 / 20 / 0**. Mutations, each restored: the two cached lines back → the two exemption checks
+    fail and the orphan prints `ACQUIRED-AGAIN` with exit 0; the patient read replaced by the bare one
+    → the empty file is taken over after **1 ms**; the old publish restored with its window widened to
+    100 ms → **20 of 20 rounds with two winners**, 20 winners who lost the lock they held.
+  - **The SIGTERM control was proven by timing alone.** "The lock is gone" was equally true of a
+    handler that SWALLOWED the signal, since the `--hold` child self-exits at 30 s and the exit hook
+    releases on that path too. It now asserts the ending and the delay, and the ending had to be
+    measured: the holder is reached through `npx`, so the re-raise happens in the innermost node
+    process and the wrapper reports `code 143` instead of dying of the signal. Re-raised: `code 143`
+    at ~30 ms. Swallowed: `code 0` at 28.5 s.
+  - **The archive kept the output and dropped the ending.** `strangle/teelog.ts` wrapped `console`,
+    which archives what a run chooses to print and nothing it dies of — and the lock refuses by
+    THROWING one line into `strangle/gate.ts`. The tee moves onto `process.stdout.write` /
+    `process.stderr.write`, and that alone was probed insufficient: Node prints an uncaught exception
+    from below the JavaScript stream objects, so a patched `stderr.write` never sees it. An
+    `uncaughtException` handler prints through the patched stream and exits 1. The marker is `THE RUN
+    DIED OF AN UNCAUGHT ERROR (<origin>)` rather than the origin, because every phase is an ES module
+    and a top-level throw arrives as `unhandledRejection`. The header was the other half:
+    `console.log(f())` resolves its callee before its argument, so the tee could not capture the call
+    that installed it and the archive's first line was the determinism banner; the gate and the
+    attestation bind the path, then print. New phase `strangle/teelog.test.ts`, **12 checks**, which
+    ends a real child on purpose. Mutated to the console tee, 5 fail; plus the old inline call site,
+    7 fail and the first archived line is the progress line — the reported symptom reproduced.
+  - **Three findings in the re-seal.** (1) THE ORDER: the three graded signals are SETS, so a
+    declaration under which the engine asked for exactly the recorded requests in a DIFFERENT sequence
+    was clean on all three. Measured on a cassette copy (`m1-file-tools`): recorded order served
+    `0, 1, 2, 3`; the last two swapped served `0, 1, 3, 2` with **unmatched 0, fallbacks 0, unserved
+    0**. `seq` is an entry's position in the recording, so the sixth condition is that non-repeat
+    served seqs RISE; `ProxyHandle` gains `servedOrder()`. A genuinely concurrent engine would refuse
+    here — the conservative direction, since a refusal costs a re-record and the alternative is
+    sealing against a stream nobody compared. (2) THE UNREACHABLE DIAGNOSIS: `firstCanonicalDifference`
+    returning -1 on a positional serve was read as "identical bodies, the entry was already consumed".
+    Both proxy lookups skip consumed entries and the positional one requires equal method and path,
+    while the hash covers method, path AND body — so the exact lookup would have matched first.
+    Probed on the same copy: a request repeated after full consumption comes back UNMATCHED (500),
+    which the re-seal reports first; repeated with siblings unconsumed it reaches the fallback at
+    **byte 740**. Branch and README paragraph deleted. (3) THE SIDECAR HAS TWO AUTHORS: the re-seal
+    rebuilt it from the fields it names, deleting whatever `src/record.ts` had written — and C13c
+    added `detached` on the record side while this round was in flight, which would have come back as
+    a DECLARATION DRIFT the first time anybody re-sealed. Predecessor fields are carried verbatim
+    minus the four this function owns, re-derived authoritatively including when absent.
+    `src/reseal.test.ts` 15 checks → **25**, in 6 s.
+  - **A vacuous green.** `--reseal --scenario <typo>` selected nothing, refused nothing and printed
+    `RESEAL OK` with exit 0 — the same shape as the `[].every(...)` vacuity, and worse, because RESEAL
+    OK reads as "the sidecars are proven". The unknown-tag check moves above every mode; the typo now
+    exits 2 naming the tag and the 63 known ones, and mutated back it prints RESEAL OK over 0
+    scenarios.
+  - **No full gate, by design.** The checkout had two sibling waves live in it, one holding the
+    sandbox lock for live re-records, so this round ran only the suites it touched plus the named
+    probes, with `npx tsc --noEmit` clean after each. `strangle/teelog.test.ts` adds one phase to the
+    block. **Generalizing: a cache is only sound over a fact the cacher can lose knowingly — anything
+    else is a reading, and a reading has to be taken again.**
   - **One debt found in passing and logged** (`CC-to-SDK/docs/tech-debt-tracker.md`, 2026-09-05): a
     corpus scenario that REFUSES TO GRADE prints `FAIL  <tag>`, and `classifyReplay` reads that as
     RED — so in the liveness loop's LIVE direction a row could be satisfied by a scenario that graded

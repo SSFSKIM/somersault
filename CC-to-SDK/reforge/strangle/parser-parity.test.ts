@@ -8,8 +8,10 @@
 // export surface", and §2.4 buys a reimplemented body against "the differential
 // surfaces its output flows into PLUS a contract test where its domain is wider
 // than the corpus". Here the gap between the two is the widest in the campaign:
-// every Bash call in the recorded corpus parses through this module, but the
-// commands the corpus issues are `ls`, `cat`, `git status` and a pipe — while the
+// every Bash call in the recorded corpus parses through this module, and the
+// commands it issues are NINETEEN distinct strings read off the cassettes, whose
+// names are `echo`, `mkdir`, `chmod`, `cd`, `pwd`, `sleep` and one deliberately
+// missing binary — one `;` list between them and nothing else compound. The
 // domain is every string a model can put in a `command` field.
 //
 // ## THE ORACLE IS UPSTREAM'S OWN BYTES

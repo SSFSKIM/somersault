@@ -889,6 +889,23 @@ edits in `strangle/attestation.ts` (`sixteen` → `seventeen`, `1,891` → `2,17
 `npx tsx strangle/attest.ts` on a quiet checkout. Better still, write the sentence without the
 numbers — the suite prints its own — so it cannot go stale a second time.
 
+**CLOSED 2026-09-05 (C13a fix round).** Taken the "better still" way: the sentence carries no partition
+count and no string count at all now, and says why — the suite prints its own on every run, and a number
+copied into a sentence that is itself copied into a report goes stale the first time the corpus is
+widened, which is exactly what happened here. It also states the thing the numbers were standing in for,
+which is that the driver and the oracle read the same inputs out of the same file. The prediction in the
+paragraph above held: the corpus was widened again in this very round (2,170 → 2,191 strings), so a fix
+that had merely updated the number would have gone stale within the same day.
+
+`attestation/coverage.md` still holds the old sentence and now owes a regeneration — the same
+`npx tsx strangle/attest.ts` on a quiet checkout, which needs the sandbox lock and is the orchestrator's
+run, not this round's. Three other prose corrections in the same round ride along with it: two exclusion
+reasons (`parseDollar`'s line count and the claim that the unset parser builds `declaration_command`) are
+also printed verbatim into that report. No coverage NUMBER moves — measured, not assumed: an instrumented
+copy of the module driven over the old and the new input sets covers the same 3,567 branch outcomes
+either way, so no branch changes channel and no exclusion goes stale. What the regeneration owes is
+prose.
+
 ## 2026-09-05 — the config-dir census records no per-run provenance, so a residue row cannot be traced to the run that left it
 
 **Source:** H1's gate-inventory fix (X5) · `reforge/src/observed.ts` (`ConfigCensus`,

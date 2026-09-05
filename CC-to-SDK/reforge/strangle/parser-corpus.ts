@@ -5,9 +5,14 @@
 // behind the same seven-export surface. Its differential surface is real — every
 // Bash call in the recorded corpus parses through it, and the safety chain and
 // the permission classifier consume its nodes — but that surface is narrow in a
-// way that matters. Read as an artifact, the corpus's Bash commands are `ls`,
-// `cat`, `echo`, `git status`, a pipe or two: simple commands with simple
-// arguments. The DOMAIN is every string a model can put in a `command` field.
+// way that matters. Read as an artifact rather than as a set of prompts, the
+// corpus's Bash commands are NINETEEN distinct strings across sixteen scenarios,
+// and their names are `echo`, `mkdir`, `chmod`, `cd`, `pwd`, `sleep` and one
+// deliberately missing binary. The longest is 36 characters. One of the nineteen
+// is compound (`sleep 1; echo LIFECYCLE_MARKER`); the other eighteen are a
+// command name and at most two literal arguments, with no quoting, no expansion,
+// no substitution, no redirection and no pipe anywhere in the population. The
+// DOMAIN is every string a model can put in a `command` field.
 //
 // So this file is the other half of §2.4's bargain, and it is organised as a
 // PARTITION of that domain rather than as a list of interesting cases. Each
@@ -1143,12 +1148,36 @@ export const PARTITIONS: Partition[] = [
   {
     name: "corpus-shapes",
     why:
-      "commands of the shape the RECORDED corpus issues, held as their own partition so the differential surface and the contract test can be compared. " +
-      "Every one of these parses through the owned module on every replay of its scenario, which makes this the partition where a red here and a red in the gate mean the same thing.",
+      "the commands the recorded corpus ACTUALLY issues, followed by the everyday shapes a session of that kind would reach for next. The first group is exact: nineteen strings read off the " +
+      "cassettes, every one of which parses through the owned module on every replay of its scenario, which makes them the cases where a red here and a red in the gate mean the same thing. " +
+      "The second group is NOT in any recording and must not be read as though it were — it is here so the partition covers the neighbourhood the corpus sits in (a pipe, a `&&`, a quoted " +
+      "expansion, a redirection) rather than only the six command names the corpus happens to hold.",
     control: "text",
     cases: [
-      "echo hello",
+      // Group 1 — the recorded corpus's own Bash commands, all nineteen of them,
+      // read off cassettes/*.jsonl. Longest is 36 characters; one is compound and
+      // the other eighteen are a command name and at most two literal arguments.
+      "cd moved",
+      "chmod 600 perm.txt",
+      "echo REFORGE_BATCH_1",
+      "echo REFORGE_BATCH_2",
+      "echo REFORGE_COMMAND_HOOK",
+      "echo REFORGE_HOOKED",
+      "echo REFORGE_P1",
+      "echo REFORGE_P2",
+      "echo REFORGE_P3",
+      "echo REFORGE_PARTIAL_ARGS",
+      "echo REFORGE_TOOL_OK",
+      "echo REFORGE_W6_ECHO",
+      "mkdir -p reforge-permission-probe",
+      "mkdir -p reforge-w6-a",
+      "mkdir -p reforge-w6-b",
       "pwd",
+      "reforge-no-such-command-probe --fail",
+      "sleep 1; echo LIFECYCLE_MARKER",
+      "sleep 3",
+      // Group 2 — the neighbourhood, not the recording.
+      "echo hello",
       "ls -la",
       "cat README.md",
       "git status --short",

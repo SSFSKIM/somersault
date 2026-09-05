@@ -27,8 +27,9 @@
 //
 // Until the shell parser, every attested module was small enough that "the
 // corpus executed it" and "a reason says why not" partitioned the inventory
-// usefully. The parser does not fit that shape: it is 3,646 branch outcomes of
-// bash grammar, and the recorded corpus issues `echo`, `ls`, `chmod` and `pwd`.
+// usefully. The parser does not fit that shape: it is 3,644 branch outcomes of
+// bash grammar, and the recorded corpus issues `echo`, `mkdir`, `chmod`, `cd`,
+// `pwd`, `sleep` and one deliberately missing binary.
 // Roughly four fifths of it is unreachable BY THE CORPUS and nonetheless graded
 // — `strangle/parser-parity.test.ts` drives every one of those branches against
 // upstream's own pinned bytes and compares the resulting trees node for node.

@@ -562,15 +562,18 @@ export const ATTESTED: AttestedModule[] = [
 
   // ---- C13a / W10a: the shell parser ---------------------------------------
   // The largest attested module in the campaign by a factor of twenty, and the
-  // first with a `contract` channel. 3,646 branch outcomes of bash grammar
+  // first with a `contract` channel. 3,644 branch outcomes of bash grammar
   // against a corpus that issues `echo REFORGE_TOOL_OK`, `chmod 600 perm.txt`,
-  // `mkdir -p`, `cd`, `pwd` and `sleep`.
+  // `mkdir -p`, `cd moved`, `pwd`, `sleep 3` and one deliberately missing binary.
   //
-  // The scenarios listed are the corpus's Bash-bearing ones, read off the
-  // recorded cassettes rather than off the scenario prompts: those are the
-  // replays in which this module runs inside a real engine at all. What they
-  // cover is the walk from a program node to an argv — which is the whole of
-  // what the corpus can exercise, and roughly a fifth of the module.
+  // The four scenarios listed are FOUR OF THE SIXTEEN that carry a Bash
+  // `tool_use` — a selection, not the set. Sixteen is what the cassettes hold
+  // (read off the recorded requests rather than off the scenario prompts) and
+  // what the sabotage measurement drove; four is what this attestation replays,
+  // because each additional scenario costs a replay and the coverage they add is
+  // not measured here. What the four cover is the walk from a program node to an
+  // argv, which is the whole of what the corpus can exercise and roughly a fifth
+  // of the module.
   //
   // The rest is covered by `strangle/parser-coverage.ts` driving
   // `strangle/parser-corpus.ts` against the same instrumented build, and it is
@@ -585,10 +588,13 @@ export const ATTESTED: AttestedModule[] = [
     contract: {
       driver: "strangle/parser-coverage.ts",
       why:
-        "`strangle/parser-parity.test.ts` is the oracle and `strangle/parser-coverage.ts` is the same corpus driven for measurement. " +
+        "`strangle/parser-parity.test.ts` is the oracle and `strangle/parser-coverage.ts` is the same corpus driven for measurement — the same inputs, " +
+        "from the same file, which is what makes a branch this driver executed a branch that suite compared. " +
         "The suite evaluates the PINNED CHUNK'S OWN BYTES — the 62,907-byte upstream parser, with its one import stubbed and its export " +
-        "clause removed — and compares the two parse trees node for node: type, byte range, text and children, to any depth, over sixteen " +
-        "partitions of the input domain and 1,891 command strings. A branch executed there was executed against upstream's own " +
+        "clause removed — and compares the two parse trees node for node: type, byte range, text and children, to any depth, over every partition " +
+        "of the input domain `strangle/parser-corpus.ts` declares. The partition and string counts are deliberately NOT quoted here: the suite " +
+        "prints its own on every run, and a number copied into this sentence goes stale the first time the corpus is widened — which is what " +
+        "happened to the numbers this sentence used to carry. A branch executed there was executed against upstream's own " +
         "implementation of itself with identity required, which is why it is reported as evidence rather than as an exclusion. " +
         "Each partition also declares the direction a wrong parser would fail it in, and the suite applies exactly that corruption to a " +
         "healthy owned tree and requires the comparator to catch it, so a partition that could not have seen a defect fails rather than passes.",
@@ -4101,12 +4107,15 @@ export const EXCLUSIONS: Exclusion[] = [
 
   ...shellParser(
     "the false arm of an `if (callee(...))` whose callee has no failing return on this path. `parseDollar` contains no " +
-    "`return null` anywhere in its 412 lines — every arm builds a node — so every `if (const node = parseDollar(p))` in the " +
-    "module has a dead else. `parseProcessSubstitution` returns null only through its own two-character-opener guard, and all " +
+    "`return null` on ANY of its arms — every one of them builds a node — so every `if (const node = parseDollar(p))` in the " +
+    "module has a dead else. (Stated as a property of the function rather than as a line count, because a count is a fact " +
+    "about the file's current layout and this is a fact about the code: `grep -n 'return null'` over the function's extent " +
+    "answers nothing, and goes on answering nothing however the file moves.) " +
+    "`parseProcessSubstitution` returns null only through its own two-character-opener guard, and all " +
     "four call sites test exactly that guard first. `parseBraceGroupWords` returns null only when the cursor is not on `{`, " +
     "and is called only inside `if (ch === \"{\")`. `parseWord` returns null only when it collected no parts, and the one call " +
     "site here is guarded on a character that always produces one. Each is upstream's own defensive shape, kept verbatim; " +
-    "what grades the LIVE arm is strangle/parser-parity.test.ts over 2,170 command strings.",
+    "what grades the LIVE arm is strangle/parser-parity.test.ts, over every command string in strangle/parser-corpus.ts.",
     "parseWord@21:F",
     "parseWord@46:F",
     "parseExpansionOperand@137:F",
@@ -4243,8 +4252,10 @@ export const EXCLUSIONS: Exclusion[] = [
 
   ...shellParser(
     "the argv extractor's three arms that its own producers make impossible. Two need a `declaration_command` whose first " +
-    "child's text is not one of the seven declaration keywords — but such a node is built only by the declaration and unset " +
-    "parsers, whose keyword is one of those seven and is always the first child. The third needs a bare `word` in " +
+    "child's text is not one of the seven declaration keywords — but exactly ONE parser in the module builds that node type, " +
+    "the declaration parser, and its keyword is one of those seven and is always the first child. (The unset parser builds " +
+    "`unset_command`, which is a different type and one `findCommandNode` never returns, since its command-type set is " +
+    "`command` and `declaration_command`.) The third needs a bare `word` in " +
     "command-name position with no child of its own, and the two places that build a `command` node give it either a " +
     "`command_name` (which always wraps its word) or nothing but assignments and redirections.",
     "commandArgv@1:F",
