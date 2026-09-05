@@ -220,9 +220,57 @@ const isRunId = (v: unknown): v is string => typeof v === "string" && v.length >
  */
 const RUN_ID_VALUE_GUARDS: Record<string, RegExp> = {};
 
+/**
+ * Run-scoped ids that appear ONLY inside free text — never as the value of any
+ * property — with the shape that finds them and the reason each is here.
+ *
+ * WHY THIS EXISTS AT ALL, and why it is a MAP rather than a scrub. The
+ * property-keyed rules above cannot reach an id the engine only ever writes
+ * into a sentence. C12a met the same problem from the other side and solved it
+ * by LIFTING: `src/state.ts` pulls the project key out of an entry path into a
+ * property so the map can bind it. That is not available here, because the
+ * string is the ENGINE's own output rather than a snapshot the harness builds.
+ *
+ * A value scrub would have been easier and is the wrong tool: it erases, and
+ * erasure loses the consistency claim. A map keeps it — the same id mentioned
+ * three times in one run binds to one placeholder, so an engine that used TWO
+ * ids where the oracle used one still diffs, and an id that appears in a
+ * DIFFERENT sentence than the oracle put it in still diffs too.
+ *
+ * Each pattern must capture the id in group 1, and must be anchored on enough
+ * surrounding text that it cannot match something that is not an id.
+ */
+const RUN_ID_TEXT_PATTERNS: readonly [re: RegExp, why: string][] = [
+  [
+    /\/tool-results\/(b[0-9a-z]{8})\.(?:txt|json)/g,
+    // C13c/W10c, from `bash-large-output`. A tool result past the persistence
+    // threshold is written to `…/<session-uuid>/tool-results/<id>.txt` and
+    // REPLACED by a `<persisted-output>` envelope quoting that path — so the
+    // path is in the tool result, in the request body that echoes it, and in
+    // `tool_use_result.persistedOutputPath`, and the id in it appears as a bare
+    // property value exactly ZERO times (measured). Everything else in the path
+    // stays graded: the session uuid is mapped by `session_id`, the project key
+    // by `slug`, and an engine that persisted to a different DIRECTORY still
+    // diffs. Only the per-result file name goes.
+    "the persisted tool-result file's own id (C13c: `<persisted-output>` paths)",
+  ],
+];
+
+/** What the text patterns admit, as data — for the fixture and for a reader. */
+export const runIdTextPatterns = (): { source: string; why: string }[] =>
+  RUN_ID_TEXT_PATTERNS.map(([re, why]) => ({ source: re.source, why }));
+
 function collectRunIds(v: unknown, into: Map<string, string>, keys: ReadonlySet<string> = RUN_ID_KEYS): void {
   if (Array.isArray(v)) {
     for (const x of v) collectRunIds(x, into, keys);
+    return;
+  }
+  if (typeof v === "string") {
+    // Ids that live only in prose (see `RUN_ID_TEXT_PATTERNS`). Collected here
+    // rather than at the property level because there is no property to key on.
+    for (const [re] of RUN_ID_TEXT_PATTERNS) {
+      for (const m of v.matchAll(re)) if (isRunId(m[1]) && !into.has(m[1])) into.set(m[1], `<id${into.size}>`);
+    }
     return;
   }
   if (v === null || typeof v !== "object") return;

@@ -15,7 +15,7 @@
 // C7/W4 added the compact_boundary's own uuid fields to the map, which is the
 // case with the sharpest failure mode: a boundary names messages the SDK never
 // emitted, so those ids exist nowhere else in the transcript.
-import { diffTranscripts, makeRunNormalizer, makeRunNormalizerOver, RUN_ID_KEYS } from "./differ.js";
+import { normalizeValue, diffTranscripts, makeRunNormalizer, makeRunNormalizerOver, RUN_ID_KEYS } from "./differ.js";
 
 let pass = 0;
 const failures: string[] = [];
@@ -343,6 +343,48 @@ check(
     [{ path: `projects/${Q.slug}/sub/${Q.session}.jsonl`, slug: Q.slug, sessionId: Q.session }],
   ),
 );
+
+// ---- C13c/W10c: an id that lives ONLY in prose --------------------------
+//
+// A tool result past the persistence threshold is written to
+// `…/<session-uuid>/tool-results/<id>.txt` and REPLACED by a
+// `<persisted-output>` envelope quoting that path. The id in it is a bare
+// property value exactly zero times, so the property-keyed rules cannot reach
+// it and `RUN_ID_TEXT_PATTERNS` collects it out of the text instead. The rule
+// is a MAP rather than a scrub, and these are the three things that buys.
+{
+  const envelope = (session: string, id: string, dir = "tool-results") => [
+    {
+      session_id: session,
+      content: `<persisted-output>\nOutput too large (39.1KB). Full output saved to: /box/config/projects/-box/${session}/${dir}/${id}.txt\n</persisted-output>`,
+      tool_use_result: { persistedOutputPath: `/box/config/projects/-box/${session}/${dir}/${id}.txt` },
+    },
+  ];
+  const S1 = "ac3f6c34-213f-4e2c-b142-a1b0940e7398";
+  const S2 = "a2660536-9727-42c0-8c2b-202c5e9daa4c";
+  check(
+    "a persisted tool-result id is mapped out of the path, so two runs agree",
+    !differs(envelope(S1, "b71n6hg0s"), envelope(S2, "bxz3phmym")),
+  );
+  // MUST-CATCH: the rule is only evidence if removing it changes an answer.
+  check(
+    "…and WITHOUT the rule they would not have (the id is in no property)",
+    JSON.stringify(normalizeValue(envelope(S1, "b71n6hg0s"))) !== JSON.stringify(normalizeValue(envelope(S2, "bxz3phmym"))),
+  );
+  // MUST-SURVIVE: everything else in the path is still graded.
+  check(
+    "…while a result persisted under a DIFFERENT directory still diffs",
+    differs(envelope(S1, "b71n6hg0s"), envelope(S2, "bxz3phmym", "elsewhere")),
+  );
+  // …and the map's one-to-one property: two ids where the oracle used one.
+  check(
+    "…and an engine that used TWO ids where the oracle used one still diffs",
+    differs(
+      [{ session_id: S1, a: `/x/${S1}/tool-results/b71n6hg0s.txt`, b: `/x/${S1}/tool-results/b71n6hg0s.txt` }],
+      [{ session_id: S2, a: `/x/${S2}/tool-results/bxz3phmym.txt`, b: `/x/${S2}/tool-results/bqqqqqqqq.txt` }],
+    ),
+  );
+}
 
 console.log(`=== differ run-id map: ${pass} check(s) ===`);
 for (const f of failures) console.log(`  FAIL — ${f}`);

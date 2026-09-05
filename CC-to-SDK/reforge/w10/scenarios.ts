@@ -200,6 +200,9 @@ const backgroundExplicit: Scenario = {
  */
 const BG_CONTROL_PLAN: ChildPlan = { bytes: 180, chunks: 12, everyMs: 1_000 };
 
+/** What the plan above commits to sleeping — the floor the harness must outwait. */
+const BG_CONTROL_RUNTIME_MS = ((BG_CONTROL_PLAN.chunks ?? 1) - 1) * (BG_CONTROL_PLAN.everyMs ?? 0);
+
 const backgroundControl: Scenario = {
   tag: "bash-background-control",
   title: "the host backgrounds a running Bash through the background_tasks control request",
@@ -248,7 +251,16 @@ const backgroundControl: Scenario = {
       if ((m as { type?: string }).type !== "result") continue;
       results++;
       if (results === 1) {
-        await sleep(4_000);
+        // PAST THE CHILD'S OWN RUNTIME, and this is a determinism requirement
+        // rather than patience. The completion notification lands when the child
+        // exits; if the second turn is sent before that, WHERE the notification
+        // falls among the turns is decided by model latency — which a replay
+        // removes. The first cassette was recorded with a 4 s wait against an
+        // 11 s child and the recording happened to interleave one way; the
+        // replay interleaved another and the engine made a request no cassette
+        // entry answered. Waiting past the child makes both lanes agree by
+        // construction.
+        await sleep(BG_CONTROL_RUNTIME_MS + 6_000);
         input.push(userMessage("Reply with exactly REFORGE_BGC_DONE."));
       } else input.end();
     }
