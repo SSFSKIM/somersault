@@ -59,16 +59,26 @@ requireRecordCredential();
 console.log(`━━━ recording ${s.tag} — ${s.title} ━━━`);
 console.log(`  declared detachments: ${s.detachedChildren === undefined ? "<none declared>" : JSON.stringify(s.detachedChildren)}`);
 
-const out = await recordCassette({
-  scenario: s,
-  declared: s.precondition ?? EMPTY_PRECONDITION,
-  cassette: cassetteFor(tag),
-  sidecar: sidecarFor(tag),
-  // The corpus's own engine under test. It decides only whether a positional
-  // fallback is fatal, and for a fresh recording there is nothing to fall back
-  // to; naming it keeps the record path identical to the graded one.
-  engineB: "engine-extracted",
-});
+let out;
+try {
+  out = await recordCassette({
+    scenario: s,
+    declared: s.precondition ?? EMPTY_PRECONDITION,
+    cassette: cassetteFor(tag),
+    sidecar: sidecarFor(tag),
+    // The corpus's own engine under test. It decides only whether a positional
+    // fallback is fatal, and for a fresh recording there is nothing to fall back
+    // to; naming it keeps the record path identical to the graded one.
+    engineB: "engine-extracted",
+  });
+} catch (e) {
+  // A REFUSED SANDBOX LOCK is the expected shape of "a sibling is running", and
+  // it arrives as a thrown Error. Printed as its message rather than as a stack
+  // trace, because the message is the thing an operator (and the retry loop
+  // above this) reads, and a stack trace buries it under six harness frames.
+  console.log(`  REFUSED: ${String((e as Error).message).split("\n")[0]}`);
+  process.exit(2);
+}
 
 if (!out.ok) {
   console.log(`  DISCARDED: ${out.reason}`);
