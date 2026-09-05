@@ -197,7 +197,20 @@ export async function resealScenario(opts: {
     return { resealed: false, reason: "the replay did not hold (quiesce, gate-cache or fallback verdict) — see the WARN/FAIL lines above" };
   }
 
+  // WHAT THIS FUNCTION DOES NOT KNOW, IT CARRIES. A re-seal rebuilds the sidecar
+  // from the fields it names, so every other field is silently deleted — and the
+  // sidecar has TWO authors. `src/record.ts` writes it at record time, and a wave
+  // that adds a field there (C13c added `detached`) would find it gone the first
+  // time anybody re-sealed, reintroducing exactly the drift the sidecar exists to
+  // detect and blaming it on the declaration. So the predecessor's own fields are
+  // spread in first, minus the four this function OWNS: those are re-derived
+  // authoritatively, including when the right answer is that they are absent —
+  // carrying a stale `detached` forward would be the same bug pointing the other
+  // way.
+  const { declared: _declared, baselineSha256: _baseline, detached: _detached, resealedFrom: _resealedFrom, ...carried } =
+    previous ?? ({} as Partial<RecordedPrecondition>);
   const written: RecordedPrecondition = {
+    ...carried,
     declared,
     baselineSha256: baselineSeedHash(engineVersion),
     // C13c/W10c — the detachment declaration is part of the world the sidecar

@@ -140,6 +140,14 @@ try {
     copyFileSync(CASSETTE, cassette);
     copyFileSync(SIDECAR, sidecar);
     const before = JSON.parse(readFileSync(sidecar, "utf8")) as { declared: ConfigPrecondition };
+    // A FIELD THIS FUNCTION DOES NOT KNOW ABOUT, standing in for the one some
+    // later wave will add. The sidecar has two authors — `src/record.ts` writes
+    // it at record time and `resealScenario` rewrites it — and a re-seal that
+    // rebuilt it only from the fields it names would delete the other author's
+    // work, which is how a new field comes back as drift the first time anybody
+    // re-seals. C13c's `detached` was that field once already.
+    const CARRIED = { note: "written by an author this function has never heard of" };
+    writeFileSync(sidecar, JSON.stringify({ ...JSON.parse(readFileSync(sidecar, "utf8")), aFieldFromALaterWave: CARRIED }, null, 2) + "\n");
     const inert: ConfigPrecondition = {
       ...declared,
       seed: [...(declared.seed ?? []), { path: `projects/${projectKeyFor(SANDBOX)}/reforge-reseal-control.txt`, content: "nothing reads this file\n" }],
@@ -158,6 +166,8 @@ try {
     // scenario declaring `[]` against a sidecar declaring nothing is a
     // difference. Both directions are asserted, because "absent stays absent"
     // is what keeps every pre-C13c sidecar from drifting.
+    check("…and the field written by the OTHER author survives verbatim",
+      JSON.stringify(after.aFieldFromALaterWave) === JSON.stringify(CARRIED), JSON.stringify(after).slice(0, 260));
     check("…and a scenario that declares NO detachments still writes none",
       !("detached" in after), JSON.stringify(after).slice(0, 200));
     {
@@ -167,6 +177,8 @@ try {
       check("…while a scenario that DOES declare one seals it beside the precondition",
         r2.resealed && JSON.stringify(sealed.detached) === JSON.stringify(["reforge-child.sh"]),
         `${r2.reason ?? ""} ${JSON.stringify(sealed.detached)}`);
+      check("…and the carried field survives a SECOND re-seal, so it is not a one-hop accident",
+        JSON.stringify(sealed.aFieldFromALaterWave) === JSON.stringify(CARRIED), JSON.stringify(sealed).slice(0, 260));
     }
     // NON-VACUITY, stated rather than implied. A re-seal that "passed" because
     // the engine never ran would have left every entry unserved and been refused
