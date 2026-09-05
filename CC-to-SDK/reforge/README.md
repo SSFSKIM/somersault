@@ -5950,14 +5950,16 @@ snapshot is taken would otherwise make the surface flaky in the one direction a 
 never be flaky. §3.4's justification: what it hides is a child that outlived the engine by less than
 the window, which is a child that is exiting rather than one that leaked.
 
-**Every control leaks a real process.** 27 checks: an orphan carrying the child's name is named as a
+**Every control leaks a real process.** 31 checks: an orphan carrying the child's name is named as a
 LEAK and as orphaned; the same orphan, DECLARED, is recorded but is not a leak — and is still
 recorded, so an engine that failed to detach the child it was supposed to detach still diffs;
 killing it makes the surface quiet again; an orphan with no tie to the run is dropped; a survivor
 with no marker but a live lineage is still attributed; and a child that exits between the two samples
 is not recorded at all. The first draft of two of those controls used `detached: true`, which leaves
 this process as the parent — so the ancestry route attributed them and the routes under test never
-ran.
+ran. Four more arrived from wiring it in: the reap kills what was attributed and leaves what was
+dropped, the next baseline is the world the run started from, and a process carrying the REPOSITORY
+ROOT in its argv is dropped rather than graded.
 
 ### One definition of what a live take has to survive
 
