@@ -36,7 +36,7 @@
 // An ancestor walk (`ps -o ppid`) would buy the same recognition at the cost of
 // spawning a process to answer a question the environment already answers, and
 // it would answer it WRONGLY for a detached holder whose child is reparented.
-import { closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { REFORGE_ROOT } from "./runTurn.js";
 
@@ -82,9 +82,41 @@ function readLock(path: string): LockRecord | null {
     const rec = JSON.parse(readFileSync(path, "utf8")) as LockRecord;
     return typeof rec?.pid === "number" ? rec : null;
   } catch {
-    // Missing, or a half-written file from a process killed between `open` and
-    // `write`. Neither names a holder, so neither can refuse anybody.
+    // Missing, or unreadable. Neither names a holder, so neither can refuse
+    // anybody — but see `readLockPatiently` for why "unreadable" must not be
+    // read as "dead" on the first look.
     return null;
+  }
+}
+
+/** A sleep in a synchronous function; `acquireSandboxLock` is one. */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** The grace window an unreadable record is given before it counts as a corpse. */
+const GRACE_TRIES = 3;
+const GRACE_MS = 50;
+
+/**
+ * The record, waited for.
+ *
+ * AN UNREADABLE RECORD IS CONTENTION, NOT STALENESS. A lock file that exists but
+ * does not parse is, overwhelmingly, somebody else's publish caught in flight,
+ * not a corpse — and the difference matters because "no record" is what licenses
+ * DELETING the file and taking the lock. Reading it once and concluding "stale"
+ * is how a loser evicts a live owner. So the file is re-read across a short
+ * window and only a record still unreadable at the end of it is treated as one
+ * nobody can be refused by. A file that has VANISHED between reads is not
+ * contention: nothing holds it, and there is nothing to wait for.
+ */
+function readLockPatiently(path: string): LockRecord | null {
+  for (let i = 0; ; i++) {
+    const rec = readLock(path);
+    if (rec !== null) return rec;
+    if (!existsSync(path)) return null;
+    if (i >= GRACE_TRIES) return null;
+    sleepSync(GRACE_MS);
   }
 }
 
@@ -136,13 +168,20 @@ export function acquireSandboxLock(purpose: string, lockPath: string = LOCK_PATH
   // holder's record was cleared between the failed create and the read — a race
   // with at most as many rounds as there are stale records.
   for (let attempt = 0; attempt < 3; attempt++) {
+    // PUBLISHED IN ONE EVENT. `openSync(lockPath, "wx")` created the file EMPTY
+    // and the record landed a syscall later, so between the two there was a lock
+    // that named NOBODY — and a racing acquirer that looked in that window read
+    // no record, called the file stale, deleted the winner's lock and took it.
+    // Two writers, produced by the very code that refuses them. Writing the
+    // record to a private temp file and HARD-LINKING it into place makes the
+    // file's existence and its contents the same event: at every instant the
+    // lock either does not exist or names somebody. `link` fails with EEXIST
+    // rather than clobbering, which is the create-or-fail `wx` was chosen for.
+    const tmp = `${lockPath}.${process.pid}.tmp`;
     try {
-      // `wx`: create-or-fail, so two acquirers racing an empty directory cannot
-      // both believe they won.
-      const fd = openSync(lockPath, "wx");
       const record: LockRecord = { pid: process.pid, argv: process.argv.slice(1).join(" ") };
-      writeFileSync(fd, JSON.stringify(record) + "\n");
-      closeSync(fd);
+      writeFileSync(tmp, JSON.stringify(record) + "\n");
+      linkSync(tmp, lockPath);
       settled = lockPath;
       owned = true;
       process.env[OWNER_ENV] = String(process.pid);
@@ -161,7 +200,7 @@ export function acquireSandboxLock(purpose: string, lockPath: string = LOCK_PATH
       return;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-      const held = readLock(lockPath);
+      const held = readLockPatiently(lockPath);
       if (held === null) {
         rmSync(lockPath, { force: true });
         continue;
@@ -178,6 +217,11 @@ export function acquireSandboxLock(purpose: string, lockPath: string = LOCK_PATH
       // silently reappeared would hide the crash that dropped it.
       console.log(`  sandbox lock: pid ${held.pid} is gone (${held.argv || "<no argv recorded>"}) — taking over for ${purpose}`);
       rmSync(lockPath, { force: true });
+    } finally {
+      // The lock is the LINK, not this file; dropping the temp name leaves the
+      // record in place under the one name anybody looks at, and leaves nothing
+      // behind on the path where the link never happened.
+      rmSync(tmp, { force: true });
     }
   }
   throw new Error(`ABORT: the sandbox lock at ${lockPath} could not be settled in three attempts (${purpose}).`);

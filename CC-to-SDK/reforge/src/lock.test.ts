@@ -14,7 +14,7 @@
 //
 //   npx tsx src/lock.test.ts
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { REFORGE_ROOT } from "./runTurn.js";
@@ -51,6 +51,29 @@ if (mode === "--hold") {
     console.log(`REFUSED ${(e as Error).message}`);
     process.exit(1);
   }
+} else if (mode === "--race") {
+  // ONE OF TWO ACQUIRERS RELEASED AT THE SAME INSTANT. Two `npx tsx` startups
+  // do not begin within microseconds of each other, so a race that just spawned
+  // twice would mostly be two acquisitions in sequence. Both racers therefore
+  // park on a barrier file and enter the lock within a couple of milliseconds of
+  // one another, which is the window the publish half is about.
+  const witness = process.argv[4];
+  const go = `${argPath}.go`;
+  console.log("READY");
+  while (!existsSync(go)) await new Promise((r) => setTimeout(r, 2));
+  try {
+    acquireSandboxLock("lock control: the race", argPath);
+  } catch {
+    process.exit(1);
+  }
+  // Written the moment the lock is believed won, and HELD — a sibling that also
+  // believed it won has to overlap with this, so two `acquired` lines in one
+  // round are two live writers rather than two turns.
+  appendFileSync(witness, `${process.pid} acquired\n`);
+  await new Promise((r) => setTimeout(r, 150));
+  const still = sandboxLockHolder(argPath);
+  appendFileSync(witness, `${process.pid} ${still?.pid === process.pid ? "kept" : `LOST-TO ${still?.pid ?? "<nobody>"}`}\n`);
+  process.exit(0);
 } else if (mode === "--acquire") {
   // The SECOND ACQUIRER. Its verdict is its exit status; its stdout/stderr is
   // what the parent reads to check the refusal names somebody findable.
@@ -190,6 +213,64 @@ if (mode === "--hold") {
     check("a lock naming a DEAD pid is taken over, not obeyed", threw === "" && held()?.pid === process.pid, threw || JSON.stringify(held()));
     releaseSandboxLock(lockPath);
     check("…and releasing gives it back", !existsSync(lockPath));
+  }
+
+  // ---- an UNREADABLE record is contention, not a corpse --------------------
+  // The half-written file is the shape the old publish path produced on its own:
+  // `open(wx)` created it empty and the record arrived a syscall later. Read
+  // once, "no record" means "nobody holds it", which is a licence to delete
+  // somebody's live lock. So it is re-read across a grace window first, and only
+  // a file still unreadable at the end of it is taken over.
+  {
+    writeFileSync(lockPath, "");
+    delete process.env[OWNER_ENV];
+    const started = Date.now();
+    acquireSandboxLock("lock control: the empty record", lockPath);
+    const waited = Date.now() - started;
+    check("an EMPTY lock file is re-read across a grace window before it is taken over", waited >= 150, `took it over after ${waited} ms`);
+    check("…and then taken over, so a genuinely truncated corpse does not wedge the tree", held()?.pid === process.pid, JSON.stringify(held()));
+    releaseSandboxLock(lockPath);
+  }
+
+  // ---- two acquirers released together, twenty times over -------------------
+  // The count is the control: a publish that is not atomic does not fail every
+  // round, it fails the rounds where one process looked while the other was
+  // between its two syscalls. Twenty rounds, and the answer wanted is that the
+  // number of rounds with two winners is zero and the number with exactly one is
+  // twenty — a loop where nobody ever won would satisfy the first alone.
+  {
+    const ROUNDS = 20;
+    const witness = join(box, "race-witness.log");
+    const go = `${lockPath}.go`;
+    let doubleWins = 0;
+    let singleWins = 0;
+    let lostAfterWinning = 0;
+    const raceStarted = Date.now();
+    for (let round = 0; round < ROUNDS; round++) {
+      rmSync(lockPath, { force: true });
+      rmSync(go, { force: true });
+      rmSync(witness, { force: true });
+      writeFileSync(witness, "");
+      const racers = [0, 1].map(() => spawn("npx", ["tsx", SELF, "--race", lockPath, witness], { cwd: REFORGE_ROOT, env: cleanEnv() }));
+      const exits = racers.map((c) => new Promise<void>((r) => c.on("exit", () => r())));
+      try {
+        await Promise.all(racers.map((c) => waitFor(c, /READY/, 60_000)));
+        writeFileSync(go, "");
+        await Promise.all(exits);
+      } finally {
+        for (const c of racers) c.kill("SIGKILL");
+      }
+      const lines = readFileSync(witness, "utf8").split("\n").filter(Boolean);
+      const won = lines.filter((l) => l.endsWith("acquired")).length;
+      if (won > 1) doubleWins++;
+      if (won === 1) singleWins++;
+      lostAfterWinning += lines.filter((l) => l.includes("LOST-TO")).length;
+    }
+    rmSync(go, { force: true });
+    check(`two acquirers released together never BOTH win (${ROUNDS} rounds)`, doubleWins === 0, `${doubleWins} round(s) had two winners`);
+    check("…and every round had a winner, so the loop measured a race rather than nothing", singleWins === ROUNDS, `${singleWins}/${ROUNDS} rounds had exactly one`);
+    check("…and no winner found the lock taken out from under it while it held", lostAfterWinning === 0, `${lostAfterWinning} winner(s) lost the lock they held`);
+    console.log(`  ${ROUNDS} race rounds in ${Math.round((Date.now() - raceStarted) / 1000)} s`);
   }
 
   rmSync(box, { recursive: true, force: true });

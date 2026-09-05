@@ -7,3 +7,5 @@ config/
 toolchain/
 .scratch/
 .sandbox.lock
+# the lock's publish half: written, hard-linked into place, unlinked (src/lock.ts)
+.sandbox.lock.*.tmp
