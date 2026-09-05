@@ -1575,6 +1575,22 @@ Pending — written at finish.
     W7 fired the ARM against an empty registry), → `subsystem/hook-dispatch` (the hook runner calls
     `B2` and `jx` directly and never touches `LG` — which IS C13d's port cut), → `subsystem/moat-tools`
     (this row composes the notification, C11c's queue and task store deliver it).
+  - **The eight recordings, and the four discarded takes that corrected something.** An account-level
+    rate limit held for three hours and four attempts, refusing with the same sentence each time; it
+    cleared at 12:56 and all eight landed inside twenty minutes. The corpus is **63 → 69 scenarios**.
+    The discard rule is what made the corrections possible — a take in which the behaviour did not
+    happen is never promoted, and the walk stops rather than retrying, so each failure was read
+    instead of spent. **W7's row is CLOSED**: the `background_tasks` effect is recorded, with
+    `Command was manually backgrounded by user with ID: <id>`, a completion notification whose
+    summary is exactly the predicted `ZCe` + `x$e` composition, and a retrieval carrying
+    `<task_type>local_bash</task_type>` and the child's declared bytes. Two of the four corrections
+    outlive this wave and are written onto the rows that inherit them: a large result is intercepted
+    by the RESULT-PERSISTENCE layer above the executor rather than by `dZe`'s ladder (C13d), and the
+    completion and stall notifications take DIFFERENT delivery paths — a frame and an attachment
+    (C13e). A third is about the harness rather than the engine: a model REFUSED
+    `exec ./reforge-child.sh --ignore-term` as a persistence mechanism, which was a correct inference
+    from what it was shown, and the fix was to state the fixture's true purpose rather than to
+    disguise the command.
   - **Gate phases added, and NOT run here.** Four build-free phases in the determinism block:
     `src/supervision.test.ts`, `w10/child.test.ts`, `w10/timers.test.ts` and
     `research/tools/extract-shell-timers.ts --check`. Per the dispatch's gate policy a sibling child
