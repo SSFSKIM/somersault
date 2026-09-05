@@ -811,6 +811,19 @@ a refusal is loud in the log — but the gate's own summary would read PASS, whi
 that matters. The vacuity is the same shape as the one the three-outcome rule was written for, one
 layer in.
 
+**And the sidecar refusal is only the narrowest of three doors into it** (widened 2026-09-05 by H1's
+fix round). The same `FAIL  <tag>` is printed for a harness reason by two other paths, so a third
+verdict word has to cover all three or it fixes a third of the problem. (1) A SIDE-A `ok` FAILURE:
+`replayOk = a.ok && b.ok` (`reforge/m1/run.ts` ~336, folded into the verdict at ~401), where side A is
+engine-real replaying the cassette IT recorded — a quiesce that never settled or a gate-cache leak on
+that side is a statement about the harness, not about engine B, and it reddens the tag identically.
+(2) A DISCARDED LIVE RE-RECORD: `recordCassette` refuses a take that failed its determinism checks,
+captured an infrastructure failure, or leaked the operator's config (`reforge/src/record.ts`, relayed
+at `reforge/m1/run.ts` ~308), and the scenario is failed by name having graded nothing at all. Both
+are the same category error as the sidecar refusal — "this run could not be measured" spelled as
+"this run measured a difference" — and both feed `classifyReplay` the word that the liveness loop
+reads as a sabotage observed.
+
 **Fix when:** the next wave that touches the verdict vocabulary. The shape is small — the runner
 prints a THIRD verdict (a refusal is neither PASS nor FAIL for the tag), `classifyReplay` maps it to
 INCONCLUSIVE, and `m2/relay.ts` learns the line so the gate still names it. It is not taken here
