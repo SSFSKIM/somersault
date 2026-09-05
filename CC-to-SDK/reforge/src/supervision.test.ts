@@ -182,6 +182,30 @@ try {
     }
   }
 
+  // ---- ATTRIBUTION: the repository root is NOT a marker ---------------------
+  //
+  // Measured, and it cost a killed process to find: `<reforge>` matches every
+  // harness process in the checkout — a sibling worker's runner, a build, a boot
+  // check — and the single-writer lock does not cover them, because it guards
+  // `resetSandbox()` and a build calls neither. A boot check running alongside
+  // the census was attributed to a scenario and reaped.
+  {
+    const baseline = processBaseline();
+    // The root rides in the argv through `env`, not in a `#` comment: `sh -c`
+    // would comment out the redirect and the `echo $!` the helper reads.
+    const pid = orphan(`/usr/bin/env REFORGE_MARKER=${REFORGE_ROOT}/build/whatever /bin/sleep 23`, "/");
+    orphans.push(pid);
+    await sleep(400);
+    const snap = await processSnapshot(baseline, { settleMs: 200, label: "repo-root-control" });
+    check("a process whose command carries the REPOSITORY ROOT but not a run's own world is dropped",
+      !snap.survivors.some((x) => x.command.includes("/bin/sleep 23")), JSON.stringify(snap.survivors).slice(0, 240));
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // already gone
+    }
+  }
+
   // ---- ATTRIBUTION: the ancestry route --------------------------------------
   {
     const baseline = processBaseline();

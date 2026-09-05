@@ -146,8 +146,26 @@ export const canonicalCommand = (command: string): string => {
   return out;
 };
 
-/** The tokens a command line can carry that make it ours. `<sandbox>` etc. after canonicalization. */
-const COMMAND_MARKERS = ["<sandbox>", "<config>", "<reforge>", "reforge-child.sh"];
+/**
+ * The tokens a command line can carry that make it THIS RUN'S, after
+ * canonicalization.
+ *
+ * `<reforge>` — the repository root — was on this list and has been removed,
+ * and the removal is a measurement rather than a tidy-up. It matches every
+ * harness process in the checkout: a sibling worker's `npx tsx`, a build, a
+ * boot check. Observed: a `timedEngine()` boot check running alongside the
+ * supervision census was attributed to the census's scenario and REAPED,
+ * because its command line begins with the repository root. The single-writer
+ * lock does not cover that case — it guards `resetSandbox()`, and a build or a
+ * boot check calls neither.
+ *
+ * What is left is specific to a RUN's world rather than to the checkout: the
+ * sandbox and config directories a scenario owns, and the scripted child's own
+ * file name. Nothing is lost for the case this surface exists to catch — a
+ * leaked engine child or shell runs with the SANDBOX as its cwd, so the cwd
+ * route attributes it whatever its command line says.
+ */
+const COMMAND_MARKERS = ["<sandbox>", "<config>", "reforge-child.sh"];
 
 /** Does `pid`'s parent chain reach `root` in this table? Bounded, so a cycle cannot hang the walk. */
 function reaches(table: Map<number, ProcessRow>, pid: number, root: number): boolean {
