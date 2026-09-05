@@ -74,6 +74,26 @@ export interface ProxyHandle {
    * what the cassette answers.
    */
   fallbacks(): FallbackServe[];
+  /**
+   * replay only: the entries served, IN REQUEST ORDER.
+   *
+   * The three signals above are all about WHICH entries were involved, and a set
+   * has no order — so a stream that asks for exactly the recorded requests in a
+   * DIFFERENT sequence is clean on all three. Matching is by canonical body hash
+   * across every unconsumed entry, which is what makes it order-blind, and that
+   * is the right matcher (a positional one would misroute a drifted request).
+   * The order is recoverable, though: an entry's `seq` is its position in the
+   * recording, so serving them in a rising sequence IS the recorded order. H1's
+   * re-seal reads this as its own signal.
+   */
+  servedOrder(): ServedEntry[];
+}
+
+/** One entry as it was served: its recorded position, and whether it can repeat. */
+export interface ServedEntry {
+  seq: number;
+  /** repeat entries answer a retry loop, so their position is the engine's choice */
+  repeat: boolean;
 }
 
 /** One positionally-served request, beside the entry the fallback gave it. */
@@ -312,6 +332,7 @@ export async function startRecordProxy(
     unmatched: () => [],
     fallbackServed: () => 0,
     fallbacks: () => [],
+    servedOrder: () => [],
   };
 }
 
@@ -332,6 +353,7 @@ export async function startReplayProxy(cassettePath: string, observedPath?: stri
   if (observedPath) rmSync(observedPath, { force: true });
   const consumed = new Set<number>();
   const served = new Set<number>();
+  const servedOrder: ServedEntry[] = [];
   const unmatched: { method: string; path: string; requestBody: string }[] = [];
   const fallbacks: FallbackServe[] = [];
 
@@ -360,6 +382,9 @@ export async function startReplayProxy(cassettePath: string, observedPath?: stri
     // every repeat entry as "never served" on every run, which is a warning that
     // is always wrong and therefore always ignored.
     served.add(entry.seq);
+    // …and the ORDER, appended per request rather than per entry: a repeat entry
+    // is served more than once and each serve is a position in the stream.
+    servedOrder.push({ seq: entry.seq, repeat: entry.repeat === true });
     if (!entry.repeat) consumed.add(entry.seq);
     res.writeHead(entry.status, { "content-type": entry.contentType });
     if (entry.contentType.includes("text/event-stream")) {
@@ -380,5 +405,6 @@ export async function startReplayProxy(cassettePath: string, observedPath?: stri
     unmatched: () => unmatched,
     fallbackServed: () => fallbacks.length,
     fallbacks: () => fallbacks,
+    servedOrder: () => servedOrder,
   };
 }

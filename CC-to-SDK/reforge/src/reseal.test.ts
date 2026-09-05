@@ -32,7 +32,8 @@ import { join } from "node:path";
 import { declarationSha256, projectKeyFor, type ConfigPrecondition, type Scenario } from "./harness.js";
 import { baselineSeedHash } from "./precondition.js";
 import { ENGINE_VERSION } from "./pin.js";
-import { resealScenario, type ResealResult } from "./reseal.js";
+import { firstOutOfOrder, resealScenario, type ResealResult } from "./reseal.js";
+import { startReplayProxy, type CassetteEntry } from "./proxy.js";
 import { REFORGE_ROOT, SANDBOX } from "./runTurn.js";
 import { W9_SCENARIOS } from "../w9/scenarios.js";
 
@@ -72,6 +73,65 @@ async function quietly(label: string, fn: () => Promise<ResealResult>): Promise<
 const box = mkdtempSync(join(tmpdir(), "reforge-reseal-"));
 try {
   const started = Date.now();
+
+  // ---- 0. the ORDER, which the other three signals cannot carry ------------
+  // No engine, and none needed: the claim is about the MATCHER, so it is watched
+  // where the matcher lives. A cassette copy is replayed twice — once in the
+  // recorded order, once with two requests swapped — and the whole point is that
+  // the swapped run is CLEAN on unmatched, on fallbacks and on unserved. Those
+  // three are sets, and a set has no order; only `servedOrder` tells the two runs
+  // apart, which is why re-sealing on the other three alone would have sealed a
+  // sidecar against a stream nobody compared.
+  //
+  // `m1-file-tools` rather than this suite's own scenario, because
+  // `store-seeded-resume` makes a single POST and a single request cannot be out
+  // of order with itself.
+  {
+    const cassette = join(box, "order.jsonl");
+    copyFileSync(join(REFORGE_ROOT, "cassettes", "m1-file-tools.jsonl"), cassette);
+    const entries = readFileSync(cassette, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as CassetteEntry);
+    const replayable = entries.filter((e) => e.repeat !== true);
+    check("the ordering control has enough requests to reorder", replayable.length >= 3, `${replayable.length} replayable entr(ies)`);
+
+    const replay = async (order: CassetteEntry[]): Promise<{ seqs: number[]; clean: boolean; detail: string }> => {
+      const proxy = await startReplayProxy(cassette);
+      try {
+        for (const e of order) {
+          const r = await fetch(`http://127.0.0.1:${proxy.port}${e.path}`, {
+            method: e.method,
+            // HEAD and GET may not carry one, and the recorded body is empty anyway.
+            body: e.requestBody.length > 0 ? e.requestBody : undefined,
+          });
+          await r.text();
+        }
+        const unmatched = proxy.unmatched().length;
+        const fallbacks = proxy.fallbacks().length;
+        const unserved = proxy.unserved().filter((e) => e.repeat !== true).length;
+        return {
+          seqs: proxy.servedOrder().filter((e) => !e.repeat).map((e) => e.seq),
+          clean: unmatched === 0 && fallbacks === 0 && unserved === 0,
+          detail: `unmatched ${unmatched}, fallbacks ${fallbacks}, unserved ${unserved}`,
+        };
+      } finally {
+        await proxy.close();
+      }
+    };
+
+    const straight = await replay(replayable);
+    check("the recorded stream replays clean on all three set-shaped signals", straight.clean, straight.detail);
+    check("…and its served entries rise, which IS the recorded order", firstOutOfOrder(straight.seqs.map((seq) => ({ seq, repeat: false }))) === -1, straight.seqs.join(", "));
+
+    // The same requests, two of them swapped: an identical SET, a different
+    // stream.
+    const swapped = [...replayable];
+    [swapped[swapped.length - 2], swapped[swapped.length - 1]] = [swapped[swapped.length - 1], swapped[swapped.length - 2]];
+    const reordered = await replay(swapped);
+    check("a REORDERED stream is still clean on all three — which is the hole", reordered.clean, reordered.detail);
+    check("…and it is the ORDER that catches it", firstOutOfOrder(reordered.seqs.map((seq) => ({ seq, repeat: false }))) > 0, reordered.seqs.join(", "));
+    check("…at the swap, named by position", firstOutOfOrder(reordered.seqs.map((seq) => ({ seq, repeat: false }))) === replayable.length - 1,
+      `${firstOutOfOrder(reordered.seqs.map((seq) => ({ seq, repeat: false })))} of ${replayable.length}: ${reordered.seqs.join(", ")}`);
+    console.log(`  control 0 — recorded order served ${straight.seqs.join(", ")}; swapped served ${reordered.seqs.join(", ")} (${reordered.detail})`);
+  }
 
   // ---- 1. a declaration that cannot reach the model RE-SEALS ---------------
   {

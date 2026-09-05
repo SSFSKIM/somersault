@@ -22,10 +22,12 @@
 //   - `fallbackServed()` — an entry answered only POSITIONALLY, i.e. the request
 //                       was at the right place in the stream but its canonical
 //                       body differed;
-//   - `unserved()`    — an entry the engine never asked for.
+//   - `unserved()`    — an entry the engine never asked for;
+//   - `servedOrder()` — WHICH entry answered each request, in request order,
+//                       because the three above are sets and a set has no order.
 // A replay of the NEW declaration on the engine that RECORDED the cassette,
-// clean on all three, is a measurement that the request stream is byte-identical
-// to the recorded one. That is strictly stronger than the reasoning a human
+// clean on all four, is a measurement that the request stream is byte-identical
+// to the recorded one, in the recorded sequence. That is strictly stronger than the reasoning a human
 // would otherwise do in the commit message ("this seed can't reach the model"),
 // and it is the same shape as the rest of this harness: the negative is only
 // evidence because the healthy case would differ, and the controls in
@@ -40,7 +42,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { canonicalizeForHash } from "./canonical.js";
 import { ENGINE_VERSION } from "./pin.js";
 import { baselineSeedHash, declarationSha256, type ConfigPrecondition, type RecordedPrecondition, type Scenario } from "./harness.js";
-import { firstCanonicalDifference } from "./proxy.js";
+import { firstCanonicalDifference, type ServedEntry } from "./proxy.js";
 import { runScenarioOnce } from "./runScenario.js";
 
 export interface ResealResult {
@@ -57,6 +59,18 @@ export interface ResealResult {
  * refusal can be printed into a gate log without printing a secret.
  */
 const bodyExcerpt = (body: string): string => canonicalizeForHash(body).slice(0, 200);
+
+/**
+ * The index of the first served entry that went BACKWARDS, or -1 when the
+ * sequence only rises.
+ *
+ * Its own function because it is the whole of the order signal and the control
+ * drives it against the proxy's real output — a predicate restated in a test is
+ * a predicate that can agree with itself while disagreeing with the code.
+ */
+export function firstOutOfOrder(served: ServedEntry[]): number {
+  return served.findIndex((e, i) => i > 0 && e.seq <= served[i - 1].seq);
+}
 
 /**
  * Replay `scenario` against `cassette` under the DECLARED precondition and, if
@@ -96,7 +110,7 @@ export async function resealScenario(opts: {
     engineB: "engine-real",
   });
 
-  // FIVE SIGNALS, IN ORDER, and the first failure is the reason. They are
+  // SIX SIGNALS, IN ORDER, and the first failure is the reason. They are
   // ordered from the most specific to the most general: a refusal that says
   // "this request, at this byte" is actionable, and one that says "the run did
   // not hold" is only the last resort.
@@ -142,6 +156,37 @@ export async function resealScenario(opts: {
       reason:
         `${unserved.length} cassette entr(ies) were never requested under this declaration (seq ` +
         `${unserved.map((e) => e.seq).join(", ")}) — the engine made FEWER requests than the recording`,
+    };
+  }
+  // …AND IN THE RECORDED ORDER, which the three set-shaped signals above cannot
+  // say. The proxy matches by canonical body hash across every unconsumed entry,
+  // and that is the right matcher — a positional one would hand a drifted
+  // request another request's response — but it is order-blind by construction.
+  // So a declaration that made the engine ask for exactly the recorded requests
+  // in a DIFFERENT sequence is clean on unmatched, on fallbacks and on unserved,
+  // and would re-seal as "the stream did not change" when the stream is the one
+  // thing that did. An entry's `seq` is its position in the recording, so the
+  // recorded order is a rising sequence of them.
+  //
+  // REPEAT ENTRIES ARE EXCLUDED HERE TOO, and for the reason they are excluded
+  // from coverage: a repeat answers a retry loop, so where in the stream it is
+  // served — and how often — is the engine's attempt schedule rather than a fact
+  // the cassette fixes.
+  //
+  // A scenario whose engine genuinely issues requests CONCURRENTLY can arrive in
+  // a different order twice in a row and would refuse here. That is the
+  // conservative direction and deliberately so: a refusal costs a live
+  // re-record, and the alternative is sealing a sidecar against a stream nobody
+  // compared.
+  const inOrder = run.servedOrder.filter((e) => !e.repeat);
+  const outOfOrder = firstOutOfOrder(inOrder);
+  if (outOfOrder > 0) {
+    return {
+      resealed: false,
+      reason:
+        `the recorded requests were all made, but NOT IN THE RECORDED ORDER — request ${outOfOrder + 1} of ` +
+        `${inOrder.length} was answered by entry seq ${inOrder[outOfOrder].seq} after entry seq ` +
+        `${inOrder[outOfOrder - 1].seq}. Served order: ${inOrder.map((e) => e.seq).join(", ")}`,
     };
   }
   const failure = scenario.check ? scenario.check(run.messages, run.events) : null;

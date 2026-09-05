@@ -12,7 +12,7 @@
 // diffs grades on the surfaces.
 import { rmSync } from "node:fs";
 import { gateCacheCheck } from "./leakcheck.js";
-import { fallbackVerdict, startRecordProxy, startReplayProxy, type CassetteEntry, type FallbackServe } from "./proxy.js";
+import { fallbackVerdict, startRecordProxy, startReplayProxy, type CassetteEntry, type FallbackServe, type ServedEntry } from "./proxy.js";
 import { resetSandbox, type ConfigPrecondition, type Scenario, type ScenarioContext } from "./harness.js";
 import { CONFIG_DIR, enginePath, SANDBOX } from "./runTurn.js";
 import { awaitQuiesce, defaultStateRoots, stateSnapshot, type StateSnapshot } from "./state.js";
@@ -32,6 +32,8 @@ export interface ScenarioRun {
   unserved: CassetteEntry[];
   /** replay only: requests served POSITIONALLY, with the entry each was handed */
   fallbacks: FallbackServe[];
+  /** replay only: the entries served, in REQUEST order — the signal the other three cannot carry */
+  servedOrder: ServedEntry[];
 }
 
 export interface ScenarioRunOptions {
@@ -108,6 +110,7 @@ export async function runScenarioOnce(opts: ScenarioRunOptions): Promise<Scenari
   const unmatched = mode === "replay" ? proxy.unmatched() : [];
   const unserved = mode === "replay" ? proxy.unserved() : [];
   const fallbacks = mode === "replay" ? proxy.fallbacks() : [];
+  const servedOrder = mode === "replay" ? proxy.servedOrder() : [];
   await proxy.close();
   if (unmatched.length > 0) console.log(`    WARN ${side}: ${unmatched.length} request(s) matched no cassette entry`);
   if (unserved.length > 0) console.log(`    WARN ${side}: ${unserved.length} cassette entr(ies) never served`);
@@ -117,5 +120,5 @@ export async function runScenarioOnce(opts: ScenarioRunOptions): Promise<Scenari
   // §3.3: the gate caches must never appear in the harness config dir, after
   // EITHER mode — a record writes config, and so does a replay.
   const gateOk = gateCacheCheck(CONFIG_DIR, `${s.tag}/${side}`);
-  return { messages, events, observedFile, state, ok: fallbackOk && gateOk && quiesce.settled, unmatched, unserved, fallbacks };
+  return { messages, events, observedFile, state, ok: fallbackOk && gateOk && quiesce.settled, unmatched, unserved, fallbacks, servedOrder };
 }
