@@ -5916,8 +5916,9 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
           "produces. The twin is the sharper of the two — it returns a real array of real strings, truncated after the command NAME — precisely so a red would mean the ARGUMENTS are read rather " +
           "than that the walk happened; nothing moved on any of the sixteen. " +
           "Graded instead by strangle/parser-parity.test.ts, which compares the extracted argv against upstream's for every command string in the corpus that has a command node at all, " +
-          "including the two rules that make this function more than a `map`: a concatenation containing a substitution is kept as RAW TEXT rather than joined, and a bare substitution argument " +
-          "STOPS the walk, so everything after it is deliberately absent.",
+          "including the rule that makes this function more than a `map` and that is POSITIONAL rather than global: a concatenation containing a substitution is kept as RAW TEXT rather than " +
+          "joined ONLY in command-name position, where the walk then continues (`$(x)y foo bar` -> [\"$(x)y\",\"foo\",\"bar\"]); in ARGUMENT position that same concatenation STOPS the walk, " +
+          "exactly as a bare substitution argument does, so everything after it is deliberately absent (`echo a$(x)b c` -> [\"echo\"]). Both strings are corpus cases.",
       },
     ],
     imports: [

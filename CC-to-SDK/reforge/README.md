@@ -5528,12 +5528,19 @@ chunk; `SS` is `1e4` in the engine chunk, and C13b will own that one. They are n
 declaration and a pin can move one without the other, so a shared constant would be a claim the
 artifact does not support.
 
-**The argv contract** (`commandArgv`), which is more than a `map`: a `declaration_command` returns
-`[keyword]` when its first child's text is one of the seven declaration keywords and `[]` otherwise; a
-`concatenation` containing a `command_substitution` or `process_substitution` is kept as RAW TEXT
-rather than joined; a BARE substitution argument STOPS the walk, so everything after it is
-deliberately absent; `word` nodes are unescaped with `\(.)` → `$1`, and the other literal types have
-one layer of surrounding quotes stripped.
+**The argv contract** (`commandArgv`), which is more than a `map`, and whose substitution rule is
+POSITIONAL — a `declaration_command` returns `[keyword]` when its first child's text is one of the
+seven declaration keywords and `[]` otherwise; everywhere else the children are walked in order with
+leading `variable_assignment`s skipped, and what a `concatenation` containing a
+`command_substitution` or `process_substitution` does depends on WHERE it sits. In COMMAND-NAME
+position — the first `command_name`, or the first `word` when no `command_name` came first — it is
+kept as RAW TEXT rather than joined and the walk CONTINUES: `"$(x)y foo bar"` → `["$(x)y", "foo",
+"bar"]`. In ARGUMENT position it STOPS the walk, exactly as a bare substitution argument does, so
+everything after it is deliberately absent: `"echo a$(x)b c"` → `["echo"]`, with `c` never reported.
+Either way the result is a PREFIX of the real argv and never a wrong one. `word` nodes are unescaped
+with `\(.)` → `$1`, and the other literal types have one layer of surrounding quotes stripped. Both
+strings above are `strangle/parser-corpus.ts` cases, so the parity suite compares this rule against
+`fEe`'s own bytes on every run.
 
 **The env contract** (`parseCommandWithEnv`): the `variable_assignment` children of the command node,
 in order, as raw `text`, stopping at the first `command_name` or `word`.

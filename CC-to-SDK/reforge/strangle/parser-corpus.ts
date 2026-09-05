@@ -502,6 +502,20 @@ export const PARTITIONS: Partition[] = [
       "echo $(> file)",
       "echo `a\\$b",
       "echo `\n`",
+      // The ARGV CONTRACT'S positional rule, which is about `commandArgv` rather than
+      // about the tree, and which the parity suite's argv comparison therefore pins
+      // here. A concatenation carrying a substitution is kept as raw text ONLY in
+      // command-name position, where the walk continues; in argument position it stops
+      // the walk exactly as a bare substitution argument does. Upstream `fEe` decides
+      // that inside two different arms of the same loop, so a reimplementation can get
+      // one right and the other wrong and no tree comparison would see it.
+      // Three strings, because the command-name arm makes two claims and one string
+      // cannot separate them: `$(x)y` joins to the same bytes it slices, so it pins
+      // "the walk continues" and nothing about raw text, while `"a"$(x)` joins to
+      // `a$(x)` and pins the raw retention itself.
+      "echo a$(x)b c", //   -> ["echo"]                  argument concatenation: STOPS
+      "$(x)y foo bar", //   -> ["$(x)y","foo","bar"]     command-name concatenation: continues
+      '"a"$(x) z', //       -> ["\"a\"$(x)","z"]         command-name concatenation: RAW, not joined
     ],
   },
 
