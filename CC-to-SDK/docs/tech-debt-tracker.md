@@ -749,7 +749,8 @@ The generalization is narrower than the entry feared. It is not "any 1–7 digit
 
 And the property the deferral was protecting is kept, at its proper scope: the loud red for a run that
 leaves a peer-registry entry belongs on the PER-RUN state surface, not on the cross-wave tripwire.
-`reforge/src/state.ts:179` admits `sessions/**` and hashes it, and `entryOf` records the path verbatim,
+`reforge/src/state.ts`'s `CONFIG_INCLUDE` admits `["sessions/**", "hash", …]` (line 192 as of `fddf380`;
+the list moves, the row does not) and `entryOf` records the path verbatim,
 so a graded run that leaves one still fails on a pid-named path. Second half of the fix:
 `regeneralizeEntries` in `reforge/src/observed.ts`, shared by the reset that writes the census and the
 tool that checks it, re-generalizes stored keys on load and sums the counts of rows that fold together

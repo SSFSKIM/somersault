@@ -1663,9 +1663,10 @@ Pending — written at finish.
   F5 withheld a `<pid>` token because a literal pid "reds loudly (the safe direction)" — right about
   the alarm, wrong about the surface: the census is an ACCUMULATOR shared by every wave, so the red it
   produces is "some run, in some wave, ever left one", repeated on every later gate until an operator
-  edits a derived file. The per-run red is kept where it belongs (`src/state.ts:179` admits
-  `sessions/**`, hashes it and records the path verbatim, so a graded run that leaves one still
-  fails), the projection is anchored at `^sessions\/\d+(?=\.)` so it eats no other numeric name, and
+  edits a derived file. The per-run red is kept where it belongs (`src/state.ts`'s `CONFIG_INCLUDE`
+  row `["sessions/**", "hash", …]`, line 192 as of `fddf380`, admits it and hashes it, and `entryOf`
+  records the path verbatim, so a graded run that leaves one still fails), the projection is anchored
+  at `^sessions\/\d+(?=\.)` so it eats no other numeric name, and
   `regeneralizeEntries` — shared by the reset that writes the census and the tool that checks it —
   folds stored literal rows on load with their counts summed, so the file heals itself. New gate phase
   `src/observed.test.ts` (15 controls, three mutations shown to bite; the block is 159 now); the

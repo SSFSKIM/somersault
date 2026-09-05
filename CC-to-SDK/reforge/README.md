@@ -5234,8 +5234,10 @@ the two 70765 rows fold into `sessions/<pid>.json` and `sessions/<pid>.<hex>.key
 both already declared, counts intact.
 
 The property F5 was protecting is kept, at its proper scope. A graded run that
-leaves a peer-registry entry still reds — `src/state.ts:179` admits `sessions/**`
-and hashes it, and `entryOf` records the path verbatim, so a pid-named path
+leaves a peer-registry entry still reds — `src/state.ts`'s `CONFIG_INCLUDE` row
+`["sessions/**", "hash", …]` (line 192 as of `fddf380`; cite the row, not the
+line, which a sibling's edit already moved once) admits it and hashes it, and
+`entryOf` records the path verbatim, so a pid-named path
 appears in the state line and two runs cannot agree on it. What moved is only
 which surface carries the alarm: per-run state, not the cross-wave tripwire.
 
