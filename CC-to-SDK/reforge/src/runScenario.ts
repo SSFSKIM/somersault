@@ -84,13 +84,19 @@ export async function runScenarioOnce(opts: ScenarioRunOptions): Promise<Scenari
   const roots = defaultStateRoots(SANDBOX, CONFIG_DIR);
   const quiesce = await awaitQuiesce(roots);
   if (!quiesce.settled) console.log(`    WARN ${side}: the state roots never stopped changing (${quiesce.waitedMs} ms) — the snapshot would be of a moving file`);
-  // The third member of the snapshot: what this run left RUNNING. Taken after
-  // the quiesce for the same reason the tree is — the engine's own teardown is
-  // still in flight the instant the query resolves — and against the scenario's
-  // DECLARED detachments, so a deliberate background shell is recorded without
-  // being a leak.
+  // THE TREE IS READ FIRST, at exactly the instant it was read before this
+  // member existed, and the order is not incidental. `processSnapshot` samples
+  // twice `settleMs` apart, so taking it first would push the filesystem read
+  // ~600 ms further past the quiesce — and a scenario with a concurrent writer
+  // (a backgrounded agent, a compactor's rewrite) would then be snapshotted at a
+  // different point in a race the corpus already knows is one. A new surface may
+  // add an observation; it may not move an existing one.
+  const fsState = stateSnapshot(roots, messages);
+  // …and then what the run left RUNNING, against the scenario's DECLARED
+  // detachments, so a deliberate background shell is recorded without being a
+  // leak.
   const { snapshot: processes } = await processSnapshot(processesBefore, { detached: s.detachedChildren, label: side });
-  const state = stateSnapshot(roots, messages, processes);
+  const state: StateSnapshot = { ...fsState, processes };
   // REAPED AFTER THE SNAPSHOT, and this is a correctness requirement rather
   // than tidiness: side A runs first, so a child it leaves is already running
   // when side B takes its baseline and B does not see it as new — the two sides
