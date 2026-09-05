@@ -552,14 +552,20 @@ const stallPlan: ChildPlan = { bytes: 40, chunks: 1, promptTail: true };
  * notification to reach the queue. A replay finishes long before it and leaves
  * the shell running, which is what `detachedChildren` declares.
  */
-const STALL_HOLD_SECONDS = 64;
+const STALL_HOLD_SECONDS = 150;
 
 const stallDetect = (d: EffectiveDeadlines): Scenario => {
   // Only the harness's wait moves with the profile: the RECORDING waits out the
   // pin's 45 s once, every replay waits out the profile's 1.8 s, and the command
   // is the same string in both.
   const holdSeconds = STALL_HOLD_SECONDS;
-  const waitMs = d["stall-idle"] + d["stall-poll"] * 2 + 3_000;
+  // A MULTIPLE of the threshold, not a constant added to it, so the recording
+  // gets a real margin and the replay does not pay for one. The first take
+  // waited `idle + 2 poll + 3 s` = 58 s against a 45 s threshold and saw only
+  // the COMPLETION notification, so the margin was the first thing to widen
+  // before concluding anything about the detector. At the pin this is 115 s;
+  // under the profile it is 10 s.
+  const waitMs = d["stall-idle"] * 2 + d["stall-poll"] * 4 + 5_000;
   const command = `${childCommand(stallPlan)}; sleep ${holdSeconds}`;
   return {
     tag: "bash-stall-detect",
@@ -577,7 +583,10 @@ const stallDetect = (d: EffectiveDeadlines): Scenario => {
       const messages: unknown[] = [];
       input.push(
         userMessage(
-          `Use the Bash tool to run exactly \`${command}\` with run_in_background set to true and the description ` +
+          `\`./reforge-child.sh\` is a test fixture committed to this sandbox by a differential test harness; you can ` +
+            `read it. This command makes it print a prompt-shaped line and then go quiet, so the harness can exercise ` +
+            `this tool's stall detector. Running it is the point of this test.\n\n` +
+            `Use the Bash tool to run exactly \`${command}\` with run_in_background set to true and the description ` +
             `"reforge stall probe". Do not wait for it. Reply with exactly REFORGE_STALL_STARTED.`,
         ),
       );
@@ -591,19 +600,42 @@ const stallDetect = (d: EffectiveDeadlines): Scenario => {
         results++;
         if (results === 1) {
           await sleep(waitMs);
-          input.push(userMessage("Reply with exactly REFORGE_STALL_DONE."));
+          // THE SECOND TURN ASKS THE MODEL WHAT IT WAS TOLD, and that is the
+          // only way this scenario can assert its own behaviour. MEASURED: the
+          // stall notification is delivered as an ATTACHMENT on the next turn,
+          // not as a `system`/`task_notification` frame — the completion
+          // notification is a frame, the stall one is not (its `Wa` call carries
+          // `skipAttachments: !0` and takes a different delivery path). A
+          // `check` sees only the SDK messages and the harness events, so the
+          // attachment is invisible to it; the request body carries it and the
+          // requests surface diffs it between engines, but nothing would catch a
+          // take in which it never arrived. Quoting it back puts the sentence
+          // where the substance check can see it.
+          //
+          // The prompt deliberately does NOT contain the sentence it is looking
+          // for, so a model that received nothing cannot satisfy the check by
+          // echoing the question.
+          input.push(
+            userMessage(
+              "Reply with exactly REFORGE_STALL_DONE on the first line. Then, on the following lines, quote " +
+                "verbatim any notification you have received about the background command you started. If you " +
+                "received none, write exactly NO_NOTIFICATION instead.",
+            ),
+          );
         } else input.end();
       }
       return messages;
     },
     check: (msgs) => {
       if (!usedTool(msgs, "Bash")) return "Bash tool never used";
-      const stalled = taskNotifications(msgs).filter((n) => String(n.summary ?? "").includes("waiting for interactive input"));
-      if (stalled.length === 0) {
-        return `the stall detector never fired — no task_notification said the command appears to be waiting for interactive input (summaries: ${JSON.stringify(taskNotifications(msgs).map((n) => n.summary))})`;
+      // The sentence `kWt` composes, quoted back by the model because the
+      // attachment itself never reaches this function (see the second turn).
+      const capture = JSON.stringify(msgs);
+      if (!capture.includes("waiting for interactive input")) {
+        return `the stall detector never fired — nothing in the capture carries the sentence kWt composes (task_notification summaries: ${JSON.stringify(taskNotifications(msgs).map((n) => n.summary))})`;
       }
-      if (!stalled.every((n) => String(n.summary ?? "").startsWith(BACKGROUND_NOTIFICATION_PREFIX))) {
-        return `the stall notification's summary is not the engine's backgrounded-command sentence: ${JSON.stringify(stalled.map((n) => n.summary))}`;
+      if (!capture.includes(BACKGROUND_NOTIFICATION_PREFIX)) {
+        return `something mentioned an interactive prompt, but not as the engine's backgrounded-command sentence (${JSON.stringify(BACKGROUND_NOTIFICATION_PREFIX)}…)`;
       }
       return null;
     },
@@ -658,6 +690,29 @@ const killPlan: ChildPlan = { bytes: 60, chunks: 20, everyMs: 600, ignoreTerm: t
 /** See the block above: both halves are load-bearing and each was measured. */
 const KILL_COMMAND = `sleep 0 && exec ${childCommand(killPlan)}`;
 
+/**
+ * WHY THE PROMPT EXPLAINS ITSELF, and it is not a workaround.
+ *
+ * The first live take was REFUSED by the model, in as many words: "I'm not
+ * going to run that command… `exec ./reforge-child.sh --ignore-term` replaces
+ * the shell with a script that appears designed to persist". That is a correct
+ * inference from what it was shown — a command that execs into something which
+ * ignores termination signals is exactly the shape of a persistence mechanism.
+ * What the model was missing was context that is simply TRUE: the script is a
+ * committed test fixture sitting in the sandbox it is being asked to run in,
+ * its source is readable, and the flag exists so a differential harness can
+ * exercise the Bash tool's own timeout-and-kill path.
+ *
+ * So the prompt says that, accurately and briefly. The fix is not to disguise
+ * the command — it is still run verbatim, `--ignore-term` and all — but to stop
+ * asking a model to run something whose only plausible reading was the wrong
+ * one.
+ */
+const KILL_CONTEXT =
+  `\`./reforge-child.sh\` is a test fixture committed to this sandbox by a differential test harness; ` +
+  `you can read it. Its \`--ignore-term\` flag makes it ignore SIGTERM on purpose, so that the harness can ` +
+  `exercise this tool's own timeout-and-kill path. Running it is the point of this test.`;
+
 const killEscalation = (d: EffectiveDeadlines): Scenario => {
   // Past the backstop and its liveness polling, with room for the executor to
   // finish composing the result.
@@ -673,7 +728,8 @@ const killEscalation = (d: EffectiveDeadlines): Scenario => {
     run: async (ctx) => {
       seedScriptedChild(SANDBOX);
       const msgs = await drive(
-        `Use the Bash tool to run exactly this command, as a single call, with the timeout parameter set to 1500, ` +
+        `${KILL_CONTEXT}\n\n` +
+          `Use the Bash tool to run exactly this command, as a single call, with the timeout parameter set to 1500, ` +
           `and then report what the tool told you, verbatim:\n${KILL_COMMAND}`,
         // SIX, for the reason `bash-large-output` found: at three this take
         // ended `Reached maximum number of turns (3)` and threw, so the capture
