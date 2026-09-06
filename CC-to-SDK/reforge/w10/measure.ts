@@ -93,11 +93,13 @@ async function replayWithSupervision(s: Scenario, engine: string): Promise<{ sna
   }
   const q = await awaitQuiesce(defaultStateRoots(SANDBOX, CONFIG_DIR));
   if (!q.settled) console.log("    (never quiesced)");
-  const { snapshot: snap, dropped } = await processSnapshot(baseline, { detached: s.detachedChildren, label: s.tag });
+  const { snapshot: snap, dropped, attributed } = await processSnapshot(baseline, { detached: s.detachedChildren, label: s.tag });
   // Reaped after the snapshot, so the NEXT scenario's baseline is the same world
   // this one started from — and so the census cannot leave an engine child whose
-  // `sessions/<pid>` files redden a later config-dir inventory.
-  const reaped = reapSurvivors(snap);
+  // `sessions/<pid>` files redden a later config-dir inventory. BY PID: the
+  // census runs on a machine that is doing other things, and a command-text
+  // sweep reaches processes it never graded (see `reapSurvivors`).
+  const reaped = reapSurvivors(attributed);
   await proxy.close();
   return { snap, threw, reaped, dropped };
 }

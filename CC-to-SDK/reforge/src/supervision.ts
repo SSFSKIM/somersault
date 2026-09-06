@@ -41,12 +41,21 @@
 // by one of three routes:
 //
 //   * ANCESTRY — its parent chain, in the after-table, reaches this process.
-//   * CWD — its working directory is inside the sandbox. Read with `lsof` and
-//     only for the handful of candidates, because the engine's shells run with
-//     the sandbox as their cwd and a reparented orphan keeps it.
-//   * COMMAND — its command line carries a path or a name this harness owns
-//     (the sandbox, the config dir, the materialized graphs, the scripted
-//     child's file name).
+//   * CWD, AND ORPHANED — its working directory is inside the sandbox *and*
+//     its parent is gone. Read with `lsof` and only for the handful of
+//     candidates, because the engine's shells run with the sandbox as their cwd
+//     and a reparented orphan keeps it. The orphan conjunct is a MEASURED
+//     correction and is what makes this route safe: cwd alone said yes to a
+//     `/bin/zsh -c source …/shell-snapshots/snapshot-zsh-….sh` belonging to the
+//     Claude Code session that was RUNNING the corpus — a foreign session whose
+//     cwd happened to be the sandbox — and the reap then SIGKILLed it
+//     (`hooks-permission`, fourth corpus run, 2026-09-05). A leaked engine
+//     shell is reparented to launchd the moment the engine exits, so it is
+//     still caught; a foreign process with a live parent is now neither graded
+//     nor signalled.
+//   * COMMAND — its command line carries a path this harness owns (the sandbox
+//     or the config dir). A bare file NAME is not such a path; see
+//     `COMMAND_MARKERS`.
 //
 // Anything else is DROPPED — not recorded, not counted in the graded value —
 // and reported to stdout instead. A count would be a graded value that the
@@ -70,6 +79,7 @@
 // MISS — a leak that terminates within `settleMs` of the snapshot, which is not
 // a leak. Applied identically to both engines and after the same quiesce.
 import { spawnSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { CONFIG_DIR, REFORGE_ROOT, SANDBOX } from "./runTurn.js";
 
 export interface ProcessRow {
@@ -139,6 +149,20 @@ export interface ProcessSnapshot {
 export interface ProcessObservation {
   snapshot: ProcessSnapshot;
   dropped: number;
+  /**
+   * The pids behind `snapshot.survivors`, for the reap — and OUTSIDE the
+   * snapshot for the same reason `dropped` is. A pid is per-run: putting one on
+   * the graded surface would diff two engines on the numbers the OS handed them.
+   * The reap needs them anyway, because "kill everything whose command line
+   * looks like this survivor's" reaches a process this run never started.
+   */
+  attributed: AttributedPid[];
+}
+
+/** One attributed survivor as the reap addresses it: the pid, and the command it was that pid's. */
+export interface AttributedPid {
+  pid: number;
+  command: string;
 }
 
 /** How a run states which children it means to leave behind (see `Scenario.detachedChildren`). */
@@ -176,13 +200,25 @@ export const canonicalCommand = (command: string): string => {
  * lock does not cover that case — it guards `resetSandbox()`, and a build or a
  * boot check calls neither.
  *
+ * `reforge-child.sh` — the scripted child's BARE FILE NAME — has been removed
+ * for the same reason one level down, and the fix is a removal rather than a
+ * longer string. A basename is not a fact about THIS checkout: a second
+ * checkout of this repository seeds a byte-identical helper under its own
+ * sandbox, and because the reap acted on command TEXT (it no longer does — see
+ * `reapSurvivors`) the marker could reach that other checkout's process. The
+ * repaired form — the script's canonical path, `<sandbox>/reforge-child.sh` —
+ * is a strict subset of the `<sandbox>` marker already on this list, so adding
+ * it would be dead code. And it would not have matched the invocation the
+ * scenarios actually use: the engine runs the helper as `./reforge-child.sh`
+ * from the sandbox, which carries no path at all.
+ *
  * What is left is specific to a RUN's world rather than to the checkout: the
- * sandbox and config directories a scenario owns, and the scripted child's own
- * file name. Nothing is lost for the case this surface exists to catch — a
- * leaked engine child or shell runs with the SANDBOX as its cwd, so the cwd
- * route attributes it whatever its command line says.
+ * sandbox and config directories a scenario owns. Nothing is lost for the case
+ * this surface exists to catch — a leaked engine child or shell runs with the
+ * SANDBOX as its cwd and is orphaned once the engine exits, which is exactly
+ * what the cwd route now requires.
  */
-const COMMAND_MARKERS = ["<sandbox>", "<config>", "reforge-child.sh"];
+const COMMAND_MARKERS = ["<sandbox>", "<config>"];
 
 /** Does `pid`'s parent chain reach `root` in this table? Bounded, so a cycle cannot hang the walk. */
 function reaches(table: Map<number, ProcessRow>, pid: number, root: number): boolean {
@@ -204,6 +240,30 @@ function reaches(table: Map<number, ProcessRow>, pid: number, root: number): boo
  * SHRINK the attributed set, identically for both engines inside one harness
  * process, and is printed rather than recorded.
  */
+/**
+ * The sandbox as `lsof` will name it.
+ *
+ * `lsof` reports a cwd through its REAL path. A checkout reached by a symlink —
+ * `/Users/x/dev -> /Volumes/…/dev`, and this repository is reachable by two
+ * spellings of its own root on this machine — makes `SANDBOX` a path no `lsof`
+ * line will ever equal, which does not fail loudly: it silently switches the
+ * cwd route off and every leaked orphan starts being DROPPED. Resolved once per
+ * process, and falling back to the literal path before the first reset creates
+ * the directory.
+ */
+let sandboxRealCache: string | null = null;
+function realSandbox(): string {
+  if (sandboxRealCache !== null) return sandboxRealCache;
+  try {
+    // Cached only on SUCCESS: a failure means the directory does not exist yet,
+    // which is a fact about when this was called and not about the path.
+    sandboxRealCache = realpathSync(SANDBOX);
+    return sandboxRealCache;
+  } catch {
+    return SANDBOX;
+  }
+}
+
 export function cwdOf(pid: number): string | null {
   const r = spawnSync("lsof", ["-a", "-d", "cwd", "-p", String(pid), "-Fn"], { encoding: "utf8", timeout: 5_000 });
   if (r.status !== 0 && (r.stdout ?? "") === "") return null;
@@ -249,15 +309,21 @@ export async function processSnapshot(baseline: ProcessBaseline, opts: Supervisi
   const still = sampleSurvivors(baseline, second).filter((r) => firstSet.get(r.pid) === r.command);
 
   const survivors: Survivor[] = [];
+  const attributed: AttributedPid[] = [];
   const dropped: string[] = [];
+  const sandboxReal = realSandbox();
   for (const row of still) {
     const command = canonicalCommand(row.command);
+    const orphaned = row.ppid <= 1;
     const byCommand = COMMAND_MARKERS.some((m) => command.includes(m));
     const byAncestry = reaches(second, row.pid, process.pid);
+    // ORPHANED is a precondition of the cwd route, not a property recorded
+    // afterwards: a process whose parent is still alive and is not in this
+    // harness's tree belongs to whoever started it. See the header.
     let byCwd = false;
-    if (!byCommand && !byAncestry) {
+    if (!byCommand && !byAncestry && orphaned) {
       const cwd = cwdOf(row.pid);
-      byCwd = cwd !== null && (cwd === SANDBOX || cwd.startsWith(`${SANDBOX}/`));
+      byCwd = cwd !== null && (cwd === sandboxReal || cwd.startsWith(`${sandboxReal}/`));
     }
     if (!byCommand && !byAncestry && !byCwd) {
       dropped.push(command);
@@ -265,9 +331,10 @@ export async function processSnapshot(baseline: ProcessBaseline, opts: Supervisi
     }
     survivors.push({
       command,
-      orphaned: row.ppid <= 1,
+      orphaned,
       declared: (opts.detached ?? []).find((d) => command.includes(d)) ?? null,
     });
+    attributed.push({ pid: row.pid, command });
   }
   if (dropped.length > 0) {
     console.log(
@@ -278,7 +345,7 @@ export async function processSnapshot(baseline: ProcessBaseline, opts: Supervisi
   // Sorted, because two engines' children start in whatever order the OS
   // scheduled them and the ORDER is not a claim; the SET is.
   survivors.sort((a, b) => a.command.localeCompare(b.command) || Number(a.orphaned) - Number(b.orphaned));
-  return { snapshot: { survivors }, dropped: dropped.length };
+  return { snapshot: { survivors }, dropped: dropped.length, attributed };
 }
 
 /** The survivors nothing declared — the leaks, for a caller that wants to report rather than diff. */
@@ -304,17 +371,30 @@ export const leaksIn = (snap: ProcessSnapshot): Survivor[] => snap.survivors.fil
  * that has nothing to do with the run that leaked it — observed on the
  * merged-tree gate of 2026-09-05.
  *
+ * ## And what it may address: the pids the snapshot attributed, and only those
+ *
+ * This used to reap by COMMAND TEXT — every row in a fresh table whose
+ * canonicalized command line equalled some survivor's. That is a wider set than
+ * the one the surface graded, by exactly the processes the surface never
+ * examined: a second checkout's helper, an operator's identically-named
+ * process, a sibling worker's shell started after the snapshot. So the reap
+ * takes the pids recorded AT SNAPSHOT TIME instead. The command is still
+ * compared — against what that pid is running now — because a pid the OS has
+ * recycled in the interval is a different process wearing the same number, and
+ * killing it would be the same defect by another route.
+ *
  * Only ATTRIBUTED survivors are killed: the same three routes that decide what
  * is graded decide what is reaped, so a process the surface refused to grade is
  * also a process this refuses to signal.
  */
-export function reapSurvivors(snap: ProcessSnapshot, table: Map<number, ProcessRow> = processTable()): number {
-  const wanted = new Set(snap.survivors.map((s) => s.command));
+export function reapSurvivors(attributed: readonly AttributedPid[], table: Map<number, ProcessRow> = processTable()): number {
   let killed = 0;
-  for (const row of table.values()) {
-    if (row.pid === process.pid || !wanted.has(canonicalCommand(row.command))) continue;
+  for (const { pid, command } of attributed) {
+    if (pid === process.pid) continue;
+    const now = table.get(pid);
+    if (now === undefined || canonicalCommand(now.command) !== command) continue;
     try {
-      process.kill(row.pid, "SIGKILL");
+      process.kill(pid, "SIGKILL");
       killed++;
     } catch {
       // already gone between the snapshot and now, which is the outcome anyway

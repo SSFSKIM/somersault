@@ -14,7 +14,7 @@
 // redden a scenario for a reason that is not behaviour. So the drop rule and
 // the settle rule each have a control asserting the NEGATIVE direction.
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { seedScriptedChild } from "../w10/child.js";
@@ -70,6 +70,14 @@ function orphan(command: string, cwd: string): number {
 const box = mkdtempSync(join(tmpdir(), "reforge-supervision-"));
 const started: ReturnType<typeof spawn>[] = [];
 const orphans: number[] = [];
+// The helper is seeded OUTSIDE the sandbox on purpose. Its bare file name is no
+// longer an attribution marker (`COMMAND_MARKERS`), so a child started from here
+// carries no token this harness owns — which is what makes the cwd route the
+// thing under test below rather than a route that happens to agree with another.
+// The sandbox itself only has to EXIST for a child to be given it as a cwd; the
+// gate holds the single-writer lock for the whole run and this suite is one of
+// its serialized children, so nothing is racing `resetSandbox()` for it.
+mkdirSync(SANDBOX, { recursive: true });
 try {
   // ---- the table reads ------------------------------------------------------
   {
@@ -92,9 +100,11 @@ try {
   {
     const baseline = processBaseline();
     // An ORPHAN, which is what `Pde.detach()` leaves once the engine exits: its
-    // lineage is gone, so the ancestry route cannot see it and the COMMAND
-    // route — the scripted child's own file name — is what has to.
-    const leakedPid = orphan(`${script} --bytes 40 --chunks 30 --every 900`, "/");
+    // lineage is gone, so the ancestry route cannot see it, and the helper lives
+    // outside the sandbox so the COMMAND route cannot either. The CWD route is
+    // what has to name it — cwd inside the sandbox AND no living parent, which
+    // is exactly the shape of a leaked engine shell.
+    const leakedPid = orphan(`${script} --bytes 40 --chunks 30 --every 900`, SANDBOX);
     orphans.push(leakedPid);
     await sleep(400);
 
@@ -140,13 +150,13 @@ try {
   // much: what the surface refused to GRADE it must also refuse to SIGNAL.
   {
     const baseline = processBaseline();
-    const minePid = orphan(`${script} --bytes 40 --chunks 40 --every 900`, "/");
+    const minePid = orphan(`${script} --bytes 40 --chunks 40 --every 900`, SANDBOX);
     orphans.push(minePid);
     const strangerPid = orphan("/bin/sleep 22", "/");
     orphans.push(strangerPid);
     await sleep(400);
-    const { snapshot: snap } = await processSnapshot(baseline, { settleMs: 200, label: "reap-control" });
-    const killed = reapSurvivors(snap);
+    const { snapshot: snap, attributed } = await processSnapshot(baseline, { settleMs: 200, label: "reap-control" });
+    const killed = reapSurvivors(attributed);
     await sleep(300);
     check("the reap kills what the snapshot attributed", killed >= 1 && !(() => { try { process.kill(minePid, 0); return true; } catch { return false; } })(),
       `killed=${killed}, attributed survivor still alive=${(() => { try { process.kill(minePid, 0); return true; } catch { return false; } })()}`);
@@ -160,6 +170,103 @@ try {
     }
     const { snapshot: after } = await processSnapshot(processBaseline(), { settleMs: 150, label: "reap-after" });
     check("…and a reaped run leaves the next baseline the same world it started from", after.survivors.length === 0, JSON.stringify(after.survivors).slice(0, 200));
+  }
+
+  // ---- THE REAP ADDRESSES PIDS, NOT COMMAND TEXT ---------------------------
+  //
+  // The reap used to sweep a fresh process table for every row whose command
+  // line equalled a survivor's. That set is wider than the one the surface
+  // graded by exactly the processes it never looked at: a second checkout of
+  // this repository running the same helper, an operator's identically named
+  // process, a sibling worker's shell started after the snapshot. Here the
+  // twin is started AFTER the snapshot, with a byte-identical command line, and
+  // must be alive when the reap is done.
+  {
+    const baseline = processBaseline();
+    const minePid = orphan(`${script} --bytes 40 --chunks 40 --every 900`, SANDBOX);
+    orphans.push(minePid);
+    await sleep(400);
+    const { snapshot: snap, attributed } = await processSnapshot(baseline, { settleMs: 200, label: "pid-reap-control" });
+    check("the snapshot named the survivor the twin will impersonate", attributed.some((a) => a.pid === minePid), JSON.stringify(attributed).slice(0, 200));
+    const twinPid = orphan(`${script} --bytes 40 --chunks 40 --every 900`, SANDBOX);
+    orphans.push(twinPid);
+    await sleep(200);
+    const killed = reapSurvivors(attributed);
+    await sleep(300);
+    const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    check("the reap kills the pid the snapshot recorded", killed >= 1 && !alive(minePid), `killed=${killed}, snapshotted survivor alive=${alive(minePid)}`);
+    check("…and NOT an identically-commanded process the snapshot never saw", alive(twinPid),
+      "a process with the same command line as a survivor was signalled — the reap is addressing text, not pids");
+    check("…and the pids stayed OUT of the graded snapshot, which is the reason they are a second object",
+      snap.survivors.every((s) => Object.keys(s).join(",") === "command,orphaned,declared"), JSON.stringify(snap.survivors[0] ?? null));
+    try {
+      process.kill(twinPid, "SIGKILL");
+    } catch {
+      // already gone
+    }
+    await sleep(200);
+  }
+
+  // ---- ATTRIBUTION: THE CWD ROUTE REQUIRES AN ORPHAN ------------------------
+  //
+  // The incident this control exists for is on the record: on the fourth full
+  // corpus run (`hooks-permission`, 2026-09-05) the cwd route attributed
+  // `/bin/zsh -c source …/shell-snapshots/snapshot-zsh-….sh` — a Bash tool call
+  // of the Claude Code session that was RUNNING the corpus, whose cwd happened
+  // to be the sandbox — and the reap SIGKILLed it. Its parent was alive and
+  // outside this harness's tree, which is the distinction the route now draws.
+  //
+  // One spawn produces both halves. `orphan()` returns the pid of a `/bin/sh`
+  // that is itself parentless; that shell's own child has a LIVE parent which is
+  // not this process. Both run with the sandbox as their cwd and carry no marker.
+  {
+    const baseline = processBaseline();
+    // `; true` defeats sh's exec-the-last-command optimization, without which
+    // the shell would REPLACE itself and there would be no live parent to test.
+    const shellPid = orphan("/bin/sh -c '/bin/sleep 24; true'", SANDBOX);
+    orphans.push(shellPid);
+    await sleep(500);
+    // Tracked for the sweep BY PID, and this is the same lesson one level down:
+    // reaping the shell orphans its child, and an orphan with the sandbox as its
+    // cwd is exactly what a later scenario's surface would attribute to itself.
+    // Its command line carries no token the `box` sweep below could find.
+    for (const row of processTable().values()) if (row.ppid === shellPid) orphans.push(row.pid);
+    const { snapshot: snap, attributed } = await processSnapshot(baseline, { settleMs: 250, label: "cwd-orphan-control" });
+    check("an ORPHAN whose cwd is the sandbox and whose command carries no marker is a survivor",
+      snap.survivors.some((s) => /^\/bin\/sh -c \/bin\/sleep 24; true$/.test(s.command)) && attributed.some((a) => a.pid === shellPid),
+      JSON.stringify(snap.survivors).slice(0, 300));
+    check("…while its CHILD — same cwd, same absence of a marker, but a LIVE parent outside this harness — is DROPPED",
+      !snap.survivors.some((s) => /^\/bin\/sleep 24$/.test(s.command)), JSON.stringify(snap.survivors).slice(0, 300));
+    check("…so the reap signals the orphan and not the live-parented process", reapSurvivors(attributed) >= 1);
+    try {
+      process.kill(shellPid, "SIGKILL");
+    } catch {
+      // already gone
+    }
+    await sleep(300);
+  }
+
+  // ---- ATTRIBUTION: A BARE FILE NAME IS NOT A MARKER ------------------------
+  //
+  // `reforge-child.sh` was on `COMMAND_MARKERS` as a bare basename. A basename
+  // is not a fact about THIS checkout: a second checkout of this repository
+  // seeds a byte-identical helper under its own sandbox, and the marker would
+  // attribute — and, before the reap took pids, kill — that other checkout's
+  // process. Here the helper runs from outside the sandbox with a cwd outside
+  // it, which is the shape a sibling checkout's child has from here.
+  {
+    const baseline = processBaseline();
+    const foreignPid = orphan(`${script} --bytes 40 --chunks 25 --every 950`, "/");
+    orphans.push(foreignPid);
+    await sleep(400);
+    const { snapshot: snap } = await processSnapshot(baseline, { settleMs: 200, label: "basename-control" });
+    check("a process running a same-named helper from OUTSIDE this sandbox is dropped, not attributed by its file name",
+      !snap.survivors.some((s) => s.command.includes("--every 950")), JSON.stringify(snap.survivors).slice(0, 300));
+    try {
+      process.kill(foreignPid, "SIGKILL");
+    } catch {
+      // already gone
+    }
   }
 
   // ---- ATTRIBUTION: an unrelated new process is DROPPED ---------------------
@@ -228,7 +335,10 @@ try {
     const baseline = processBaseline();
     // A child that exits BETWEEN the two samples: present in the first, gone
     // from the second, so it must not be recorded.
-    const briefPid = orphan(`${script} --bytes 0 --chunks 2 --every 300`, "/");
+    // The sandbox as its cwd, so it is a process the surface WOULD attribute:
+    // otherwise the drop rule excludes it and this control proves nothing about
+    // the settle rule.
+    const briefPid = orphan(`${script} --bytes 0 --chunks 2 --every 300`, SANDBOX);
     orphans.push(briefPid);
     await sleep(120);
     const { snapshot: snap } = await processSnapshot(baseline, { settleMs: 600, label: "settle-control" });
