@@ -22,11 +22,19 @@
 //
 // ## Cached by what it is, not by when it was made
 //
-// The directory is keyed on the profile AND on the sha256 of the base chunk it
-// was copied from. A `--sabotage` build writes a different chunk into the same
-// base directory, so a key that ignored the bytes would hand a sabotage run the
+// The directory is keyed on the profile AND on a digest of the WHOLE base
+// graph. A `--sabotage` build writes different chunks into the same base
+// directory, so a key that ignored the bytes would hand a sabotage run the
 // faithful engine it built ten minutes earlier — a cache that answers the wrong
 // question silently, which is the failure mode this campaign pays for most.
+//
+// THE WHOLE GRAPH, not the timer chunk alone, because what the copy carries is
+// the whole graph. A sabotage or a splice lands in whichever chunk owns the
+// target, and only one of the seven deadlines' chunks is ever that chunk — so a
+// key over the timer chunk's bytes is blind to every edit made anywhere else,
+// which is most of them. The digest is taken in the SAME pass that finds the
+// timer chunk, because that pass already reads every text module; keying
+// honestly therefore costs nothing over keying narrowly.
 import { createHash } from "node:crypto";
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -59,22 +67,31 @@ export interface TimedEngine {
 interface Stamp {
   base: TimedBase;
   profile: TimerProfile;
-  baseChunkSha256: string;
+  baseGraphSha256: string;
   applied: TimerRewrite[];
 }
 
 /**
- * The chunk that owns the deadlines, inside an already-materialized graph.
+ * The chunk that owns the deadlines, plus a digest of the graph it sits in —
+ * one pass, because both answers come from reading the same files.
  *
- * Found by the same conjunction of shapes `locateTimerChunk` uses, but over the
- * COPY rather than over the pinned bundle: a strangled graph has had chunks
- * rewritten, so "the file with this name in the bundle" is not necessarily the
- * file that carries the deadlines in the build under test.
+ * The chunk is found by the same conjunction of shapes `locateTimerChunk` uses,
+ * but over the COPY rather than over the pinned bundle: a strangled graph has
+ * had chunks rewritten, so "the file with this name in the bundle" is not
+ * necessarily the file that carries the deadlines in the build under test.
+ *
+ * The digest covers `textModules` — `cli` and every `.js` — which is exactly the
+ * population `materializeGraph`, `strangle/build.ts` and this module itself
+ * write to, so no edit any of them makes is outside it. Sorted, because
+ * `readdirSync`'s order is the filesystem's and a key that moved with it would
+ * miss a cache it owns.
  */
-function timerChunkIn(dir: string): { path: string; source: string } {
+function scanGraph(dir: string): { path: string; source: string; graphSha256: string } {
   const hits: { path: string; source: string }[] = [];
-  for (const path of textModules(dir)) {
+  const digest = createHash("sha256");
+  for (const path of textModules(dir).sort()) {
     const source = readFileSync(path, "utf8");
+    digest.update(path.slice(dir.length)).update("\0").update(source).update("\0");
     if (!source.includes('"SIGKILL"') || !source.includes("pollProgress")) continue;
     try {
       locateShellTimers(source);
@@ -84,7 +101,7 @@ function timerChunkIn(dir: string): { path: string; source: string } {
     }
   }
   if (hits.length !== 1) throw new Error(`timed engine: ${hits.length} chunk(s) in ${dir} carry all six deadlines — expected exactly 1`);
-  return hits[0];
+  return { ...hits[0], graphSha256: digest.digest("hex") };
 }
 
 /**
@@ -102,9 +119,8 @@ export function timedEngine(profile: TimerProfile, base: TimedBase = "engine-ext
       `timed engine: no ${base} graph at ${baseDir} — run 'npx tsx strangle/prepare.ts'${base === "engine-strangled" ? " and 'npx tsx strangle/build.ts'" : ""} first`,
     );
   }
-  const baseChunk = timerChunkIn(baseDir);
-  const baseChunkSha256 = createHash("sha256").update(baseChunk.source).digest("hex");
-  const key = profileKey(profile, `${base}\0${baseChunkSha256}`);
+  const baseGraphSha256 = scanGraph(baseDir).graphSha256;
+  const key = profileKey(profile, `${base}\0${baseGraphSha256}`);
   const dir = join(TIMED_ROOT, `${base}-${key}`);
   const graph = join(dir, "graph");
   const stampFile = join(dir, "timers.json");
@@ -112,7 +128,7 @@ export function timedEngine(profile: TimerProfile, base: TimedBase = "engine-ext
 
   if (existsSync(stampFile) && existsSync(join(graph, "cli")) && existsSync(engine)) {
     const stamp = JSON.parse(readFileSync(stampFile, "utf8")) as Stamp;
-    if (stamp.baseChunkSha256 === baseChunkSha256) {
+    if (stamp.baseGraphSha256 === baseGraphSha256) {
       return { base, engine, dir, profile, applied: stamp.applied, built: false };
     }
   }
@@ -133,7 +149,7 @@ export function timedEngine(profile: TimerProfile, base: TimedBase = "engine-ext
   }
   if (rewritten === 0) throw new Error(`timed engine: no specifier under ${baseDir}/ was rewritten in the copy — the graph's packaging changed`);
 
-  const chunk = timerChunkIn(graph);
+  const chunk = scanGraph(graph);
   const { source, applied } = rewriteShellTimers(chunk.source, profile);
   writeFileSync(chunk.path, source);
 
@@ -142,11 +158,11 @@ export function timedEngine(profile: TimerProfile, base: TimedBase = "engine-ext
     `#!/bin/sh\n` +
       `# GENERATED by w10/timed-engine.ts — ${base} with its shell deadlines rewritten:\n` +
       `#   ${describeProfile(profile)}\n` +
-      `# Regenerate rather than edit; the directory is keyed on the profile and on the base chunk's bytes.\n` +
+      `# Regenerate rather than edit; the directory is keyed on the profile and on the base graph's bytes.\n` +
       `exec ${JSON.stringify(BUN)} ${JSON.stringify(join(graph, "cli"))} "$@"\n`,
   );
   chmodSync(engine, 0o755);
-  writeFileSync(stampFile, JSON.stringify({ base, profile, baseChunkSha256, applied } satisfies Stamp, null, 2) + "\n");
+  writeFileSync(stampFile, JSON.stringify({ base, profile, baseGraphSha256, applied } satisfies Stamp, null, 2) + "\n");
 
   // A graph that boots is the only evidence a rewrite is intact — the same rule
   // `prepare.ts` and `build.ts` apply to their own output, and it is what

@@ -106,8 +106,23 @@ async function replayWithSupervision(s: Scenario, engine: string): Promise<{ sna
 
 if (phase === "supervision") {
   // ---- the surface's first measurement, over the whole corpus ---------------
-  const targets = CORPUS.filter((s) => (only ? s.tag === only : true)).filter((s) => existsSync(cassetteFor(s.tag)));
-  const missing = CORPUS.filter((s) => (only ? s.tag === only : true)).length - targets.length;
+  // A CENSUS OF NOTHING IS NOT A PASS. Both ways of reaching zero scenarios —
+  // a `--scenario` tag no corpus scenario answers to, and a scope in which none
+  // has a cassette yet — used to print "no existing scenario leaks a child",
+  // which is the surface's green light and would have been earned by measuring
+  // nothing. They ABORT instead, on the same argument `w10/timed.ts` and
+  // `w10/record.ts` refuse an unknown tag: a typo must not read as evidence.
+  const scoped = CORPUS.filter((s) => (only ? s.tag === only : true));
+  if (only !== undefined && scoped.length === 0) {
+    console.error(`ABORT: unknown scenario '${only}'. Known: ${CORPUS.map((s) => s.tag).join(", ")}`);
+    process.exit(2);
+  }
+  const targets = scoped.filter((s) => existsSync(cassetteFor(s.tag)));
+  const missing = scoped.length - targets.length;
+  if (targets.length === 0) {
+    console.error(`ABORT: none of the ${scoped.length} scenario(s) in scope has a cassette, so there is nothing to census.`);
+    process.exit(2);
+  }
   console.log(`=== supervision census: ${targets.length} scenario(s) with a cassette${missing > 0 ? `, ${missing} skipped for having none` : ""} ===`);
   console.log("  (offline replays on engine-real; every survivor is a process the run left behind)\n");
 
@@ -165,38 +180,58 @@ if (phase === "supervision") {
   console.log(`  arm A (control):   ${describeProfile(CONTROL)} — the pinned value, written back through the same rewrite`);
   console.log(`  arm B (perturbed): ${describeProfile(PERTURBED)}`);
 
-  const arm = async (label: string, profile: TimerProfile): Promise<unknown[]> => {
+  const arm = async (label: string, profile: TimerProfile): Promise<{ msgs: unknown[]; threw: string | null }> => {
     const engine = timedEngine(profile, "engine-extracted");
     console.log(`\n-- ${label}: ${describeProfile(profile)} ${engine.built ? "(built)" : "(cached)"} --`);
     const proxy = await startReplayProxy(cassetteFor(tag), join(REFORGE_ROOT, "cassettes", `w10-measure-observed-${label}.jsonl`));
     const ctx: ScenarioContext = { engine: engine.engine, baseUrl: `http://127.0.0.1:${proxy.port}`, collect: () => {}, mode: "replay" };
     resetSandbox(s.precondition);
     let msgs: unknown[] = [];
+    let threw: string | null = null;
     try {
       msgs = await s.run(ctx);
     } catch (e) {
-      console.log(`  (run threw: ${String((e as Error).message).slice(0, 120)})`);
+      threw = String((e as Error).message).slice(0, 120);
+      console.log(`  (run threw: ${threw})`);
     }
     await awaitQuiesce(defaultStateRoots(SANDBOX, CONFIG_DIR));
     await proxy.close();
-    return msgs;
+    return { msgs, threw };
   };
+
+  /** The frame the hint OWNS: the engine registers the task and says so. */
+  const startedIn = (msgs: readonly unknown[]): number =>
+    msgs.filter((m) => (m as { type?: string }).type === "system" && (m as { subtype?: string }).subtype === "task_started").length;
 
   const a = await arm("control", CONTROL);
   const b = await arm("perturbed", PERTURBED);
 
-  const findings = diffTranscripts(a, b);
+  const findings = diffTranscripts(a.msgs, b.msgs);
   console.log(`\n--- results ---`);
-  console.log(`  control produced ${a.length} message(s), perturbed ${b.length}`);
+  console.log(`  control produced ${a.msgs.length} message(s), perturbed ${b.msgs.length}`);
   console.log(`  ${findings.length} difference(s) between the two arms`);
   for (const f of findings.slice(0, 12)) {
     console.log(`    ${f.path}: ${JSON.stringify(f.a)?.slice(0, 110)}  !=  ${JSON.stringify(f.b)?.slice(0, 110)}`);
   }
-  const ok = findings.length > 0;
+
+  // THE NAMED CHANGE, not merely A change. "The arms differ" is satisfied by a
+  // replay that fell over on one side, by a clock that leaked into a message, by
+  // a proxy served out of order — none of which is the hint moving, and a
+  // control that would pass on them is not evidence for the claim it prints. So
+  // both arms must have COMPLETED, and the difference must be the frame this
+  // deadline owns: shortening the gate makes the command auto-background, and
+  // the engine emits one more `system`/`task_started` than the pinned arm does.
+  const startedA = startedIn(a.msgs);
+  const startedB = startedIn(b.msgs);
+  console.log(`  task_started frames: control ${startedA}, perturbed ${startedB}`);
+  const completed = a.threw === null && b.threw === null;
+  const ok = completed && startedB > startedA;
   console.log(
     ok
-      ? `\nPASS — moving ONE constant (${pinned.role}: ${pinnedValue} → 300 ms) moves the graded output; the fields above are which`
-      : `\nFAIL — the two arms are identical, so the rewrite is grading nothing on this scenario. Either the command finishes before ${pinnedValue} ms (choose one that does not) or the hint does not reach this lane (report which).`,
+      ? `\nPASS — moving ONE constant (${pinned.role}: ${pinnedValue} → 300 ms) makes the command auto-background: ${startedB - startedA} more task_started frame(s), inside ${findings.length} moved field(s)`
+      : !completed
+        ? `\nFAIL — an arm did not complete (control: ${a.threw ?? "ok"}; perturbed: ${b.threw ?? "ok"}), so the two transcripts are not a comparison of the deadline.`
+        : `\nFAIL — the perturbed arm did not background sooner (task_started ${startedA} → ${startedB}). Either the command finishes before ${pinnedValue} ms (choose one that does not) or the hint does not reach this lane (report which).`,
   );
   process.exitCode = ok ? 0 : 1;
 } else {
