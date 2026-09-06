@@ -91,6 +91,62 @@ export const capturedInfraFailure = (messages: readonly unknown[]): boolean =>
   });
 
 /**
+ * The engine-minted paths a RECORDED TURN may not name, and why this is a
+ * promotion rule rather than advice.
+ *
+ * A run-scoped id in a REPLY is harmless — the differ maps it and the hash
+ * scrubs it. A run-scoped id in a REQUEST is not, because it is an argument the
+ * turn depends on: if the model reads `…/<session>/tasks/b12345678.output`, then
+ * the next request body carries that path AND the file's contents, and the next
+ * run mints a different id over a directory that does not exist. Scrubbing
+ * cannot repair it in the safe direction — erasing the id makes the recorded
+ * turn match a request for a task that is not there — so the only fix is a take
+ * in which the model never asked. That fix lives in the PROMPT, and the prompt
+ * is the thing a fix round changes and then forgets to re-record.
+ *
+ * MEASURED TWICE, which is why it is enforced here rather than remembered:
+ * `bash-background-control`'s first cassette froze a task-retrieval id
+ * (`6596b14`), and `bash-timeout-background`'s froze a Read of the
+ * auto-backgrounded task's output file. The second survived review because it
+ * kept REPLAYING — the recording's own file was still on disk, outside the
+ * sandbox that every reset wipes — until the machine rebooted and took `/tmp`
+ * with it.
+ *
+ * Anchored on the engine's own directory names rather than on the bare `b`+8
+ * shape, which would also match prose.
+ */
+export const MINTED_PATH_IN_REQUEST = /\/(?:tasks\/b[0-9a-z]{8}\.output|tool-results\/b[0-9a-z]{8}\.(?:txt|json))/;
+
+/**
+ * Which of a staged cassette's recorded TOOL CALLS name one, with the input
+ * that does.
+ *
+ * The tool_use INPUTS only. A tool RESULT naming the path is the engine
+ * answering, and a result is a reply; the defect is the model asking, because
+ * that is what puts the path in the request the replay has to match.
+ */
+export function mintedPathsIn(cassette: string): string[] {
+  const out: string[] = [];
+  for (const line of readFileSync(cassette, "utf8").split("\n").filter(Boolean)) {
+    let body: unknown;
+    try {
+      body = JSON.parse(JSON.parse(line).requestBody as string);
+    } catch {
+      continue; // a non-JSON body (the boot HEAD) carries no tool call
+    }
+    for (const m of (body as { messages?: { content?: unknown }[] }).messages ?? []) {
+      if (!Array.isArray(m.content)) continue;
+      for (const blk of m.content as { type?: string; name?: string; input?: unknown }[]) {
+        if (blk.type !== "tool_use") continue;
+        const input = JSON.stringify(blk.input ?? null);
+        if (MINTED_PATH_IN_REQUEST.test(input)) out.push(`${blk.name}(${input.slice(0, 160)})`);
+      }
+    }
+  }
+  return [...new Set(out)];
+}
+
+/**
  * Is this take's substance the LIVE take's to prove?
  *
  * Only when the scenario has a check at all, the caller has not turned the check
@@ -167,6 +223,19 @@ export async function recordCassette(opts: RecordOptions): Promise<RecordOutcome
     // a discard whose cause cannot survive the relay to the gate's log is a red
     // phase with no reason under it, which is the defect that module exists for.
     if (hits.length > 0) return discard(`LEAK: the cassette contains ${hits.join(", ")} — config isolation is not holding`);
+    // …and the other way a take is unreplayable: a recorded tool call that names
+    // a path only this run mints (see `MINTED_PATH_IN_REQUEST`). Checked before
+    // the substance check, because a take that names one is not a weaker
+    // recording of the behaviour — it is a recording that cannot be replayed at
+    // all, and the reason has to say which call did it so the fix lands in the
+    // prompt rather than in a scrub.
+    const minted = mintedPathsIn(staged);
+    if (minted.length > 0) {
+      return discard(
+        `the take names an ENGINE-MINTED path in a recorded tool call, so the turn can never be replayed — ${minted.join(" ; ")}. ` +
+          `Forbid the retrieval in the turn where the tool result names the path.`,
+      );
+    }
   }
   if (capturedInfraFailure(rec.messages)) {
     return discard(`the recording captured an infrastructure failure (not engine behaviour)${existsSync(cassette) ? " — the previous cassette is kept" : ""}`);

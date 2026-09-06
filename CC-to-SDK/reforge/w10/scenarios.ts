@@ -333,7 +333,22 @@ const timeoutBackground: Scenario = {
     input.push(
       userMessage(
         `Use the Bash tool to run exactly \`${childCommand(TIMEOUT_PLAN)}\` with the timeout parameter set to 2000. ` +
-          `Then report what the tool told you, verbatim.`,
+          `Then report what the tool told you, verbatim. ` +
+          // THE SAME INSTRUCTION `bash-background-control` NEEDED, and for the
+          // same reason, arrived here a wave late. The first cassette recorded
+          // the model reading the auto-backgrounded task's output file, so the
+          // recorded turn NAMED a path that exists only in the run that minted
+          // it: `…/<session-uuid>/tasks/bjg986xvr.output`. Replay matched only
+          // while that file happened to survive on this machine, outside the
+          // sandbox the reset wipes; once the directory was gone the Read
+          // errored, the next request body no longer hashed to its entry, and
+          // the turn was served positionally. No scrub can repair it — erasing
+          // the id would make the turn match a request for a task that does not
+          // exist. It has to not be asked for, in the turn where the result
+          // names it.
+          `The command may be backgrounded when its timeout expires. If that happens, do NOT read, ` +
+          `retrieve or inspect the background task or the output file it names — that path exists only ` +
+          `in this run. Quote the sentence and stop.`,
       ),
     );
     let results = 0;

@@ -1,4 +1,4 @@
-// Controls for the two rules that decide whether a LIVE take is promoted
+// Controls for the rules that decide whether a LIVE take is promoted
 // (`src/record.ts`), both of which cost an API take to discover by running.
 //
 //   npx tsx src/record.test.ts
@@ -12,7 +12,10 @@
 //
 // This file touches neither `sandbox/` nor `config/`: it imports the scenario
 // lists for their DECLARATIONS and never runs one, so it needs no sandbox lock.
-import { capturedInfraFailure, gradesSubstanceLive } from "./record.js";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { capturedInfraFailure, gradesSubstanceLive, mintedPathsIn } from "./record.js";
 import { type Scenario } from "./harness.js";
 import { W5_SCENARIOS } from "../w5/scenarios.js";
 
@@ -85,12 +88,67 @@ check("every scenario that derives a fault is excluded, and there is at least on
   W5_SCENARIOS.filter((s) => s.deriveFault !== undefined).length > 0 &&
     W5_SCENARIOS.filter((s) => s.deriveFault !== undefined).every((s) => !gradesSubstanceLive(s)));
 
+// ---- the third rule: a recorded tool call may not name an engine-minted path -
+//
+// Written against SYNTHESISED cassettes rather than a corpus one, deliberately.
+// The corpus is the thing this rule protects, so a control that reads it would
+// go green the moment the rule worked and stop testing anything; and the shape
+// under test is the shape a cassette must NOT have. `bash-timeout-background`'s
+// first cassette had it — a `Read` of `…/<session>/tasks/bjg986xvr.output` —
+// and it kept replaying until the machine rebooted and took `/tmp` with it,
+// which is precisely why the rule is enforced at promotion rather than reviewed.
+const box = mkdtempSync(join(tmpdir(), "reforge-record-"));
+const cassetteOf = (...bodies: unknown[]): string => {
+  const f = join(box, `c${Math.random().toString(36).slice(2)}.jsonl`);
+  writeFileSync(f, bodies.map((b) => JSON.stringify({ method: "POST", path: "/v1/messages", requestBody: typeof b === "string" ? b : JSON.stringify(b) })).join("\n") + "\n");
+  return f;
+};
+const turn = (blocks: unknown[]) => ({ messages: [{ role: "assistant", content: blocks }] });
+
+try {
+  const taskRead = cassetteOf(turn([{ type: "tool_use", name: "Read", input: { file_path: "/private/tmp/claude-501/x-sandbox/a2ec2b6d/tasks/bjg986xvr.output" } }]));
+  check("a recorded Read of a backgrounded task's output file is named", mintedPathsIn(taskRead).length === 1, JSON.stringify(mintedPathsIn(taskRead)));
+  check("…and the reason quotes the call, so the fix can be aimed at the prompt", mintedPathsIn(taskRead)[0]?.startsWith("Read(") === true, mintedPathsIn(taskRead)[0]);
+
+  const resultRead = cassetteOf(turn([{ type: "tool_use", name: "Read", input: { file_path: "/x/y/tool-results/b1a2b3c4d.txt" } }]));
+  check("a recorded read of a persisted tool-result file is named too", mintedPathsIn(resultRead).length === 1, JSON.stringify(mintedPathsIn(resultRead)));
+
+  // THE NEGATIVE DIRECTION, and it is the half that matters: the engine writes
+  // these paths into tool RESULTS on every backgrounded run, and a rule that
+  // rejected those would reject every healthy take of three scenarios.
+  const inResult = cassetteOf({
+    messages: [{ role: "user", content: [{ type: "tool_result", content: "…was moved to the background (ID: bjg986xvr). Output is being written to: /tmp/s/a2ec/tasks/bjg986xvr.output." }] }],
+  });
+  check("the same path in a tool RESULT is not a finding — a result is the engine answering", mintedPathsIn(inResult).length === 0, JSON.stringify(mintedPathsIn(inResult)));
+  const prose = cassetteOf(turn([{ type: "text", text: "the file at /tasks/bjg986xvr.output is where output goes" }]));
+  check("…and so is the path in the model's own prose, which no replay has to match", mintedPathsIn(prose).length === 0, JSON.stringify(mintedPathsIn(prose)));
+  const ordinary = cassetteOf(turn([{ type: "tool_use", name: "Read", input: { file_path: "/x/sandbox/reforge-child.sh" } }]));
+  check("an ordinary Read is not a finding", mintedPathsIn(ordinary).length === 0, JSON.stringify(mintedPathsIn(ordinary)));
+  const bare = cassetteOf(turn([{ type: "tool_use", name: "Bash", input: { command: "echo bjg986xvr" } }]));
+  check("…nor is the bare id shape, which also occurs in prose", mintedPathsIn(bare).length === 0, JSON.stringify(mintedPathsIn(bare)));
+
+  const boot = cassetteOf("");
+  check("a non-JSON body (the boot probe) is skipped rather than thrown on", mintedPathsIn(boot).length === 0);
+
+  const many = cassetteOf(
+    turn([{ type: "tool_use", name: "Read", input: { file_path: "/a/tasks/bjg986xvr.output" } }]),
+    turn([{ type: "tool_use", name: "Read", input: { file_path: "/a/tasks/bjg986xvr.output" } }]),
+  );
+  check("the same call in two entries is reported once", mintedPathsIn(many).length === 1, JSON.stringify(mintedPathsIn(many)));
+} finally {
+  rmSync(box, { recursive: true, force: true });
+}
+
 console.log(`=== live-take promotion rules: ${pass} check(s) ===`);
 for (const f of failures) console.log(`  FAIL — ${f}`);
 if (pass === 0) {
   console.log("FAIL — no control ran");
   process.exitCode = 1;
 } else {
-  console.log(failures.length === 0 ? "PASS — a throttle is waited out and a derived fault is not demanded of the live take" : `FAIL — ${failures.length} control(s) failed`);
+  console.log(
+    failures.length === 0
+      ? "PASS — a throttle is waited out, a derived fault is not demanded of the live take, and a take that names an engine-minted path is refused"
+      : `FAIL — ${failures.length} control(s) failed`,
+  );
   process.exitCode = failures.length === 0 ? 0 : 1;
 }
