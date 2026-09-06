@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { diffTranscripts, makeRunNormalizer, normalizeValue, type DiffFinding } from "../src/differ.js";
 import { runScenarioOnce, type ScenarioRun } from "../src/runScenario.js";
 import { resealScenario } from "../src/reseal.js";
-import { baselineSeedHash, EMPTY_PRECONDITION, type ConfigPrecondition, type RecordedPrecondition, type Scenario } from "../src/harness.js";
+import { baselineSeedHash, EMPTY_PRECONDITION, sidecarDriftReason, type ConfigPrecondition, type RecordedPrecondition, type Scenario } from "../src/harness.js";
 import { ENGINE_VERSION } from "../src/pin.js";
 import { recordCassette } from "../src/record.js";
 import { scrubRequestBody } from "../src/canonical.js";
@@ -219,23 +219,10 @@ function sidecarState(s: Scenario): {
     ? (JSON.parse(readFileSync(preFile, "utf8")) as RecordedPrecondition)
     : undefined;
   const recordedPre: ConfigPrecondition = recorded?.declared ?? EMPTY_PRECONDITION;
-  const driftReason =
-    recorded === undefined
-      ? "no precondition sidecar was recorded beside this cassette"
-      : typeof recorded.baselineSha256 !== "string"
-        ? "the sidecar records a declaration but not the baseline seed it was applied on top of (a pre-F4 sidecar)"
-        : recorded.baselineSha256 !== baselineSha256
-          ? `the baseline seed has changed since the recording (${recorded.baselineSha256.slice(0, 12)} → ${baselineSha256.slice(0, 12)})`
-          : JSON.stringify(recordedPre) !== JSON.stringify(declared)
-            ? "the DECLARED precondition is not the one the cassette was recorded against"
-            // C13c/W10c: the detachment declaration is part of the world the
-            // cassette was recorded against, so a change to it is a finding for
-            // the same reason a changed seed is. Absent on BOTH sides — every
-            // pre-C13c sidecar, and every scenario that declares nothing —
-            // compares equal, so no existing cassette drifts.
-            : JSON.stringify(recorded.detached ?? null) !== JSON.stringify(declaredDetached)
-              ? "the DECLARED detached children are not the ones the cassette was recorded against"
-              : null;
+  // The ladder itself lives in `src/precondition.ts` (C13c fix round), because
+  // the timed lane grades cassettes this runner never sees and was checking only
+  // the baseline half of the same question.
+  const driftReason = sidecarDriftReason(recorded, declared, declaredDetached, baselineSha256);
   return { cassette, preFile, declared, baselineSha256, recorded, recordedPre, driftReason };
 }
 

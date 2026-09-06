@@ -233,6 +233,48 @@ export interface RecordedPrecondition {
   };
 }
 
+/**
+ * Does this sidecar still seal THIS scenario against THIS baseline? `null` when
+ * it does; otherwise the one sentence saying which half moved.
+ *
+ * ONE FUNCTION, and it lives here rather than in a runner because there are now
+ * three callers and a fourth is one wave away. `m1/run.ts`'s grading loop and
+ * its `--reseal` were already forbidden from disagreeing about which sidecars
+ * drift; the timed lane (`w10/timed.ts`) grades cassettes recorded by the same
+ * `recordCassette` and checked only the baseline hash, so a scenario whose
+ * declaration or whose DETACHMENTS had moved since its take was graded against
+ * a world nobody had compared. A second copy of this ladder would have been a
+ * second definition of "sealed".
+ *
+ * `declaredDetached` is the scenario's `detachedChildren` as an array, or `null`
+ * when it declares none — absent on BOTH sides compares equal, so every sidecar
+ * written before the declaration existed still seals.
+ */
+export function sidecarDriftReason(
+  recorded: RecordedPrecondition | undefined,
+  declared: ConfigPrecondition,
+  declaredDetached: readonly string[] | null,
+  baselineSha256: string,
+): string | null {
+  if (recorded === undefined) return "no precondition sidecar was recorded beside this cassette";
+  if (typeof recorded.baselineSha256 !== "string") {
+    return "the sidecar records a declaration but not the baseline seed it was applied on top of (a pre-F4 sidecar)";
+  }
+  if (recorded.baselineSha256 !== baselineSha256) {
+    return `the baseline seed has changed since the recording (${recorded.baselineSha256.slice(0, 12)} → ${baselineSha256.slice(0, 12)})`;
+  }
+  if (JSON.stringify(recorded.declared ?? EMPTY_PRECONDITION) !== JSON.stringify(declared)) {
+    return "the DECLARED precondition is not the one the cassette was recorded against";
+  }
+  // C13c/W10c: the detachment declaration is part of the world the cassette was
+  // recorded against, so a change to it is a finding for the same reason a
+  // changed seed is.
+  if (JSON.stringify(recorded.detached ?? null) !== JSON.stringify(declaredDetached === null ? null : [...declaredDetached])) {
+    return "the DECLARED detached children are not the ones the cassette was recorded against";
+  }
+  return null;
+}
+
 // ---- application ------------------------------------------------------------
 
 function applyFault(configDir: string, fault: FsFault): void {

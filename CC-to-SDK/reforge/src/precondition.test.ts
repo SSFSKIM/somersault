@@ -8,7 +8,7 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { applyPrecondition, baselineConfigJson, projectKeyFor, wipeConfigDir } from "./precondition.js";
+import { applyPrecondition, baselineConfigJson, projectKeyFor, sidecarDriftReason, wipeConfigDir } from "./precondition.js";
 import { censusConfigDir } from "./observed.js";
 
 let pass = 0;
@@ -182,6 +182,36 @@ try {
     applyPrecondition(c, {}, PIN);
     check("…and the counter comes back ABSENT, which is what a config dir that has seen no skill carries",
       JSON.parse(readFileSync(join(c, ".claude.json"), "utf8")).skillUsage === undefined);
+  }
+
+  // ---- what a sidecar has to still seal, for every lane that grades one ------
+  // `sidecarDriftReason` is the whole ladder `m1/run.ts`, its `--reseal` and
+  // `w10/timed.ts` share; the timed lane checked only the baseline rung until
+  // C13c's fix round, so the rungs below it are the ones worth pinning.
+  {
+    const SEED = "a".repeat(64);
+    const sealed = { declared: {}, baselineSha256: SEED };
+    check("a sidecar that seals this declaration on this baseline does not drift",
+      sidecarDriftReason(sealed, {}, null, SEED) === null);
+    check("no sidecar at all is drift", sidecarDriftReason(undefined, {}, null, SEED) !== null);
+    check("a sidecar with no baseline hash is drift (a pre-F4 one)",
+      sidecarDriftReason({ declared: {} } as never, {}, null, SEED) !== null);
+    check("a moved baseline seed is drift", sidecarDriftReason(sealed, {}, null, "b".repeat(64)) !== null);
+    check("a declaration the cassette was not recorded against is drift",
+      sidecarDriftReason(sealed, { seed: [{ path: REL, content: transcript }] }, null, SEED) !== null);
+    // THE DETACHMENT RUNG. Absent on both sides is the pre-C13c sidecar and the
+    // scenario that declares nothing — the same statement, so no drift.
+    check("declaring a detachment the sidecar never recorded is drift",
+      sidecarDriftReason(sealed, {}, ["sleep 7"], SEED) !== null);
+    check("…and withdrawing one it did record is drift too",
+      sidecarDriftReason({ ...sealed, detached: ["sleep 7"] }, {}, null, SEED) !== null);
+    check("…and changing WHICH children are declared is drift",
+      sidecarDriftReason({ ...sealed, detached: ["sleep 7"] }, {}, ["sleep 9"], SEED) !== null);
+    check("…while the same declaration on both sides seals",
+      sidecarDriftReason({ ...sealed, detached: ["sleep 7"] }, {}, ["sleep 7"], SEED) === null);
+    check("an EMPTY detachment declaration is a statement, not an absence",
+      sidecarDriftReason({ ...sealed, detached: [] }, {}, [], SEED) === null &&
+        sidecarDriftReason({ ...sealed, detached: [] }, {}, null, SEED) !== null);
   }
 } finally {
   try {

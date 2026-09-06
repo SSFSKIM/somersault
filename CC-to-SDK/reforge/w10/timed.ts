@@ -32,7 +32,7 @@ import { join } from "node:path";
 import { diffTranscripts, makeRunNormalizer, normalizeValue } from "../src/differ.js";
 import { scrubRequestBody } from "../src/canonical.js";
 import { requireRecordCredential } from "../src/env.js";
-import { baselineSeedHash, EMPTY_PRECONDITION, type RecordedPrecondition, type Scenario } from "../src/harness.js";
+import { baselineSeedHash, EMPTY_PRECONDITION, sidecarDriftReason, type RecordedPrecondition, type Scenario } from "../src/harness.js";
 import { recordCassette } from "../src/record.js";
 import { ENGINE_VERSION } from "../src/pin.js";
 import { runScenarioOnce } from "../src/runScenario.js";
@@ -99,7 +99,6 @@ for (const spec of specs) {
   console.log(`  why not the oracle: ${spec.why}`);
   const cassette = cassetteFor(spec.tag);
   const sidecar = sidecarFor(spec.tag);
-  const declared = EMPTY_PRECONDITION;
   const baselineSha256 = baselineSeedHash(ENGINE_VERSION);
 
   if (record) {
@@ -111,7 +110,10 @@ for (const spec of specs) {
     const s: Scenario = spec.make(PINNED);
     const paying = Object.keys(spec.timers).map((role) => `${role}=${PINNED[role as DeadlineRole]}ms`).join(", ");
     console.log(`  recording live via engine-real at the PINNED deadlines (${paying}) — this take pays the real wait, once ...`);
-    const out = await recordCassette({ scenario: s, declared, cassette, sidecar, engineB: "engine-strangled" });
+    // The SCENARIO's declaration, not a constant: what the sidecar writes down
+    // has to be what the graded lane below compares against, and it compares
+    // against `s.precondition`.
+    const out = await recordCassette({ scenario: s, declared: s.precondition ?? EMPTY_PRECONDITION, cassette, sidecar, engineB: "engine-strangled" });
     if (!out.ok) {
       console.log(`    DISCARDED: ${out.reason} — nothing promoted`);
       verdicts.push({ tag: spec.tag, pass: false });
@@ -128,13 +130,24 @@ for (const spec of specs) {
     continue;
   }
   const recorded = existsSync(sidecar) ? (JSON.parse(readFileSync(sidecar, "utf8")) as RecordedPrecondition) : undefined;
-  if (recorded === undefined || typeof recorded.baselineSha256 !== "string") {
-    console.log("    REFUSING TO GRADE: the cassette has no precondition sidecar, so nothing says what world it answers.");
-    verdicts.push({ tag: spec.tag, pass: false });
-    continue;
-  }
-  if (recorded.baselineSha256 !== baselineSha256) {
-    console.log(`    REFUSING TO GRADE: the baseline seed has moved since the recording (${recorded.baselineSha256.slice(0, 12)} → ${baselineSha256.slice(0, 12)}).`);
+
+  // The scenario as it will actually be GRADED, built before the sidecar is
+  // judged, because it is what the sidecar is judged against.
+  const effective: EffectiveDeadlines = { ...PINNED, ...spec.timers };
+  const s = spec.make(effective);
+
+  // THE WHOLE LADDER, not the baseline half of it (`sidecarDriftReason`, the
+  // same function `m1/run.ts` grades its 69 cassettes with). This lane checked
+  // only that the seed had not moved, so a timed scenario whose declared
+  // precondition or whose DECLARED DETACHMENTS had changed since its take went
+  // on being graded against a world nothing had compared — and the detachment
+  // declaration is precisely what this wave's supervision surface reads. Both
+  // timed scenarios declare their detachments (`bash-stall-detect` leaves the
+  // scripted child and its `sleep` running by design), so the half that was
+  // unchecked is the half most likely to move.
+  const drift = sidecarDriftReason(recorded, s.precondition ?? EMPTY_PRECONDITION, s.detachedChildren ?? null, baselineSha256);
+  if (drift !== null) {
+    console.log(`    REFUSING TO GRADE: ${drift}. Re-record it: npx tsx w10/timed.ts --record --scenario ${spec.tag}`);
     verdicts.push({ tag: spec.tag, pass: false });
     continue;
   }
@@ -145,10 +158,11 @@ for (const spec of specs) {
   const B = timedEngine(spec.timers, "engine-strangled");
   console.log(`  A=${A.base} ${A.built ? "(built)" : "(cached)"}, B=${B.base} ${B.built ? "(built)" : "(cached)"}; applied ${A.applied.map((x) => `${x.role} ${x.from}→${x.to}`).join(", ")}`);
 
-  const effective: EffectiveDeadlines = { ...PINNED, ...spec.timers };
-  const s = spec.make(effective);
   const run = (engine: string, side: string) =>
-    runScenarioOnce({ scenario: s, engineName: engine, mode: "replay", cassette, side, precondition: recorded.declared, engineB: "engine-strangled" });
+    // The scenario's OWN declaration: the drift check above has just proved the
+    // sidecar records this one, so reading it back off disk would only be a
+    // second name for the same value.
+    runScenarioOnce({ scenario: s, engineName: engine, mode: "replay", cassette, side, precondition: s.precondition ?? EMPTY_PRECONDITION, engineB: "engine-strangled" });
 
   console.log(`  replaying offline at ${describeProfile(spec.timers)} ...`);
   const a = await run(A.engine, "A");
