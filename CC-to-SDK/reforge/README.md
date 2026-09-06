@@ -6499,3 +6499,4 @@ here.
 | `extract-run-id-shapes.ts --check`, unchanged and re-run | PASS: 20 mapped keys, 2 collisions, 1 text pattern and 14 shape scrubs — the differ needed no new rule, so this fixture did not move |
 | suites | census projection 15 → **23**, differ run-id map 44 → **47**, state surface 43 → **44** |
 | gate phases added by this round | **none** — both reds are closed inside phases that already existed |
+| the gate, re-run over the closed tree (`3f803e7`) | **GATE PASS — 166 phases, 166 PASS, 0 FAIL** — `build/gate-20260906-1939.log` (raw stream `build/c13c-merged-gate2.log`). Inside the block: canonicalization 119, differ run-id map 47, config precondition 32, process supervision 39, scripted child 44, re-seal 25; coverage attestation, config-dir inventory, run-id shapes and the timed-deadline pair all green |
