@@ -1061,3 +1061,54 @@ worst case is disk. A gate that ran the timed lane under several sabotage varian
 **Fix when:** the wave that puts the timed lane under sabotage (C13d, which will want exactly that).
 The shape is an LRU or a prune-on-boot in `timedEngine` keyed on last use. Not taken here because
 four entries is not a problem and a cache policy invented before its access pattern exists is a guess.
+
+## 2026-09-06 — the replay hash's run-id scrubs are body-wide, so two prompts differing only in a scrubbed path share a key
+
+**Source:** C13c/W10c fix round, Codex review of `ac12f11..f866aae` · `reforge/src/canonical.ts`
+(`RUN_ID_SHAPE_SCRUBS`, and in particular the C13c additions `/tool-results/b….(txt|json)` and the
+session-uuid rule immediately above it) · applied by `canonicalForHash` at ~451.
+
+**What.** The scrub list is applied to EVERY string in a request body, not to the fields where the
+engine actually writes these ids. Two prompts that differ only in a persisted-result path — or only
+in the session uuid that precedes one — canonicalize to the same replay key. `assertNoKeyCollisions`
+runs at replay-proxy startup and would REFUSE such a cassette, so the failure mode is a loud refusal
+rather than a misroute; but with one entry per key there is nothing for it to reject, and the two
+turns would be served interchangeably.
+
+**Why it was not fixed here.** Two reasons, and the first is the load-bearing one. (1) The corpus-wide
+constraint this wave discovered forbids the shape that would make it observable: a recorded turn may
+not name an engine-minted id at all, which is now stated on `Scenario` in `src/harness.ts`. A
+cassette containing two turns that differ only in such a path is a cassette that broke that rule
+before it reached the hash. (2) Every entry in `RUN_ID_SHAPE_SCRUBS` is body-wide by the same design,
+including the six that predate this wave — field-scoping one rule without the rest would leave the
+list meaning two different things, and the proxy's collision guard is the property the design leans
+on rather than field precision.
+
+**Cost if nobody pays it.** Bounded by the collision guard: the corpus cannot silently misroute, it
+can only refuse to start. What is unbounded is the review burden — every scrub added to this list is
+a widening of what the hash cannot tell apart, over the whole body. The 2026-09-06 round pinned the
+list in `research/fixtures/run-id-shapes-2.1.251.json` with a `--check` in both directions, so the
+population is at least counted.
+
+**Fix when:** a wave needs a cassette whose turns differ in one of these paths — C13e (the
+notification surface) is the likeliest, since it owns the retrieval that names an output file. The
+shape is a field-scoped variant of `canonicalForHash` that applies the id scrubs only under the
+properties the ids are written into, with the body-wide list kept for prose.
+
+## 2026-09-06 — the C13c corpus and census logs were never archived under `build/`
+
+**Source:** C13c/W10c fix round (verifier M4) · `reforge/README.md` "W10c".
+
+**What.** The wave's numbers were read from `/tmp/c13c-corpus.log`, `/tmp/c13c-corpus4.log`,
+`/tmp/c13c-final-corpus.log` and `/tmp/c13c-census2.log`. None of them was copied into `build/`, and
+all four are gone from `/tmp` as of the fix round, so the run tables in the record cannot be
+re-derived from an artifact — only re-measured by re-running. Every other long run in this campaign
+writes its log under `build/` (`build/gate-*.log`, `build/attest-*.log`), which is gitignored but
+survives a session.
+
+**Cost if nobody pays it.** The corrections in this fix round had to be taken on the reviewer's
+reading of logs that no longer exist. That is exactly the position the campaign's "the measurement
+stays, the mechanism is replaced" rule is meant to keep it out of.
+
+**Fix when:** the next wave that runs the corpus. The shape is a convention, not code: long runs go
+to `build/<name>.log` and the record cites that path. The fix round's own corpus run does.
