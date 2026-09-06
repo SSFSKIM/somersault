@@ -686,12 +686,27 @@ const stallDetect = (d: EffectiveDeadlines): Scenario => {
 };
 
 /**
- * THE SIGTERM->SIGKILL ESCALATION. `#h` sends SIGTERM, arms a `sigterm-to-sigkill`
- * (1,500 ms) backstop that process-group-SIGKILLs, and polls liveness every
- * `post-kill-liveness-poll` (100 ms) so a process that died of the TERM cancels
- * the backstop before it fires. A child that IGNORES SIGTERM is the only way the
- * backstop is ever reached, and the corpus has none — every command it runs dies
- * of the first signal.
+ * THE SIGTERM->SIGKILL ESCALATION. `#h` (chunk-fy12d89p.js @104727) sends
+ * SIGTERM, arms a `sigterm-to-sigkill` (`WKt` = 1,500 ms) backstop that
+ * process-group-SIGKILLs, and polls every `post-kill-liveness-poll` (`zKt` =
+ * 100 ms) so a target that is entirely gone cancels the backstop before it
+ * fires. A child that IGNORES SIGTERM is the only way the backstop is ever
+ * reached, and the corpus has none — every command it runs dies of the first
+ * signal.
+ *
+ * WHAT `#h` SIGNALS, and what "gone" means, because an earlier reading of this
+ * block had both wrong and the command form below was justified by the error.
+ * `#h` calls `GE(t, "SIGTERM")` on the SHELL's pid, and `GE`
+ * (chunk-dmw41ak1.js @757, body at @850) is a TREE kill: it enumerates the
+ * descendants, sends the signal to the process GROUP with
+ * `process.kill(-e, o)` — the shell is spawned `detached:!0`
+ * (chunk-fy12d89p.js @2121369), so it leads the group — and then signals each
+ * descendant individually. The cancel predicate `zUe` @106193 tries BOTH `-e`
+ * and `e` and reports gone only when the group AND the pid answer ESRCH.
+ *
+ * So a trapping process anywhere in that group keeps the group alive, the
+ * predicate keeps returning false, and the backstop fires at `WKt` and SIGKILLs
+ * the group. The escalation is reachable whether or not the shell `exec`s.
  *
  * ## The command form is a MEASUREMENT, not a preference
  *
@@ -706,15 +721,17 @@ const stallDetect = (d: EffectiveDeadlines): Scenario => {
  *     subcommand is in `$cr = ["sleep"]`. A plain `./reforge-child.sh …` is
  *     simple, so it takes the backgrounding arm — which is what the sibling
  *     scenario `bash-timeout-background` grades, deliberately.
- *  2. THE SIGNALLED PROCESS MUST BE THE ONE THAT IGNORES THE SIGNAL. `#h`
- *     signals the SHELL's pid and cancels its backstop as soon as that pid is
- *     gone. MEASURED on this host: `bash -c '<one simple command>'` exec-
- *     optimizes, so the shell IS the script and survives; `bash -c '<cmd> >
- *     file'` and `bash -c '<cmd>; true'` do NOT, so bash dies of the TERM, the
- *     liveness poll sees the pid gone, the backstop is CANCELLED — and the
- *     script it started is orphaned and survives. That path reaches neither the
- *     escalation nor a clean shutdown, and the supervision surface would report
- *     it as a leak.
+ *  2. THE SIGNALLED PROCESS SHOULD BE THE ONE THAT IGNORES THE SIGNAL — a claim
+ *     about what this scenario MEASURES, not about what the engine can reach.
+ *     `#h` names the SHELL's pid, and `GE` turns that name into a group signal
+ *     plus a per-descendant one, so a trapping process is reached either way.
+ *     What differs is what the scenario is then a test of: with `exec`, the pid
+ *     `#h` was handed is the pid that traps, and the escalation is being graded
+ *     on a signalled process that refused to die. Without it — MEASURED on this
+ *     host: `bash -c '<one simple command>'` exec-optimizes, while
+ *     `bash -c '<cmd> > file'` and `bash -c '<cmd>; true'` do not — bash dies of
+ *     the TERM and the trapping script is an orphan that inherits the group
+ *     signals, which is a weaker and less direct claim about the same code path.
  *
  * `sleep 0 && exec ./reforge-child.sh …` satisfies both, and each half is doing
  * one job: the leading `sleep` puts `sleep` at the head of `Ua`'s first
@@ -722,6 +739,19 @@ const stallDetect = (d: EffectiveDeadlines): Scenario => {
  * replaces the shell with the script unconditionally, so the pid `#h` signals is
  * the pid that traps. Measured: it survives SIGTERM and dies of the group
  * SIGKILL.
+ *
+ * WHAT AN EARLIER VERSION OF THIS BLOCK CLAIMED, corrected here rather than
+ * quietly deleted, because the fix round found the measurement right and the
+ * mechanism wrong. It said the backstop "is cancelled the moment that pid is
+ * gone", so that without `exec` the orphan "survives, reaching neither the
+ * escalation nor a clean shutdown" and the supervision surface would report a
+ * leak. Read at the offsets above, `zUe` requires the GROUP to be gone as well,
+ * and the orphan is still in it. The measurement — this command form survives
+ * SIGTERM and dies of the group SIGKILL — is unchanged; `exec` is a choice
+ * about what is being graded, not the thing that makes the escalation
+ * reachable. That distinction is a seam note: a future `ShellProcessPort` must
+ * reimplement a GROUP-scoped kill and a two-part liveness predicate, and would
+ * pass a pid-scoped reading of this paragraph while being wrong.
  *
  * The trigger is the tool's own `timeout` rather than an interrupt, because a
  * timeout is a declaration in the tool call while an interrupt is a race against
@@ -778,8 +808,9 @@ const killEscalation = (d: EffectiveDeadlines): Scenario => {
     title: "a timed-out Bash command whose child ignores SIGTERM",
     // Nothing may survive: the escalation exists precisely so that a child which
     // ignores SIGTERM is still gone. The EMPTY declaration makes any survivor a
-    // LEAK on the supervision surface — which is this scenario's second claim,
-    // and the one that catches the cancelled-backstop path described above.
+    // LEAK on the supervision surface — this scenario's second claim, and the
+    // one that would catch a backstop that was cancelled, or a group SIGKILL
+    // that reached the shell and not the process that trapped.
     detachedChildren: [],
     run: async (ctx) => {
       seedScriptedChild(SANDBOX);
@@ -808,7 +839,13 @@ const killEscalation = (d: EffectiveDeadlines): Scenario => {
       }
       const cmd = String(uses[0].input?.command ?? "");
       if (!cmd.includes("--ignore-term")) return "the recorded command does not carry --ignore-term, so the backstop was never needed";
-      if (!cmd.includes("exec ")) return `the recorded command lost its \`exec\`, so the signalled pid is bash and not the trapping script: ${JSON.stringify(cmd)}`;
+      // The `exec` is pinned because it is what makes the pid `#h` is handed the
+      // pid that traps — the thing this scenario means to grade. It is NOT what
+      // makes the escalation reachable: `GE` signals the whole process group, so
+      // an orphaned trapping script is reached anyway (see the block above, with
+      // offsets). Losing it would leave a green scenario measuring something
+      // weaker than its title.
+      if (!cmd.includes("exec ")) return `the recorded command lost its \`exec\`, so the pid \`#h\` names is bash rather than the trapping script and the escalation is graded only through the group signal: ${JSON.stringify(cmd)}`;
       if (!/^\s*sleep\s/.test(cmd)) return `the recorded command lost its leading sleep, so \`r_r\` is true and the deadline backgrounds instead of killing: ${JSON.stringify(cmd)}`;
       // Read from the TOOL RESULT, not from the capture: the command string is
       // echoed back in the tool_use block, so a whole-capture search for
