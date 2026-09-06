@@ -5786,7 +5786,7 @@ that could not be recorded without them.
 
 The wave's premise, restated as a measurement: the corpus has 63 scenarios and **every Bash command
 in it is `echo`, `mkdir`, `chmod`, `cd`, `pwd` or `sleep`**. That reaches one of `dZe`'s six result
-arms, no truncation, no backgrounding, no timeout, no compound command and no pre-spawn refusal. The
+arms, no truncation, no backgrounding, no timeout, no compound command and no cwd recovery. The
 executor's interesting arms are not hiding behind a gate; they are behind a child nobody specified,
 a deadline nobody could move, and a surface that cannot see a process.
 
@@ -5950,7 +5950,7 @@ snapshot is taken would otherwise make the surface flaky in the one direction a 
 never be flaky. §3.4's justification: what it hides is a child that outlived the engine by less than
 the window, which is a child that is exiting rather than one that leaked.
 
-**Every control leaks a real process.** 31 checks: an orphan carrying the child's name is named as a
+**Every control leaks a real process.** 39 checks (31 before the 2026-09-06 fix round, which added the cwd-route, reap-by-pid and basename controls): an orphan carrying the child's name is named as a
 LEAK and as orphaned; the same orphan, DECLARED, is recorded but is not a leak — and is still
 recorded, so an engine that failed to detach the child it was supposed to detach still diffs;
 killing it makes the surface quiet again; an orphan with no tie to the run is dropped; a survivor
@@ -6003,7 +6003,16 @@ attributed to a scenario and REAPED, and the single-writer lock does not cover t
 guards `resetSandbox()` and a build calls neither. The markers are now the sandbox, the config dir
 and the scripted child's own file name, all of which are specific to a RUN's world rather than to the
 checkout; nothing is lost, because a leaked engine child or shell runs with the sandbox as its cwd
-and the cwd route attributes it whatever its command line says.
+and the cwd route attributes it whatever its command line says. (The marker list lost the scripted
+child's bare file name in the 2026-09-06 fix round, and the cwd route gained an orphan requirement,
+for the same class of reason one level down — see that round's own section.)
+
+**WHERE THE NUMBERS IN THIS SECTION COME FROM, stated because they cannot be re-derived.** Every run
+table below was read from a log under `/tmp` — `c13c-corpus.log`, `c13c-corpus4.log`,
+`c13c-final-corpus.log`, `c13c-census2.log` — and none was copied into `build/`. The machine rebooted
+on 2026-09-06 and `/tmp` is empty, so these numbers can be re-measured but not re-checked against the
+artifact that produced them. Logged in `docs/tech-debt-tracker.md`; the fix round's own runs write to
+`build/c13c-fixround-*.log` and are cited by path.
 
 **The corpus, graded through the wired path.** Two full runs of `m1/run.ts`, and the honest result is
 not 63/63:
@@ -6013,9 +6022,14 @@ not 63/63:
 | first (process snapshot taken BEFORE the tree) | 62 PASS / 1 FAIL | `background-task`, 44 differences in the config transcript's record ordering | PASS ×3 |
 | second (tree read restored to its original instant) | 62 PASS / 1 FAIL | `hooks`, SDK message count 5 against 7 | PASS ×2 |
 
-**The state surface — the one this wave changed — was IDENTICAL in both failures**, and each red
-scenario passes in isolation. The machine's load average during these runs was 12, with 36 to 46
-unattributable new processes appearing inside a single scenario. Reported as two load flakes on
+**CORRECTED 2026-09-06 (fix round).** This paragraph used to say "the state surface — the one this
+wave changed — was IDENTICAL in both failures", and the table one row above contradicts it: the first
+run's 44 differences are ON the state surface, in the config root, and the paragraph below already
+attributes them to snapshot ordering rather than to a leak. What is true, and is what the sentence
+was reaching for, is narrower: **the PROCESS member this wave added carried no difference in either
+failure.** The second run's red is on the SDK message count, which is not a state surface at all.
+Each red scenario passes in isolation. The machine's load average during these runs was 12, with 36
+to 46 unattributable new processes appearing inside a single scenario. Reported as two load flakes on
 surfaces this wave did not touch rather than as 63/63, because the second number would be a claim and
 the first is what was observed.
 
@@ -6046,15 +6060,21 @@ the rewritten constants read back out of the built tree and the other five untou
 The throttle held for three hours and four attempts, refusing with the same sentence every time; it
 cleared at 12:56 and all eight landed inside twenty minutes.
 
+Sizes and exchange counts below are `wc` over the promoted cassettes as of the 2026-09-06 fix round.
+Three rows were stale in the first version of this table — `bash-background-control` was written as
+350,872 B and `bash-kill-escalation` as 170,163 B, both of them numbers from takes that were then
+superseded, and `bash-timeout-background`'s row described the recording that had to be replaced (see
+the fix round below).
+
 | scenario | graded pair | cassette | exchanges |
 |---|---|---|---|
 | `bash-compound-safety` | real vs extracted | 170,469 B | 3 |
 | `bash-background-explicit` | real vs extracted | 339,413 B | 5 |
-| `bash-background-control` | real vs extracted | 350,872 B | 5 |
+| `bash-background-control` | real vs extracted | 339,611 B | 5 |
 | `bash-large-output` | real vs extracted | 170,441 B | 3 |
-| `bash-timeout-background` | real vs extracted | 440,337 B | 6 |
+| `bash-timeout-background` | real vs extracted | 338,840 B | 5 (**re-recorded 2026-09-06**; the first take was 440,337 B over 6 and was unreplayable) |
 | `bash-prespawn-error` | real vs extracted | 336,533 B | 5 |
-| `bash-kill-escalation` | extracted vs strangled @ `sigterm-to-sigkill=400ms, post-kill-liveness-poll=40ms` | 170,163 B | 3 |
+| `bash-kill-escalation` | extracted vs strangled @ `sigterm-to-sigkill=400ms, post-kill-liveness-poll=40ms` | 172,821 B | 3 |
 | `bash-stall-detect` | extracted vs strangled @ `stall-poll=400ms, stall-idle=1800ms` | 469,058 B | 6 |
 
 **W7's row is closed.** `background_tasks` fired against an empty registry when W7 measured it —
@@ -6062,9 +6082,21 @@ FIRED arm, UNREACHED effect. The recording carries the effect: a `task_started`,
 reading `Command was manually backgrounded by user with ID: bg2upqib7. Output is being written to:
 …`, then a notification whose summary is `Background command "Run reforge-child.sh with specified
 args" completed (exit code 0)` — exactly the `ZCe` + `x$e` composition predicted from the bundle
-before the take existed — and finally a second tool result in which the model retrieves
-`<task_type>local_bash</task_type> <status>completed</status> <exit_code>0</exit_code>` with the
-child's declared bytes inside it.
+before the take existed.
+
+**CORRECTED 2026-09-06 (fix round): the retrieval is not in the promoted cassette, and the closure
+does not need it.** This paragraph used to end with "and finally a second tool result in which the
+model retrieves `<task_type>local_bash</task_type> <status>completed</status> <exit_code>0</exit_code>`
+with the child's declared bytes inside it". That sentence describes a SUPERSEDED take.
+`grep -c task_type cassettes/m1-bash-background-control.jsonl` is **0**, because the retrieval is
+what the scenario now forbids: it froze a per-run task id into the cassette, and the id has to be
+minted afresh on every replay, so the recorded turn could never be matched again (commit `6596b14`;
+the instruction moved into turn ONE, because the model reaches for the output file in the same turn
+the result names it). The closure stands on what the cassette does carry — the `task_started`, the
+`Command was manually backgrounded by user with ID: …` result, and the completion notification's
+exact summary — which is the arm W7 fired against an empty registry and the effect it could not
+reach. The retrieval was evidence that the task registry answers a query; it was never what closed
+the row.
 
 **Four takes were discarded, and every one of them corrected something.** The discard rule is what
 made that possible: a take in which the behaviour did not happen is not a recording of the scenario,
@@ -6075,9 +6107,17 @@ so it is never promoted, and the walk stops rather than retrying.
    running to completion in the FOREGROUND. The assistant frame is not a clock: how long after it a
    consumer sees it is not a property the scenario controls. The trigger is now
    `system`/`task_started`, which carries the shell's `tool_use_id` and is emitted when the engine
-   REGISTERS the task. **Measured incidentally, and it matters for C13e: `task_started` is emitted
-   for a FOREGROUND Bash too**, so its presence is not evidence of backgrounding — the control
-   request's own answer is.
+   REGISTERS the task. **Measured, and CORRECTED 2026-09-06 (fix round) — the first wording said
+   `task_started` is emitted for a FOREGROUND Bash "too", full stop, which is over-general.** A
+   foreground Bash emits it when the BACKGROUND-HINT gate registers it: the progress loop mints the
+   task at `if(!tt&&!dn&&Ke===void 0&&Jn>=kzt/1000){…YFt(…)}` (chunk-fy12d89p.js @3854661) with
+   `kzt = 2000`, so a command that finishes inside two seconds never produces the frame. The eight
+   record transcripts agree exactly: `task_started` count 0 in `bash-compound-safety`,
+   `bash-large-output`, `bash-prespawn-error` and `bash-kill-escalation` (whose timeout is 1.5 s),
+   and 1 in the four that run past 2 s. Two consequences, and C13e builds to both: the frame is still
+   not evidence of BACKGROUNDING — the control request's own answer is — and this trigger works for
+   an 11-second child and would never fire for a short one, so the plan's duration is part of the
+   scenario rather than incidental to it.
 2. **`bash-large-output` and `bash-kill-escalation` — three turns was not enough.** Both ended
    `Reached maximum number of turns (3)` and threw, so the capture was the exception alone and the
    substance check reported "Bash tool never used" — true of the capture and misleading about the
@@ -6137,7 +6177,7 @@ four different sentences:
 |---|---|
 | `Command running in background with ID: <id>` | the explicit-background arm |
 | `Command was manually backgrounded by user with ID: <id>` | the `background_tasks` control arm |
-| `was moved to the background (ID: <id>)` | `WMt`'s TIMEOUT arm — a *different* sentence from the one above |
+| `was moved to the background (ID: <id>)` | the TIMEOUT arm of `b1t` (chunk-fy12d89p.js @2135880), the notification composer — a *different* sentence from the one above, and the same clause covers its `backgroundedToDeliverMessage` arm. **CORRECTED 2026-09-06**: attributed to `WMt` here until the fix round; `WMt` @61843 is the effective-timeout clamp and composes no sentence |
 | `<task_id>…</task_id>` vs `<task-id>…</task-id>` | the retrieval envelope uses an UNDERSCORE, the notification attachment a HYPHEN |
 | `…/<session-uuid>/tool-results/<id>.txt` | the persisted result's file AND the session uuid in its directory |
 
@@ -6179,6 +6219,17 @@ all. The differ suite goes 40 → 44 checks and the pin-keyed run-id fixture sti
 **The result: all eight cassettes hash-match with ZERO positional serves** — W0c's bar, on the
 scenarios most likely to miss it.
 
+**…and one of them did not, which the fix round found and this claim hid.**
+`bash-timeout-background` was recorded with the model READING the auto-backgrounded task's output
+file: a `Read` of `…/<session-uuid>/tasks/bjg986xvr.output`, whose contents the next turn quotes
+back. That is exactly the constraint stated one paragraph above, in the scenario next to the one that
+taught it — and it survived because it kept replaying. The recording's own output file was still on
+disk, OUTSIDE the sandbox every reset wipes, so the Read succeeded and the bodies matched. The
+machine rebooted on 2026-09-06 and took `/tmp` with it; the corpus run that morning served two
+requests positionally per side on that scenario, and passed only because a positional serve is a
+WARN rather than a FAIL for the identical-code pair (`fallbackVerdict`, §3.4). It is re-recorded
+below, and the rule is now enforced at promotion rather than remembered.
+
 ### The numbers this wave closes on
 
 | | |
@@ -6189,10 +6240,10 @@ scenarios most likely to miss it.
 | timer negative control | **PASS** — `background-hint` 2,000 → 300 ms moves 29 fields, and the one it owns is an extra `task_started` (the command auto-backgrounds sooner) |
 | scripted child | 44 checks | 
 | shell deadlines | 27 checks, every one a refusal |
-| process supervision | 31 checks, each leaking a real process |
+| process supervision | 31 checks, each leaking a real process (**39** after the fix round) |
 | differ run-id map | 40 → 44 checks |
-| canonicalization | 99 checks |
-| re-seal | 15 → 17 checks |
+| canonicalization | 99 checks (**119** after the fix round) |
+| re-seal | **25** checks (this row read "15 → 17" until the fix round measured it) |
 | pin-keyed fixtures | **twelfth**: `shell-timers-2.1.251.json` (5 deadlines / 7 constants / 7 prompt patterns) |
 | gate phases added | **five** — four build-free in the determinism block, one in auxiliary |
 | ledger | `subsystem/bash-executor`'s empty edge array becomes four edges |
@@ -6200,3 +6251,178 @@ scenarios most likely to miss it.
 
 The four surfaces are now five in everything but name: transcripts, harness events, API requests,
 what a run left on DISK, and what it left RUNNING.
+
+### The fix round (2026-09-06): what two reviews found, and the one that was a real defect
+
+Two reviews read this wave — a boundary verifier over the machinery half and a Codex review over the
+recordings half. Most of what came back was record rather than code, and the load-bearing item is
+the first one.
+
+**THE SUPERVISION SURFACE KILLED A PROCESS THAT WAS NOT THE RUN'S.** On the fourth full corpus run,
+`hooks-permission` reported "reaped 1 process(es) the run left behind" and its state surface carried
+one difference: a survivor reading
+`/bin/zsh -c source /Users/…/.claude/shell-snapshots/snapshot-zsh-….sh …`. That snapshot file
+belongs to the Claude Code session that was DRIVING the corpus — the harness SIGKILLed a Bash tool
+call of the session running it. It was attributed by the cwd route alone, which asked only whether
+the working directory was inside the sandbox and never whether the process had a living parent.
+
+The wave's own sentence "only ATTRIBUTED survivors are reaped" was true and did not help, because
+the attribution was the thing that was wrong. Four corrections, each with a control (31 checks → 39):
+
+- **the cwd route requires an ORPHAN.** A leaked engine shell is reparented to launchd the instant
+  the engine exits, so the case the surface exists for is untouched; a foreign process keeps its
+  parent and is now neither graded nor signalled. One spawn produces both halves of the control — a
+  parentless `/bin/sh` and its own live child, same cwd, same absence of a marker.
+- **the reap addresses PIDS, not command text.** It used to sweep a fresh process table for every row
+  whose command line equalled a survivor's, which reaches an operator's identically-named process and
+  a second checkout's helper. The pids leave `processSnapshot` as a second object beside `dropped`,
+  for the same reason `dropped` is not in the snapshot: a pid is per-run and would diff two engines on
+  numbers the OS handed them. The command is still compared against what that pid is running NOW,
+  because a recycled pid is a different process wearing the same number. The control starts a
+  byte-identical twin AFTER the snapshot and requires it to be alive afterwards.
+- **`reforge-child.sh` leaves the marker list.** A basename is not a fact about this checkout. Its
+  repaired form — the canonical path `<sandbox>/reforge-child.sh` — is a strict subset of the
+  `<sandbox>` marker already there, so the honest fix was removal rather than a longer string; and it
+  never matched the invocation the scenarios use, which is `./reforge-child.sh` and carries no path.
+- **the cwd is compared against `realpathSync(SANDBOX)`.** `lsof` reports real paths, so a checkout
+  reached through a symlink would have switched the route off silently.
+
+**An undeclared survivor now FAILS the run.** `leaksIn` was written for this and had no graded caller:
+a leak was carried onto the state surface and diffed, and a diff catches only a leak ONE engine has.
+"This scenario leaves nothing running" — what 63 of the 69 scenarios say by saying nothing, and what
+the six W10 scenarios say explicitly with `detachedChildren: []` — was unenforced on its own axis.
+
+**The kill-escalation MECHANISM was wrong, with the measurement right.** The record said the backstop
+"is cancelled the moment that pid is gone", and concluded that without `exec` the trapping orphan
+survives and reaches neither the escalation nor a clean shutdown. Read at the bytes: `#h`
+(chunk-fy12d89p.js @104727) calls `GE(t,"SIGTERM")`; `GE` (chunk-dmw41ak1.js @757, body @850) is a
+TREE kill that signals the process GROUP with `process.kill(-e,o)` against a shell spawned
+`detached:!0` (@2121369) and then each descendant; and the cancel predicate `zUe` @106193 reports
+gone only when the group AND the pid both answer ESRCH. A trapping orphan inside the group therefore
+does not cancel the backstop — it is killed by it, and the escalation is reachable with or without
+`exec`. The command form and the check that pins it stay, with an honest reason: `exec` makes the pid
+`#h` is handed the pid that traps, so the scenario grades a signalled process that refused to die
+rather than a bystander that inherited a group signal. **This is the seam note C13d actually needs**:
+`ShellProcessPort.kill()` is group-scoped with a descendant sweep and its liveness predicate is two
+probes, and a pid-scoped implementation would pass every scenario the corpus has.
+
+**Three sentences in this record that the evidence contradicted**, corrected in place above rather
+than deleted: the state surface was NOT identical in both load-flake failures (the first run's 44
+differences are on it; what carried no difference is the PROCESS member this wave added); the
+promoted `bash-background-control` cassette does NOT contain the
+`<task_type>local_bash</task_type>` retrieval, because the scenario forbids it (`6596b14`), so W7's
+closure rests on the `task_started`, the backgrounding result and the notification summary; and the
+supervision suite was 31 checks wherever the spec still said 27.
+
+**Two admissions, because a record that only carries the wins is not a record.** The wave ran
+`rm -f .sandbox.lock` by hand on the lock left by its own SIGKILLed run, against the addendum that
+says not to. Nothing was corrupted and the holder was genuinely dead, but the deletion bought
+nothing that the lock's own take-over path would not have done for free — a stale lock is taken over
+by the next acquirer, which says so. And the four long runs this record quotes wrote their logs to
+`/tmp`, not to `build/`, and all four are now gone: the tables above cannot be re-derived from an
+artifact, only re-measured. Both are in `docs/tech-debt-tracker.md`; this round's own corpus run
+writes to `build/c13c-fixround-corpus.log`.
+
+**The fourth corpus run's true result was 66/69**, not the 69/69 the closing table records for the
+final run — `hooks-permission` (the reap incident above), `bash-background-control` and
+`bash-large-output`. The final run that produced 69/69 came after the corrections those three
+forced; both numbers are real and they are about different trees.
+
+#### …and what a third review found, after the machine rebooted
+
+A boundary verifier read the recordings half the same afternoon. Its first finding is the one that
+changed an artifact.
+
+**`bash-timeout-background`'s cassette was unreplayable and had been since it was taken.** The
+detail is above; what belongs here is the shape of the failure, because it is the shape a corpus is
+worst at noticing. The defect was invisible for as long as a file OUTSIDE the graded tree happened to
+survive — the sandbox is reset before every run and the config dir is wiped, but `/tmp/claude-501/…`
+is neither, so the recording's own task output file kept answering the replay's `Read`. A reboot
+removed it. Three parts to the fix, and only the first is a prompt:
+
+1. the scenario's FIRST turn forbids reading the task or the file it names, in the turn where the
+   tool result names it — `6596b14`'s lesson, applied to the scenario next door;
+2. `recordCassette` REFUSES to promote a take whose recorded tool_use inputs carry a
+   `…/tasks/b….output` or `…/tool-results/b….txt|json` path, naming the call so the fix lands in the
+   prompt rather than in a scrub. Tool RESULTS are exempt: the engine writes these paths into results
+   on every backgrounded run, and rejecting those would reject every healthy take of three scenarios.
+   Measured over the corpus: **71 cassettes scanned, exactly one named** — this one;
+3. one live re-record, promoted on the first take: 5 exchanges against the old 6, and it replays with
+   ZERO positional serves.
+
+**`bash-kill-escalation` could not fail on the thing it is named for**, and the fix is the second
+half of the leak conjunct above. The tool result's exit code is 143 however the child died: `#v`,
+the timeout arm, calls `e.#h(WUe)` (chunk-fy12d89p.js @102120) with `WUe = 143` (@100490), so `#h`
+reports the code the TIMEOUT chose. The result is byte-identical whether the child died of the
+SIGTERM, of the group SIGKILL, or not at all — so the `/timed out|killed|terminated/` check passed
+either way; and because the timed lane compares two builds with identical executor bytes, a trapping
+child left running on BOTH sides is normalized-identical on all four diffed surfaces. The run now
+probes the process table after its wait and puts the answer on the DIFFED event channel as a boolean
+(never a pid), and `check` reads it FIRST, before the assertions a broken escalation still satisfies.
+A run that never probed is also a failure, so the assertion cannot be lost to an edit of `run`.
+
+**Two engine claims were over-general, and both are C13e's or C13d's to build on.**
+`task_started` is emitted for a foreground Bash only once the BACKGROUND-HINT gate registers it
+(`Jn>=kzt/1000` at chunk-fy12d89p.js @3854661, `kzt` = 2,000 ms), so a command finishing inside two
+seconds never produces the frame — measured across the eight record transcripts, 0 for the four short
+ones and 1 for the four that run past 2 s. And `bash-prespawn-error` records the silent cwd RECOVERY
+arm, not a refusal: both refusal sentences at @2127380 are unreachable when the first recovery
+candidate — the session's own original cwd — exists, which deleting a sandbox subdirectory can never
+change.
+
+**The notification composer is `b1t` (@2135880), not `WMt`.** `WMt` @61843 is the effective-timeout
+clamp; it decides when the deadline lands and composes nothing. `b1t` has four arms, and the scrub
+anchored on "was moved to the background (ID: " covers two of them — the timeout arm the corpus
+records and the message-delivery arm it does not yet.
+
+**The eight shell-id scrubs got the controls this module's own rule requires.** `src/canonical.ts`
+says a scrub grows only with a paired regression test; C13c added eight and paid none. Now each of
+`b1t`'s four sentences, both spellings of the task tag, both paths and the session uuid in front of a
+tool-results path is checked against a SECOND id — so the claim is that two runs share a key, not
+that a string was rewritten — with eight negative controls for the shapes each scrub must spare.
+
+**Seven smaller things the Codex review found, all real and all cheap.** The
+`timedEngine` cache key hashed one chunk while caching a copy of the whole graph — measured, 1,660 of
+1,802 modules differ between `build/graph` and `build/strangled`, so the key watched one file out of
+the ~1,660 a rebuild can move; it now hashes the graph. `recordCassette` deleted the staged
+`.recording` before taking the sandbox lock, so a recorder about to be REFUSED destroyed the
+sibling's take on the way to the refusal. The live substance check ran on `deriveFault` scenarios,
+whose behaviour is authored after the take, so every fresh take of `hooks-stop-failure` was discarded
+before the fault was derived. `w10/timed.ts` judged a sidecar on the baseline hash alone, missing the
+detachment declaration this very wave grades against — the ladder is now one function with three
+callers. The supervision census printed PASS over an empty scope, and the timer negative control
+asserted only that SOMETHING differed while swallowing a failed arm. And the infrastructure-failure
+vocabulary was narrower than the throttles the account returns: it missed a subscription "usage limit
+reached", a "quota exceeded", a bare 429 and a bare 529 — each of which stopped a walk that should
+have retried — while falsely matching "the tool result was 15042 bytes", because `504` sits inside
+`15042`.
+
+**One Codex finding was logged rather than fixed**, in `docs/tech-debt-tracker.md`: the replay hash's
+run-id scrubs are body-wide, so two prompts differing only in a persisted-result path share a key.
+Real, and bounded by the corpus-wide constraint above — a recorded turn may not name an
+engine-minted id, which is the only way such a pair of turns gets written — and every entry in that
+list is body-wide by the same design, so field-scoping one would leave it meaning two things. The
+proxy's collision guard makes the failure a refusal rather than a misroute.
+
+#### The fix round's own numbers, each from a log under `build/`
+
+Measured on 2026-09-06 over the merged tree, after every change above.
+
+| | |
+|---|---|
+| corpus, offline | **69 of 69 PASS, 0 FAIL, ZERO positional serves, 0 unmatched-and-unexplained** — `build/c13c-fixround-corpus2.log` |
+| …and the run BEFORE the re-record | 69 of 69 PASS, but **two positional serves per side** on `bash-timeout-background` — `build/c13c-fixround-corpus.log`, which is what named the rotten cassette |
+| supervision, over that corpus | **0 undeclared survivors, 0 processes reaped, 194 dropped as unattributable** across 138 runs. The zero reaps are the point: the same corpus reaped a foreign shell before the cwd route required an orphan |
+| timed lane | **2 of 2 PASS** on `engine-extracted` vs `engine-strangled`, both engines rebuilt (the cache key now covers the whole graph) — `build/c13c-fixround-timed.log` |
+| the live re-record | **1 take, promoted** — 5 exchanges, `build/c13c-fixround-rerecord.log` |
+| process supervision | 31 → **39** checks |
+| canonicalization | 99 → **119** checks |
+| config precondition + fs faults | 22 → **32** checks |
+| live-take promotion rules | **27** checks (`src/record.test.ts`, new) |
+| run-id shapes fixture | `--check` PASS: 20 keys, 2 collisions, **1 text pattern and 14 shape scrubs**, both lists newly pinned |
+| unchanged and re-run | scripted child 44, shell deadlines 27, differ run-id map 44, re-seal 25 |
+| gate phases added by the round | **one** — `src/record.test.ts` |
+
+One warning survives the corpus and is not this round's: `perm-rule-allow` replays with one request
+matching no cassette entry, identically on both sides, and diffs clean on all four surfaces. It is
+recorded here rather than fixed because it belongs to the wave that owns that scenario.
