@@ -16,7 +16,7 @@ import { fallbackVerdict, startRecordProxy, startReplayProxy, type CassetteEntry
 import { resetSandbox, type ConfigPrecondition, type Scenario, type ScenarioContext } from "./harness.js";
 import { CONFIG_DIR, enginePath, SANDBOX } from "./runTurn.js";
 import { awaitQuiesce, defaultStateRoots, stateSnapshot, type StateSnapshot } from "./state.js";
-import { processBaseline, processSnapshot, reapSurvivors } from "./supervision.js";
+import { leaksIn, processBaseline, processSnapshot, reapSurvivors } from "./supervision.js";
 
 export interface ScenarioRun {
   messages: unknown[];
@@ -24,7 +24,7 @@ export interface ScenarioRun {
   observedFile: string;
   /** §3.2's fourth surface: what the run left on disk, and how it ended. */
   state: StateSnapshot;
-  /** false when this run hit a fatal positional fallback, a gate-cache leak, or never settled. */
+  /** false when this run hit a fatal positional fallback, a gate-cache leak, an undeclared survivor, or never settled. */
   ok: boolean;
   /** replay only: requests no entry answered */
   unmatched: { method: string; path: string; requestBody: string }[];
@@ -97,7 +97,7 @@ export async function runScenarioOnce(opts: ScenarioRunOptions): Promise<Scenari
   // …and then what the run left RUNNING, against the scenario's DECLARED
   // detachments, so a deliberate background shell is recorded without being a
   // leak.
-  const { snapshot: processes } = await processSnapshot(processesBefore, { detached: s.detachedChildren, label: side });
+  const { snapshot: processes, attributed } = await processSnapshot(processesBefore, { detached: s.detachedChildren, label: side });
   const state: StateSnapshot = { ...fsState, processes };
   // REAPED AFTER THE SNAPSHOT, and this is a correctness requirement rather
   // than tidiness: side A runs first, so a child it leaves is already running
@@ -105,8 +105,20 @@ export async function runScenarioOnce(opts: ScenarioRunOptions): Promise<Scenari
   // would then diff on a leak BOTH engines produce. Reaping makes each side's
   // baseline the same world. (It also keeps a leaked engine child from writing
   // `sessions/<pid>` files that redden a later config-dir inventory.)
-  const reaped = reapSurvivors(processes);
+  const reaped = reapSurvivors(attributed);
   if (reaped > 0) console.log(`    supervision ${side}: reaped ${reaped} process(es) the run left behind`);
+  // AN UNDECLARED SURVIVOR FAILS THE RUN, which is what makes an EMPTY
+  // `detachedChildren` a claim rather than a decoration. The state surface
+  // already carries the survivor set and diffs it, but a diff only catches a
+  // leak ONE engine has: two engines that leak the same shell are
+  // normalized-identical, and "this scenario leaves nothing running" — the
+  // declaration 63 of the corpus's scenarios make by saying nothing — was
+  // therefore unenforced on the axis it is about. `leaksIn` existed for this
+  // and had no graded caller until now.
+  const leaks = leaksIn(processes);
+  if (leaks.length > 0) {
+    console.log(`    FAIL ${side}: ${leaks.length} undeclared survivor(s) — ${leaks.map((l) => JSON.stringify(l.command.slice(0, 80))).join(", ")}`);
+  }
   const unmatched = mode === "replay" ? proxy.unmatched() : [];
   const unserved = mode === "replay" ? proxy.unserved() : [];
   const fallbacks = mode === "replay" ? proxy.fallbacks() : [];
@@ -120,5 +132,5 @@ export async function runScenarioOnce(opts: ScenarioRunOptions): Promise<Scenari
   // §3.3: the gate caches must never appear in the harness config dir, after
   // EITHER mode — a record writes config, and so does a replay.
   const gateOk = gateCacheCheck(CONFIG_DIR, `${s.tag}/${side}`);
-  return { messages, events, observedFile, state, ok: fallbackOk && gateOk && quiesce.settled, unmatched, unserved, fallbacks, servedOrder };
+  return { messages, events, observedFile, state, ok: fallbackOk && gateOk && quiesce.settled && leaks.length === 0, unmatched, unserved, fallbacks, servedOrder };
 }
