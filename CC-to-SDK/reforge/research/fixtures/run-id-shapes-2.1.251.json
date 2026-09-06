@@ -7,7 +7,9 @@
     "arrayKeys": 2,
     "observedKeys": 19,
     "lexemeClasses": 7,
-    "collisions": 2
+    "collisions": 2,
+    "textPatterns": 1,
+    "shapeScrubs": 14
   },
   "keys": [
     {
@@ -16,7 +18,7 @@
       "lexemes": [
         {
           "class": "a+16hex",
-          "observedAtLeast": 33,
+          "observedAtLeast": 1117,
           "from": [
             "stored-envelope",
             "transcripts"
@@ -82,7 +84,7 @@
       "lexemes": [
         {
           "class": "uuid-v4",
-          "observedAtLeast": 168,
+          "observedAtLeast": 6960,
           "from": [
             "stored-envelope"
           ]
@@ -95,7 +97,7 @@
       "lexemes": [
         {
           "class": "uuid-v4",
-          "observedAtLeast": 10,
+          "observedAtLeast": 702,
           "from": [
             "stored-envelope"
           ]
@@ -139,7 +141,7 @@
       "lexemes": [
         {
           "class": "uuid-v4",
-          "observedAtLeast": 1279,
+          "observedAtLeast": 56221,
           "from": [
             "stored-envelope"
           ]
@@ -152,7 +154,7 @@
       "lexemes": [
         {
           "class": "uuid-v4",
-          "observedAtLeast": 382,
+          "observedAtLeast": 17405,
           "from": [
             "stored-envelope"
           ]
@@ -185,7 +187,7 @@
       "lexemes": [
         {
           "class": "uuid-v4",
-          "observedAtLeast": 2226,
+          "observedAtLeast": 97627,
           "from": [
             "stored-envelope"
           ]
@@ -198,7 +200,7 @@
       "lexemes": [
         {
           "class": "uuid-v4",
-          "observedAtLeast": 1929,
+          "observedAtLeast": 2280,
           "from": [
             "transcripts"
           ]
@@ -211,14 +213,14 @@
       "lexemes": [
         {
           "class": "path-slug",
-          "observedAtLeast": 2226,
+          "observedAtLeast": 97627,
           "from": [
             "stored-envelope"
           ]
         },
         {
           "class": "session-slug",
-          "observedAtLeast": 140,
+          "observedAtLeast": 7271,
           "from": [
             "stored-envelope"
           ]
@@ -251,8 +253,9 @@
         },
         {
           "class": "b+8base36",
-          "observedAtLeast": 6,
+          "observedAtLeast": 80,
           "from": [
+            "stored-envelope",
             "transcripts"
           ]
         }
@@ -264,7 +267,7 @@
       "lexemes": [
         {
           "class": "uuid-v4",
-          "observedAtLeast": 3374,
+          "observedAtLeast": 65512,
           "from": [
             "stored-envelope",
             "transcripts"
@@ -278,13 +281,77 @@
       "lexemes": [
         {
           "class": "uuid-v4",
-          "observedAtLeast": 45,
+          "observedAtLeast": 1243,
           "from": [
             "stored-envelope",
             "transcripts"
           ]
         }
       ]
+    }
+  ],
+  "textPatterns": [
+    {
+      "source": "\\/tool-results\\/(b[0-9a-z]{8})\\.(?:txt|json)",
+      "why": "the persisted tool-result file's own id (C13c: `<persisted-output>` paths)"
+    }
+  ],
+  "shapeScrubs": [
+    {
+      "source": "\\bagentId: a[0-9a-f]{16}\\b",
+      "replacement": "agentId: <agent-id>"
+    },
+    {
+      "source": "\\bto: 'a[0-9a-f]{16}'",
+      "replacement": "to: '<agent-id>'"
+    },
+    {
+      "source": "\\/tasks\\/a[0-9a-f]{16}\\.output\\b",
+      "replacement": "/tasks/<agent-id>.output"
+    },
+    {
+      "source": "<task-id>a[0-9a-f]{16}<\\/task-id>",
+      "replacement": "<task-id><agent-id></task-id>"
+    },
+    {
+      "source": "\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\\/tasks\\/)",
+      "replacement": "<uuid>$1"
+    },
+    {
+      "source": "(read the full transcript at: \\S*\\/)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\\.jsonl)",
+      "replacement": "$1<session-uuid>$2"
+    },
+    {
+      "source": "(Command running in background with ID: )b[0-9a-z]{8}\\b",
+      "replacement": "$1<shell-task-id>"
+    },
+    {
+      "source": "(Command was manually backgrounded by user with ID: )b[0-9a-z]{8}\\b",
+      "replacement": "$1<shell-task-id>"
+    },
+    {
+      "source": "<task_id>b[0-9a-z]{8}<\\/task_id>",
+      "replacement": "<task_id><shell-task-id></task_id>"
+    },
+    {
+      "source": "<task-id>b[0-9a-z]{8}<\\/task-id>",
+      "replacement": "<task-id><shell-task-id></task-id>"
+    },
+    {
+      "source": "\\/tasks\\/b[0-9a-z]{8}\\.output\\b",
+      "replacement": "/tasks/<shell-task-id>.output"
+    },
+    {
+      "source": "(was moved to the background \\(ID: )b[0-9a-z]{8}(\\))",
+      "replacement": "$1<shell-task-id>$2"
+    },
+    {
+      "source": "\\/tool-results\\/b[0-9a-z]{8}\\.(txt|json)\\b",
+      "replacement": "/tool-results/<tool-result-id>.$1"
+    },
+    {
+      "source": "\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\\/tool-results\\/)",
+      "replacement": "<uuid>$1"
     }
   ],
   "collisions": [
@@ -317,7 +384,7 @@
     }
   ],
   "sources": {
-    "transcriptFiles": 213,
-    "censusResets": 148
+    "transcriptFiles": 237,
+    "censusResets": 5975
   }
 }

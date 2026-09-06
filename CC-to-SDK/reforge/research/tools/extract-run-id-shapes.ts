@@ -35,7 +35,8 @@
 // fraction of them.
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { RUN_ID_ARRAY_KEYS, RUN_ID_KEYS } from "../../src/differ.js";
+import { RUN_ID_ARRAY_KEYS, RUN_ID_KEYS, runIdTextPatterns } from "../../src/differ.js";
+import { RUN_ID_SHAPE_SCRUBS } from "../../src/canonical.js";
 import { lexemeClass, type ConfigCensus } from "../../src/observed.js";
 import { ENGINE_VERSION } from "../../src/pin.js";
 import { REFORGE_ROOT } from "../../src/runTurn.js";
@@ -58,8 +59,28 @@ interface Fixture {
   engineVersion: string;
   generatedBy: string;
   note: string;
-  counts: { keys: number; arrayKeys: number; observedKeys: number; lexemeClasses: number; collisions: number };
+  counts: { keys: number; arrayKeys: number; observedKeys: number; lexemeClasses: number; collisions: number; textPatterns: number; shapeScrubs: number };
   keys: KeyRow[];
+  /**
+   * The OTHER two ways a run-scoped id is handled, pinned here because the
+   * key-set check above cannot see either.
+   *
+   * `textPatterns` is `src/differ.ts`'s `RUN_ID_TEXT_PATTERNS` — ids the engine
+   * writes only into a sentence, so there is no property to key on and the map
+   * has to find them by shape. Each carries the reason it is admitted, because
+   * a shape-keyed rule is the thing the key set exists to avoid and every one
+   * of these is an exception with an argument.
+   *
+   * `shapeScrubs` is `src/canonical.ts`'s `RUN_ID_SHAPE_SCRUBS` — the replay
+   * hash's own erasures, which the differ does not share. A scrub is the
+   * unsafe direction by construction: it destroys a distinction rather than
+   * binding it, so the population belongs on the record where a reviewer can
+   * count it. Neither list was pinned by anything until the 2026-09-06 fix
+   * round; `runIdTextPatterns()` was exported "for the fixture" and had no
+   * consumer.
+   */
+  textPatterns: { source: string; why: string }[];
+  shapeScrubs: { source: string; replacement: string }[];
   /** the fact the fixture exists to state: which keys a shape-keyed rule could not tell apart */
   collisions: { lexeme: string; keys: string[] }[];
   sources: { transcriptFiles: number; censusResets: number };
@@ -130,6 +151,9 @@ const byLexeme = new Map<string, string[]>();
 for (const r of rows) for (const l of r.lexemes) byLexeme.set(l.class, [...(byLexeme.get(l.class) ?? []), r.key]);
 const collisions = [...byLexeme].filter(([, keys]) => keys.length > 1).map(([lexeme, keys]) => ({ lexeme, keys: keys.sort() })).sort((a, b) => a.lexeme.localeCompare(b.lexeme));
 
+const textPatterns = runIdTextPatterns();
+const shapeScrubs = RUN_ID_SHAPE_SCRUBS.map(([re, replacement]) => ({ source: re.source, replacement }));
+
 const fx: Fixture = {
   engineVersion: ENGINE_VERSION,
   generatedBy: "research/tools/extract-run-id-shapes.ts",
@@ -145,8 +169,12 @@ const fx: Fixture = {
     observedKeys: rows.filter((r) => r.lexemes.length > 0).length,
     lexemeClasses: byLexeme.size,
     collisions: collisions.length,
+    textPatterns: textPatterns.length,
+    shapeScrubs: shapeScrubs.length,
   },
   keys: rows,
+  textPatterns,
+  shapeScrubs,
   collisions,
   sources: { transcriptFiles, censusResets },
 };
@@ -156,7 +184,12 @@ if (!check) {
   console.log(`=== run-id map: ${rows.length} key(s), ${fx.counts.observedKeys} observed (pin ${ENGINE_VERSION}) ===`);
   for (const r of rows) console.log(`  ${r.key.padEnd(22)} ${r.lexemes.map((l) => `${l.class}×${l.observedAtLeast}`).join(", ") || "(unobserved here)"}`);
   for (const c of collisions) console.log(`  COLLISION ${c.lexeme}: ${c.keys.join(", ")}`);
-  console.log(`PASS — wrote ${rows.length} key(s) and ${collisions.length} lexeme collision(s) from ${transcriptFiles} transcript file(s) and ${censusResets} reset(s)`);
+  for (const t of textPatterns) console.log(`  TEXT      ${t.source}`);
+  for (const t of shapeScrubs) console.log(`  SCRUB     ${t.source} -> ${t.replacement}`);
+  console.log(
+    `PASS — wrote ${rows.length} key(s), ${collisions.length} lexeme collision(s), ${textPatterns.length} text pattern(s) and ` +
+      `${shapeScrubs.length} shape scrub(s) from ${transcriptFiles} transcript file(s) and ${censusResets} reset(s)`,
+  );
 } else {
   if (!existsSync(FIXTURE)) {
     console.log(`FAIL  no committed fixture at ${FIXTURE} — generate it with: npx tsx research/tools/extract-run-id-shapes.ts`);
@@ -193,6 +226,19 @@ if (!check) {
         );
     }
   }
+  // (3) THE TWO LISTS, exact in both directions and INCLUDING their reasons. A
+  // pattern added to either without a fixture row is a widening of what the
+  // harness erases or maps that nobody reviewed; a row left behind is a rule
+  // that has been removed while the record still claims it. The `why` is part
+  // of the comparison for the text patterns because an admitted shape-keyed
+  // rule is only defensible by its argument.
+  const listDiff = (label: string, live: string[], declared: string[]): void => {
+    for (const x of live) if (!declared.includes(x)) problems.push(`${label}: '${x}' is live and not declared — regenerate the fixture and say why it was added`);
+    for (const x of declared) if (!live.includes(x)) problems.push(`${label}: '${x}' is declared and no longer live`);
+  };
+  listDiff("RUN_ID_TEXT_PATTERNS (src/differ.ts)", textPatterns.map((t) => `${t.source} :: ${t.why}`), (committed.textPatterns ?? []).map((t) => `${t.source} :: ${t.why}`));
+  listDiff("RUN_ID_SHAPE_SCRUBS (src/canonical.ts)", shapeScrubs.map((t) => `${t.source} -> ${t.replacement}`), (committed.shapeScrubs ?? []).map((t) => `${t.source} -> ${t.replacement}`));
+
   const unobserved = committed.keys.filter((r) => r.lexemes.length > 0 && (rows.find((x) => x.key === r.key)?.lexemes.length ?? 0) === 0).map((r) => r.key);
   if (problems.length > 0) {
     for (const p of problems) console.log(`  FAIL  ${p}`);
@@ -200,5 +246,8 @@ if (!check) {
     process.exit(1);
   }
   if (unobserved.length > 0) console.log(`  note: ${unobserved.length} declared key(s) unobserved in this checkout (derived artifacts, partial run): ${unobserved.join(", ")}`);
-  console.log(`PASS — ${ALL_KEYS.length} mapped key(s) match src/differ.ts; every observed lexeme is declared; ${committed.collisions.length} collision(s) recorded`);
+  console.log(
+    `PASS — ${ALL_KEYS.length} mapped key(s) match src/differ.ts; every observed lexeme is declared; ${committed.collisions.length} collision(s) recorded; ` +
+      `${textPatterns.length} text pattern(s) and ${shapeScrubs.length} shape scrub(s) match their declarations`,
+  );
 }
