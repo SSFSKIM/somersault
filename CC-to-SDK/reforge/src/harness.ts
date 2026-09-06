@@ -13,7 +13,7 @@ import type { EngineEnvKnobs, EnvMode } from "./env.js";
 import type { FaultKind } from "./faults.js";
 import type { RecordInjector } from "./proxy.js";
 
-export { baselineSeedHash, declarationSha256, EMPTY_PRECONDITION, emptyPreconditionFor, projectKeyFor, type ConfigPrecondition, type FsFault, type FsFaultKind, type RecordedPrecondition, type SeedFile } from "./precondition.js";
+export { baselineSeedHash, declarationSha256, EMPTY_PRECONDITION, emptyPreconditionFor, projectKeyFor, sidecarDriftReason, type ConfigPrecondition, type FsFault, type FsFaultKind, type RecordedPrecondition, type SeedFile } from "./precondition.js";
 
 // H1 — reforge-owned config dir; defined in runTurn.ts so both entry points
 // share one definition (runTurn was silently NOT isolated until a review caught
@@ -41,6 +41,34 @@ export interface ScenarioContext {
   knobs?: EngineEnvKnobs;
 }
 
+/**
+ * TWO RULES A RECORDED SCENARIO MUST OBEY, both learned the expensive way and
+ * both about what a cassette can answer on the SECOND run rather than the first.
+ * They are here, on the type a scenario author is writing against, because
+ * neither is discoverable from a failure: each one presents as a replay that
+ * mismatches or a graded value that moves, with nothing pointing back at the
+ * prompt that caused it (C13c/W10c, 2026-09-05; four of eight live takes were
+ * discarded to find them).
+ *
+ * 1. **A RECORDED TURN MAY NOT NAME AN ENGINE-MINTED ID.** If the model reads a
+ *    background task, an output file or a persisted result by the id the engine
+ *    minted for it, that id is in the request body — and it is an ARGUMENT the
+ *    turn depends on, not a value the reply happens to carry. The next run mints
+ *    a different one. No scrub can repair this: erasing the id from the hash
+ *    makes the turn match a request for a task that does not exist. The fix is
+ *    always in the PROMPT, and it belongs in the turn where the temptation
+ *    arises rather than the turn after — the model reaches for the output file
+ *    in the same turn the tool result names it. Restricting `allowedTools` does
+ *    not help; the retrieval tools stay in the catalog (measured, from the
+ *    recorded `init` frame).
+ * 2. **A GRADED OUTPUT MAY NOT STRADDLE A DEADLINE.** If a scenario's output is
+ *    produced on a schedule and a timeout, kill or stall threshold can fall
+ *    inside that schedule's jitter, then scheduling — not the engine — decides
+ *    what the transcript says. Measured: a child writing every 600 ms against a
+ *    1,500 ms timeout recorded `R0:R1:` and replayed `R0:R1:R2:`. Put the
+ *    deadline in a GAP that no plausible jitter closes, and the killed output
+ *    becomes a constant.
+ */
 export interface Scenario {
   tag: string;
   title: string;
@@ -98,6 +126,11 @@ export interface Scenario {
    * says a survivor is legitimate, not that it is invisible, so an engine that
    * failed to detach the child it was supposed to detach still differs from one
    * that did.
+   *
+   * AND IT IS ENFORCED, not only diffed (2026-09-06 fix round): an undeclared
+   * survivor fails the run in `src/runScenario.ts`. A diff catches only a leak
+   * ONE engine has, so before this an empty declaration said nothing about the
+   * case where both engines leak the same shell.
    */
   detachedChildren?: readonly string[];
   /**
