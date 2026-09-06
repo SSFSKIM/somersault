@@ -2,8 +2,10 @@
 //
 // The corpus has 63 scenarios and its Bash calls are `echo`, `mkdir`, `chmod`,
 // `cd`, `pwd` and `sleep`. That reaches ONE of `dZe`'s six result arms, no truncation, no
-// backgrounding, no timeout, no compound command and no pre-spawn refusal
-// (scout §4.2). These are the six recordings that buy the rest of it, plus the
+// backgrounding, no timeout, no compound command and no cwd recovery
+// (scout §4.2; the scout called that last one a pre-spawn REFUSAL — measured, it
+// is the silent recovery arm, see `prespawnError`). These are the six recordings
+// that buy the rest of it, plus the
 // two that need C13c's machinery.
 //
 // EVERY COMMAND IS THE SCRIPTED CHILD or a compound built from shell builtins,
@@ -245,9 +247,19 @@ const backgroundControl: Scenario = {
         // 1,500 ms answered `{backgrounded: false}` against a command that had
         // already run to completion.
         //
-        // Measured incidentally, and it matters for C13e: `task_started` is
-        // emitted for a FOREGROUND Bash too, so its presence is not evidence of
-        // backgrounding. The control request's own answer is the evidence.
+        // Measured, and it matters for C13e: a FOREGROUND Bash emits
+        // `task_started` too — but only once the BACKGROUND-HINT gate registers
+        // it. The progress loop mints the task at
+        // `if(!tt&&!dn&&Ke===void 0&&Jn>=kzt/1000){…YFt(…)}` (chunk-fy12d89p.js
+        // @3854661) with `kzt = 2000`, so a command that finishes inside two
+        // seconds never produces the frame at all. The transcripts agree: 0 in
+        // `bash-compound-safety`, `bash-large-output`, `bash-prespawn-error` and
+        // `bash-kill-escalation` (whose timeout is 1.5 s), 1 in the four that
+        // run past 2 s. So `task_started` is not evidence of BACKGROUNDING —
+        // the control request's own answer is — and this trigger works here only
+        // because the child runs 11 s. A short one would leave `sent` false and
+        // the control request unsent, which is why the plan's duration is part
+        // of the scenario rather than incidental to it.
         const frame = m as { type?: string; subtype?: string; tool_use_id?: string };
         const started = frame.type === "system" && frame.subtype === "task_started" ? frame.tool_use_id : undefined;
         if (started !== undefined) {
@@ -373,7 +385,9 @@ const timeoutBackground: Scenario = {
     if (!uses.some((u) => Number(u.input?.timeout) === 2_000)) {
       return `no Bash call declared timeout=2000 — inputs were ${JSON.stringify(uses.map((u) => u.input))}`;
     }
-    // One of the two outcomes `WMt` produces, and WHICH is engine behaviour the
+    // One of the two outcomes this deadline produces (the sentence is composed
+    // by `b1t` @2135880, not by `WMt` @61843, which only clamps the effective
+    // timeout), and WHICH is engine behaviour the
     // differ compares: an auto-backgrounded task, or the timeout sentence. What
     // must not happen is neither — a command that simply ran to completion means
     // the deadline was never reached and the scenario grades nothing.
@@ -485,9 +499,34 @@ const compoundSafety: Scenario = {
 };
 
 /**
- * The PRE-SPAWN refusal (scout §4.5 #6): the working directory the executor
- * would spawn into no longer exists, which reaches `rw` and the two `R(...)`
- * refusals in `yi.call`.
+ * CWD RECOVERY, and what this recording does NOT contain (scout §4.5 #6).
+ *
+ * The claim used to be "the PRE-SPAWN refusal": the working directory the
+ * executor would spawn into no longer exists, so the call reaches `rw` and one
+ * of the two refusals. MEASURED, and it is the recovery arm instead. At
+ * chunk-fy12d89p.js @2127380 the executor, on finding its cwd gone, walks three
+ * candidates `[Se(), SDn(), ly()]` — the first being the session's own original
+ * cwd — and:
+ *
+ *   * `rw("Working directory … no longer exists. Please restart Claude …")`
+ *     fires only when NO candidate exists;
+ *   * `rw("… shell cwd recovered to …")` fires only when `Qn > 0`, i.e. when the
+ *     candidate that worked was NOT the first;
+ *   * when the FIRST candidate exists it calls `u?.setCwd(wn)`, reassigns `Pt`
+ *     and runs the command, silently.
+ *
+ * Deleting a subdirectory OF the sandbox can never remove the session's
+ * original cwd, so `Qn` is always 0 here and both refusal arms are unreachable
+ * from this scenario by construction. The cassette agrees: its second
+ * `tool_result` is `is_error: false` and its body is the sandbox root, which is
+ * the recovered directory rather than a refusal.
+ *
+ * WHAT IS STILL WORTH RECORDING, and it is why this stays in the corpus: the
+ * recovery itself is executor behaviour nothing else in the corpus reaches, and
+ * the check below asserts the one outcome that must not happen — a second `pwd`
+ * reporting the deleted directory as though it were still there. Reaching the
+ * refusal arms needs a scenario whose SESSION cwd is disposable, which the
+ * sandbox's own layout forbids; that is C13d's to build if it wants them.
  *
  * THE HARNESS DELETES IT, not the model. The alternative — asking the model to
  * `cd` somewhere and then remove it — makes the scenario's stimulus depend on
@@ -534,9 +573,10 @@ const prespawnError: Scenario = {
     if (toolUses(msgs, "Bash").length < 2 || results.length < 2) {
       return `expected two Bash calls with two results, saw ${toolUses(msgs, "Bash").length} call(s) and ${results.length} result(s)`;
     }
-    // THE SHARP CLAIM, and it is a negative one. Either the executor refuses
-    // before spawning or it recovers to one of its three roots — WHICH of the
-    // two is engine behaviour the differ compares, so neither is asserted here.
+    // THE SHARP CLAIM, and it is a negative one. The recorded arm is the SILENT
+    // recovery to the session's original cwd (see the block above: `Qn === 0`,
+    // so neither refusal is reachable here), but which arm a given engine takes
+    // is engine behaviour the differ compares, so none of them is asserted.
     // What must not happen is a second `pwd` that reports the deleted directory
     // as though it were still the working directory.
     if (results[1].includes(`/${DOOMED}`)) {
