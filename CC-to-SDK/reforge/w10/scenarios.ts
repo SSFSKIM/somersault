@@ -27,6 +27,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { baseOptions, drive, pushable, usedTool, userMessage, type Scenario } from "../src/harness.js";
 import { SANDBOX } from "../src/runTurn.js";
+import { processTable } from "../src/supervision.js";
 import { childCommand, expectedOutput, seedScriptedChild, SCRIPTED_CHILD_NAME, type ChildPlan } from "./child.js";
 import type { DeadlineRole, TimerProfile } from "./timers.js";
 
@@ -844,11 +845,35 @@ const killEscalation = (d: EffectiveDeadlines): Scenario => {
       // The escalation happens AFTER the tool result is composed, so a snapshot
       // taken the instant the query resolves would grade a kill still in flight.
       await sleep(waitMs);
+      // …AND THEN ASK THE MACHINE, because nothing in the transcript can answer
+      // this. The tool result's exit code is 143 whatever happened: `#v`, the
+      // timeout arm, calls `e.#h(WUe)` (chunk-fy12d89p.js @102120) with
+      // `WUe = 143` (@100490), so `#h` reports the code the TIMEOUT chose rather
+      // than the one the child died of — the result is byte-identical whether
+      // the child died of the TERM, of the group SIGKILL, or not at all. The
+      // `/timed out|killed|terminated/` check below therefore passes over a
+      // broken escalation, and so does the transcript diff, because the timed
+      // lane compares two builds with identical executor bytes and a leak that
+      // both of them produce is normalized-identical.
+      //
+      // So the second claim is measured directly and put on the DIFFED event
+      // channel: is the process that ignores SIGTERM still running? A boolean,
+      // never a pid, because a pid is per-run.
+      const trapping = [...processTable().values()].filter((r) => r.command.includes(SCRIPTED_CHILD_NAME) && r.command.includes("--ignore-term"));
+      ctx.collect("kill_escalation_survivor", { alive: trapping.length > 0 });
       return msgs;
     },
-    check: (msgs) => {
+    check: (msgs, events) => {
       const uses = toolUses(msgs, "Bash");
       if (uses.length === 0) return "Bash tool never used";
+      // FIRST, because it is the only claim here that a broken escalation can
+      // fail. Everything below grades the command form and the tool result, and
+      // both of those are identical on a run where nothing was ever killed.
+      const probe = events.find((e) => (e as { event?: string }).event === "kill_escalation_survivor") as { payload?: { alive?: unknown } } | undefined;
+      if (probe === undefined) return "the run never probed for the trapping child — the escalation's own claim was not measured";
+      if (probe.payload?.alive === true) {
+        return `the process that ignores SIGTERM was STILL RUNNING ${waitMs} ms after the tool result — the SIGTERM->SIGKILL escalation did not reach it`;
+      }
       if (!uses.some((u) => Number(u.input?.timeout) === 1_500)) {
         return `no Bash call declared timeout=1500 — inputs were ${JSON.stringify(uses.map((u) => u.input))}`;
       }

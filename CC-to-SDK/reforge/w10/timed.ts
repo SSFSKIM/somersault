@@ -180,6 +180,14 @@ for (const spec of specs) {
   const substance = ([["A", s.check?.(a.messages, a.events) ?? null], ["B", s.check?.(b.messages, b.events) ?? null]] as const).filter(([, f]) => f !== null);
   for (const [side, failure] of substance) console.log(`    substance: FAIL [${side}] — ${failure}`);
   if (substance.length === 0) console.log("    substance: ok");
+  // `a.ok`/`b.ok` carry the UNDECLARED-SURVIVOR verdict as well as the proxy's
+  // and the quiesce's (`src/runScenario.ts`, C13c fix round), and in this lane
+  // that conjunct is the one doing new work. Both engines here are built from
+  // the same executor bytes, so a leak they BOTH produce is normalized-identical
+  // on all four diffed surfaces — `bash-kill-escalation` declares
+  // `detachedChildren: []`, and until that declaration was enforced, a broken
+  // SIGTERM->SIGKILL escalation would have left a trapping child running on both
+  // sides and graded green.
   verdicts.push({ tag: spec.tag, pass: a.ok && b.ok && sOk && tOk && eOk && rOk && substance.length === 0 });
 }
 
