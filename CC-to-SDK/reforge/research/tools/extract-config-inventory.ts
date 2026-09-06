@@ -6,14 +6,19 @@
 // WHY THIS FIXTURE EXISTS, and it is not the reset. `resetSandbox()` wipes the
 // config dir whole, so the reset itself needs no inventory — `rm -rf` does not
 // care what is there. The inventory exists because THE STATE SURFACE'S CONFIG
-// ROOT IS AN INCLUDE-LIST (src/state.ts, the W9 scout's §4.2): six declared
+// ROOT IS AN INCLUDE-LIST (src/state.ts, the W9 scout's §4.2): the declared
 // families are graded and everything else is invisible by construction. That is
 // the right design — the tree carries clock-named backups and per-process
 // scratch, and a whole-tree walk would flag every run on paths that mean nothing
-// — but it has one failure mode, and it is silent: a pin that starts writing a
-// SEVENTH family is seen by nothing. Not by the surface (not admitted), not by
-// the reset (deleted either way), not by the corpus (the file never reaches a
-// transcript).
+// — but it has one failure mode, and it is silent: a family the list does not
+// name is seen by nothing. Not by the surface (not admitted), not by the reset
+// (deleted either way), not by the corpus (the file never reaches a transcript).
+//
+// IT HAS NOW CAUGHT ONE. The merged-tree gate after C13c reddened here on
+// `projects/<slug>/<uuid>/tool-results/<result-id>.txt` — the persisted tool
+// results C13c's `bash-large-output` reached — which nothing else in the harness
+// could have reported. They are admitted and hashed today; see the row below and
+// `src/state.ts`.
 //
 // So the population is measured rather than assumed. Every reset censuses the
 // tree before deleting it (`src/observed.ts`) into `build/config-observed.json`,
@@ -80,6 +85,18 @@ const PATTERN_REASONS: Record<string, string> = {
     "so a re-seal that succeeds under it is evidence that an unreachable declaration change leaves the request stream identical. " +
     "The engine never writes this path.",
   "projects/<slug>/<uuid>/auto-mode-classifier-error.txt": "the auto-mode classifier's error dump — C9/W6's artifact, not the session store's",
+  // THE FAMILY THIS TRIPWIRE WAS BUILT FOR, arriving for real. It carries a
+  // reason despite being ADMITTED because its provenance is the opposite of
+  // obvious: nothing about the pattern says the file is a tool result rather
+  // than engine bookkeeping, and that reading is the whole basis on which the
+  // include-list admits it.
+  "projects/<slug>/<uuid>/tool-results/<result-id>.txt":
+    "the persisted tool result C13c's `bash-large-output` measured: the result-persistence layer writes an over-threshold output here and " +
+    "replaces what the model sees with a `<persisted-output>` envelope quoting this path, which the model can later Read — so the bytes are " +
+    "the tool result. FOUND BY THE MERGED-TREE GATE after C13c, undeclared, and admitted rather than excluded (`src/state.ts`, read as `hash`). " +
+    "The per-run file name is mapped by the differ's `RUN_ID_TEXT_PATTERNS`, so two sides share a key and different CONTENT still diffs.",
+  "projects/<slug>/<uuid>/tool-results":
+    "the directory the above sits in, descended into for the same reason.",
   // THE ONE FAMILY DECLARED FROM AN INCIDENT RATHER THAN FROM A CLEAN RUN. A
   // reviewer killed a standalone `attest --check` mid-run; its orphaned engine
   // child left `sessions/10747.json` and its `.key` behind, and the next reset
@@ -159,7 +176,8 @@ const admits = (pattern: string, kind: "file" | "dir"): boolean => {
       .replace(/<agent-id>/g, "a0123456789abcdef")
       .replace(/<ms>/g, "1788415170183")
       .replace(/<rand>/g, "abc123")
-      .replace(/<hex>/g, "0123456789abcdef");
+      .replace(/<hex>/g, "0123456789abcdef")
+      .replace(/<result-id>/g, "b71n6hg0s");
   return kind === "dir" ? configDescend(concrete) : configInclude(concrete) !== null;
 };
 

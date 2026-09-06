@@ -33,6 +33,8 @@ const same = (label: string, got: string, want: string): void => check(label, go
 const PIN = "2.1.251";
 // A real registry key name: the pid, then the 32-hex the engine appends, then `.key`.
 const KEY = "sessions/70765.4f6a1c9d0b7e25381ac4de905f7b6e13.key";
+/** A real session uuid, which is the directory the persisted tool results sit under. */
+const UUID = "ac3f6c34-213f-4e2c-b142-a1b0940e7398";
 
 const box = mkdtempSync(join(tmpdir(), "reforge-observed-"));
 try {
@@ -61,6 +63,30 @@ try {
   same("…nor is a numeric directory under tasks/", generalizePath("tasks/12345/1.json"), "tasks/12345/1.json");
   same("…nor a numeric name one level below sessions/", generalizePath("sessions/12345/peer.json"), "sessions/12345/peer.json");
   same("…nor digits under sessions/ that are not a whole dot-component", generalizePath("sessions/2026-09-05.log"), "sessions/2026-09-05.log");
+
+  // ---- the <result-id> rule folds the persisted tool-result family ------------
+  // The family the tripwire actually caught (the merged-tree gate after C13c).
+  // Its names are minted per RESULT, so without this rule every file is its own
+  // pattern and the next run reddens on a family that is not new.
+  same("a persisted tool-result file generalizes to <result-id>",
+    generalizePath(`projects/-x/${UUID}/tool-results/b71n6hg0s.txt`), "projects/<slug>/<uuid>/tool-results/<result-id>.txt");
+  same("…and the .json spelling of the same family folds too",
+    generalizePath(`projects/-x/${UUID}/tool-results/bxz3phmym.json`), "projects/<slug>/<uuid>/tool-results/<result-id>.json");
+  check("…and it is idempotent, like every other rule here",
+    generalizePath(generalizePath(`projects/-x/${UUID}/tool-results/b71n6hg0s.txt`)) ===
+      generalizePath(`projects/-x/${UUID}/tool-results/b71n6hg0s.txt`));
+
+  // ---- …and it eats no other name ---------------------------------------------
+  // `b` + 8 base36 is a broad shape — it matches ordinary lowercase words — so
+  // the `tool-results/` anchor and the required extension are the whole guard.
+  same("the same id one directory up keeps its literal",
+    generalizePath(`projects/-x/${UUID}/b71n6hg0s.txt`), "projects/<slug>/<uuid>/b71n6hg0s.txt");
+  same("…and a differently shaped name UNDER tool-results/ keeps its literal",
+    generalizePath(`projects/-x/${UUID}/tool-results/summary.txt`), "projects/<slug>/<uuid>/tool-results/summary.txt");
+  same("…and so does a `b`+8 name under tool-results/ with no extension, which is a shape nobody has observed",
+    generalizePath(`projects/-x/${UUID}/tool-results/b71n6hg0s`), "projects/<slug>/<uuid>/tool-results/b71n6hg0s");
+  same("…and a nine-letter word that happens to start with b, in a directory of ours",
+    generalizePath("tool-results-notes/backwards.txt"), "tool-results-notes/backwards.txt");
 
   // ---- the loader folds a stored literal row, and preserves its count ---------
   // The census file the reset appends to is the artifact `--check` reads, and it
@@ -114,6 +140,18 @@ try {
     check("a literal row merges into the pattern row that is already there",
       Object.keys(folded).length === 1 && folded["sessions/<pid>.json"]?.seen === 5,
       JSON.stringify(folded));
+    // The same fold on the family that forced the rule: sixteen literal rows
+    // written by C13c's runs before the projection existed must become ONE
+    // declared pattern carrying all of their counts, or the census has silently
+    // discarded observations on the way in.
+    const results = regeneralizeEntries({
+      [`projects/-x/${UUID}/tool-results/b71n6hg0s.txt`]: { kind: "file", seen: 1 },
+      [`projects/-x/${UUID}/tool-results/bxz3phmym.txt`]: { kind: "file", seen: 1 },
+      [`projects/-x/${UUID}/tool-results/b0ns9818m.txt`]: { kind: "file", seen: 2 },
+    });
+    check("…and three literal tool-result rows fold into one pattern with their counts summed",
+      Object.keys(results).length === 1 && results["projects/<slug>/<uuid>/tool-results/<result-id>.txt"]?.seen === 4,
+      JSON.stringify(results));
   }
 } finally {
   rmSync(box, { recursive: true, force: true });

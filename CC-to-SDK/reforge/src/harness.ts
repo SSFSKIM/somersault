@@ -215,8 +215,10 @@ export function baseOptions(ctx: ScenarioContext): Options {
  * censuses the tree before deleting it (`src/observed.ts`), and
  * `research/tools/extract-config-inventory.ts --check` holds that census against
  * the pinned inventory. That check is the tripwire for the state surface's own
- * blind spot — its config root is an INCLUDE-LIST, so a pin that started writing
- * a seventh family would otherwise be seen by nothing.
+ * blind spot — its config root is an INCLUDE-LIST, so a family the list does not
+ * name would otherwise be seen by nothing. It has fired once for real: the
+ * persisted tool-result family C13c's Bash scenarios reached (`tool-results/`),
+ * caught by the merged-tree gate and admitted.
  */
 export function resetSandbox(precondition: ConfigPrecondition = EMPTY_PRECONDITION): void {
   acquireSandboxLock("resetSandbox (sandbox/ + config/)");

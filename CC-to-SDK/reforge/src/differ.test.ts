@@ -386,6 +386,53 @@ check(
   );
 }
 
+// ---- …and the same id on the STATE SURFACE, which now admits the file -------
+//
+// The merged-tree gate after C13c found that the engine writes these files into
+// the config dir and that `src/state.ts`'s include-list did not declare them.
+// Admitting them makes the file's CONTENT graded — and makes its per-run NAME a
+// key two sides can never agree on, exactly as the persisted path in a tool
+// result was. The rule above already reaches it: the name is inside the entry's
+// `path` string, which is the same lifting trick the `slug` rule uses one field
+// over. These are the two halves of the bargain, on the surface rather than in
+// the transcript.
+{
+  /** One config root the way `rootEntriesOf` builds it, down to the persisted result. */
+  const root = (i: StoredIds, id: string, sha: string, dir = i.session) => [
+    {
+      roots: [
+        {
+          name: "config",
+          entries: [
+            { path: `projects/${i.slug}/${i.session}.jsonl`, kind: "file", slug: i.slug, records: stored(i) },
+            { path: `projects/${i.slug}/${dir}`, kind: "dir", slug: i.slug },
+            { path: `projects/${i.slug}/${dir}/tool-results`, kind: "dir", slug: i.slug },
+            { path: `projects/${i.slug}/${dir}/tool-results/${id}.txt`, kind: "file", size: 40000, sha256: sha, slug: i.slug },
+          ],
+        },
+      ],
+      engine: "completed",
+    },
+  ];
+  const SHA = "3b1f0d5c9e2a47188f6c0b1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f60718293a4b5";
+  const OTHER = "aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899";
+  check(
+    "a persisted tool-result file with a DIFFERENT id on each side diffs clean on the state surface",
+    !differs(root(P, "b71n6hg0s", SHA), root(Q, "bxz3phmym", SHA)),
+  );
+  // MUST-CATCH: the whole reason the file is admitted rather than excluded.
+  check(
+    "…while the same two entries with DIFFERENT CONTENT still diff",
+    differs(root(P, "b71n6hg0s", SHA), root(Q, "bxz3phmym", OTHER)),
+  );
+  // MUST-CATCH: only the file NAME is mapped, not the directory it sits in — the
+  // same entry set, one side persisting outside its own session directory.
+  check(
+    "…and a result persisted under a different directory than its own session still diffs",
+    differs(root(P, "b71n6hg0s", SHA), root(Q, "bxz3phmym", SHA, "elsewhere")),
+  );
+}
+
 console.log(`=== differ run-id map: ${pass} check(s) ===`);
 for (const f of failures) console.log(`  FAIL — ${f}`);
 console.log(failures.length === 0 ? "PASS — engine-minted ids are mapped and every behavioural difference still fires" : `FAIL — ${failures.length} violation(s)`);

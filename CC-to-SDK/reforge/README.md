@@ -6426,3 +6426,76 @@ Measured on 2026-09-06 over the merged tree, after every change above.
 One warning survives the corpus and is not this round's: `perm-rule-allow` replays with one request
 matching no cassette entry, identically on both sides, and diffs clean on all four surfaces. It is
 recorded here rather than fixed because it belongs to the wave that owns that scenario.
+
+### The merged-tree gate's two reds, closed (2026-09-06)
+
+`build/gate-20260906-1801.log` (raw stream `build/c13c-merged-gate.log`) is the strangler gate over
+the merged C13c tree: **166 phases, 164 PASS / 2 FAIL**, `GATE FAIL`. Neither red is a claim about
+the engine's behaviour, which is why they are here rather than in the wave record above. One is the
+state surface's own blind spot closing for the first time; the other is a regeneration that had been
+owed since the C13a fix round.
+
+#### The config-dir tripwire fired for the case it was built for, and the answer was ADMIT
+
+`research/tools/extract-config-inventory.ts --check` named **sixteen undeclared paths** (lines
+565–580 of the raw stream): a `projects/<slug>/<uuid>/tool-results/` directory and the fifteen
+`b`+8-named `.txt` files under it. Nothing else in the harness could have reported them — that is the
+whole reason the census exists, and this is the first time it has caught a real family rather than an
+operator's kill.
+
+They are the persisted tool results **C13c's `bash-large-output` measured**. The result-persistence
+layer above the executor writes an over-threshold Bash stdout to one of these files and gives the
+model a `<persisted-output>` envelope carrying the size, the path and a 2,000-character preview — and
+the model can later `Read` the file. So the bytes on that path *are* the tool result, and an engine
+that persisted DIFFERENT content under an identical envelope was invisible to all four surfaces.
+`src/state.ts`'s `CONFIG_INCLUDE` gains `["projects/*/*/tool-results/*", "hash", …]`, whose `why`
+names the layer and the gate that found it. The inventory's own instruction — *either the surface
+should grade it, or the inventory should say why not* — is what makes this a decision rather than a
+silence.
+
+**Admitting it cost two projections, and only one of them was new.** The file name is minted per
+RESULT, so the two sides of a graded scenario can never agree on it.
+
+- **On the differ, nothing had to change**, and that is worth stating because it was not obvious in
+  advance. `RUN_ID_TEXT_PATTERNS` — C13c's own rule, added for this same id in this same path when it
+  appeared inside a tool result — matches the id inside the state entry's `path` string too, which is
+  the lifting trick the `slug` rule already depends on. Three controls say so instead of the
+  argument: a persisted file with a DIFFERENT id on each side diffs clean, the same pair with
+  different CONTENT still diffs, and a result persisted under a different directory than its own
+  session still diffs (`src/differ.test.ts`, 44 → **47** checks).
+- **On the census, a rule was required.** Without one every file is its own pattern, so the fixture
+  would declare fifteen names no run will ever write again and redden on the next run for a family
+  that is not new — the `shell-snapshots` lesson, one directory over. `generalizePath` gains a
+  `<result-id>` token anchored on the literal `tool-results/` directory AND on the extension, so a
+  `b`+8 name anywhere else, and a differently shaped name under `tool-results/`, both keep their
+  literal and still fire the tripwire (`src/observed.test.ts`, 15 → **23** controls, six of them the
+  nearest things the rule must not fold). `regeneralizeEntries` does the rest: the fifteen stored
+  literal rows fold into one on load, so no derived file needed a hand edit this time, which is the
+  step H1 added that function to retire.
+
+`src/state.test.ts` (43 → **44**) watches the include-list admitting the family and HASHING it, which
+is the claim in one line: the content is graded, the name is not.
+
+#### The coverage attestation was stale, and had been since the C13a fix round
+
+`strangle/attest.ts --check` reported the committed `attestation/coverage.md` STALE at line 2387 —
+same line count, 4,764 both sides. The difference is an **adjudication reason**, not a measurement:
+C13a's fix round rewrote the shared exclusion sentence for the `if (callee(...))` false arms in
+`shell-parser` (dropping "anywhere in its 412 lines" for a statement about the function rather than
+the file's layout, and citing `strangle/parser-corpus.ts` rather than a command count), and the
+generated artifact was never regenerated. Seventeen rows carry that sentence; seventeen rows changed.
+The run measures **985/4682 executed, 3,060 by contract suite, 637 excluded, 0 un-adjudicated** —
+identical to the numbers inside the failing gate, which is what "stale" rather than "wrong" means
+here.
+
+#### The numbers, each from a log under `build/`
+
+| | |
+|---|---|
+| `extract-config-inventory.ts --check` | **PASS — 29 observed pattern(s) over 7,343 resets, all declared; 19 admitted by the state surface** (27/17/10 before, now 29/19/10 — two patterns added, none removed) |
+| `bash-large-output`, replayed offline | **PASS**, all four surfaces identical — `build/c13c-toolresults-replay.log`. Its state line reads **9 config entries** where it read 7: the `tool-results/` directory and the persisted file are now graded, and the two sides carry different file names for the same key |
+| the census healed itself | the fifteen literal rows folded into `projects/<slug>/<uuid>/tool-results/<result-id>.txt` on the next load, counts summed (16 with the directory). No derived file was hand-edited |
+| `strangle/attest.ts` regenerated, then `--check` | **PASS** — 985/4682 executed, 3,060 by contract suite, 637 excluded, 0 un-adjudicated — `build/c13c-attest-regen.log`, `build/c13c-attest-check.log` |
+| `extract-run-id-shapes.ts --check`, unchanged and re-run | PASS: 20 mapped keys, 2 collisions, 1 text pattern and 14 shape scrubs — the differ needed no new rule, so this fixture did not move |
+| suites | census projection 15 → **23**, differ run-id map 44 → **47**, state surface 43 → **44** |
+| gate phases added by this round | **none** — both reds are closed inside phases that already existed |

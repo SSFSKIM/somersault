@@ -4,14 +4,22 @@
 // The reset policy is "wipe everything the engine writes, seed what the
 // precondition declares", and `rm -rf` is a one-line way to implement it. The
 // reason there is a census as well is that the CONFIG ROOT OF THE STATE SURFACE
-// IS AN INCLUDE-LIST: six declared families are graded and everything else is
-// invisible by construction. A pin that starts writing a seventh family would
-// therefore be seen by nothing — not by the state surface (not admitted), not by
-// the reset (deleted either way), not by the corpus (the file never reaches a
-// transcript). The census is the tripwire for exactly that blind spot: it
-// records every path the reset ever deleted, generalized to a PATTERN, and
+// IS AN INCLUDE-LIST: the declared families are graded and everything else is
+// invisible by construction. A wave that makes the engine write a family the
+// list does not name would therefore be seen by nothing — not by the state
+// surface (not admitted), not by the reset (deleted either way), not by the
+// corpus (the file never reaches a transcript). The census is the tripwire for
+// exactly that blind spot: it records every path the reset ever deleted,
+// generalized to a PATTERN, and
 // `research/tools/extract-config-inventory.ts --check` refuses one the pinned
 // fixture does not declare.
+//
+// IT HAS NOW FIRED FOR THE CASE IT WAS BUILT FOR. C13c's Bash scenarios reached
+// the result-persistence layer, the engine started writing
+// `projects/<slug>/<uuid>/tool-results/<id>.txt`, and the merged-tree gate
+// reddened on a family nothing else in the harness could see. It is admitted and
+// hashed today (`src/state.ts`), which is the outcome this file exists to force:
+// a decision, rather than silence.
 //
 // It accumulates ACROSS RUNS on purpose. After the reset policy lands, the
 // config dir at the end of a corpus run holds one scenario's writes, so a census
@@ -117,7 +125,22 @@ export function generalizePath(rel: string): string {
     // observed, and the tripwire should still fire on it rather than be
     // pre-generalized into silence — which is the property the whole family was
     // withheld for, kept here at its proper width.
-    .replace(/^sessions\/\d+(?=\.)/, "sessions/<pid>");
+    .replace(/^sessions\/\d+(?=\.)/, "sessions/<pid>")
+    // THE PERSISTED TOOL-RESULT FAMILY, and the second rule here anchored on a
+    // literal directory name rather than on a separator. The result-persistence
+    // layer writes one file per over-threshold tool result, named with the
+    // executor's run-scoped `b` + 8 base36 id — so every run mints names no other
+    // run will ever write, and without a projection each file is its own pattern
+    // and `--check` reddens on the next run for a family that is not new. That is
+    // the shell-snapshot lesson, one directory over.
+    //
+    // The anchor is the whole guard, and it is deliberately narrow in two ways:
+    // the name must sit directly under a `tool-results/` directory, which is the
+    // only place the engine writes this shape, and it must be followed by a `.`
+    // — an extension. A `b`-and-eight name anywhere else, and a name under
+    // `tool-results/` with any other shape, keeps its literal and still fires the
+    // tripwire (the same reason the `<pid>` rule requires its dot-component).
+    .replace(/(^|\/)tool-results\/b[0-9a-z]{8}(?=\.)/g, "$1tool-results/<result-id>");
 }
 
 /**

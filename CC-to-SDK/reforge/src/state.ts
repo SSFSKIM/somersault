@@ -184,6 +184,29 @@ const CONFIG_INCLUDE: [pattern: string, read: ReadAs, why: string][] = [
   // sibling record of a file the list already admits, so admitting the
   // transcript and not its metadata would have graded half of a pair.
   ["projects/*/*/subagents/*.meta.json", "hash", "subagent transcript metadata (found by the config-dir census, not the §4.2 list)"],
+  // ADDED BY THE MERGED-TREE GATE AFTER C13c, and it is the tripwire working as
+  // designed: the census reported SIXTEEN undeclared paths — a `tool-results/`
+  // directory and the fifteen `b`+8-named `.txt` files under it — so the
+  // inventory reddened rather than the surface staying quietly blind.
+  //
+  // ADMITTED, because these files ARE tool results. The result-persistence layer
+  // above the Bash executor (`D9`/`rue`, reached through
+  // `mapToolResultToToolResultBlockParam`) intercepts an over-threshold output,
+  // writes the whole thing here, and replaces the result the model sees with a
+  // `<persisted-output>` envelope carrying the size, this path and a 2,000-char
+  // preview — which the model can later Read. That is the layer C13c's
+  // `bash-large-output` measured. So the bytes on this path are engine state
+  // that means something: an engine that persisted DIFFERENT content under an
+  // identical envelope would have been invisible to all four surfaces.
+  //
+  // Hashed, and the per-run file NAME is mapped rather than graded — the id is
+  // minted per result, so two sides can never agree on it. `src/differ.ts`'s
+  // `RUN_ID_TEXT_PATTERNS` already binds a `b`+8 id out of a `…/tool-results/…`
+  // path string, which reaches this entry's `path` the same way the mapped
+  // `slug` and `sessionId` reach the rest of it. Everything else stays graded:
+  // a file persisted under a different DIRECTORY, or with different CONTENT,
+  // still diffs (`src/differ.test.ts`).
+  ["projects/*/*/tool-results/*", "hash", "persisted tool results — the `<persisted-output>` file the model can Read (found by the merged-tree gate after C13c)"],
   // The peer/session registry: three subsystems share this directory (the
   // cross-session peer record, the UDS auth key file, FleetView's heartbeat),
   // and on the non-v5 path the write is unlink-then-write, so a TORN peer record

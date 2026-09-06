@@ -114,6 +114,7 @@ try {
     const slug = "-private-tmp-reforge-sandbox";
     mkdirSync(join(cfg, "projects", slug), { recursive: true });
     mkdirSync(join(cfg, "projects", slug, "sess-1", "subagents"), { recursive: true });
+    mkdirSync(join(cfg, "projects", slug, "sess-1", "tool-results"), { recursive: true });
     mkdirSync(join(cfg, "sessions"), { recursive: true });
     mkdirSync(join(cfg, "tasks", "list-1"), { recursive: true });
     // …and the three families the list REFUSES, each present in the real config
@@ -133,13 +134,22 @@ try {
       line({ type: "assistant", uuid: "u2-aaaaaaaa", parentUuid: "u1-aaaaaaaa", sessionId: "s1-aaaaaaaa", message: { role: "assistant" } });
     writeFileSync(join(cfg, "projects", slug, "s1-aaaaaaaa.jsonl"), transcript);
     writeFileSync(join(cfg, "projects", slug, "sess-1", "subagents", "child.jsonl"), line({ type: "user", uuid: "c1-aaaaaaaa", agentId: "a0123456789abcdef" }));
+    // The family the merged-tree gate added after C13c: the persisted tool
+    // result the model can Read (see the include-list's row).
+    writeFileSync(join(cfg, "projects", slug, "sess-1", "tool-results", "b71n6hg0s.txt"), "x".repeat(40000));
 
     const root = { name: "config", path: cfg, include: configInclude, descend: configDescend };
     const entries = rootEntriesOf(root);
     const paths = entries.map((e) => e.path);
-    check("the include-list admits the six §4.2 families",
-      [".claude.json", `projects/${slug}/s1-aaaaaaaa.jsonl`, `projects/${slug}/sess-1/subagents/child.jsonl`, "sessions/4711.json", "tasks/list-1/meta"].every((p) => paths.includes(p)),
+    check("the include-list admits the declared families, persisted tool results included",
+      [".claude.json", `projects/${slug}/s1-aaaaaaaa.jsonl`, `projects/${slug}/sess-1/subagents/child.jsonl`,
+        `projects/${slug}/sess-1/tool-results/b71n6hg0s.txt`, "sessions/4711.json", "tasks/list-1/meta"].every((p) => paths.includes(p)),
       JSON.stringify(paths));
+    check("…and a persisted tool result is HASHED, so its content is graded rather than its name",
+      (() => {
+        const e = entries.find((x) => x.path.endsWith("tool-results/b71n6hg0s.txt"))!;
+        return e.size === 40000 && typeof e.sha256 === "string" && e.records === undefined;
+      })());
     check("…and refuses backups/, session-env/ and shell-snapshots/ — including their directories",
       !paths.some((p) => p.startsWith("backups") || p.startsWith("session-env") || p.startsWith("shell-snapshots")));
     check("an admitted transcript is PROJECTED, never hashed",
