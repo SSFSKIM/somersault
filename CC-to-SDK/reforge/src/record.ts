@@ -28,10 +28,12 @@
 //  * AN INFRASTRUCTURE FAILURE. A rate limit or a gateway error captured into a
 //    cassette makes every engine replay the same failure, and the scenario
 //    silently measures nothing.
-//  * THE SUBSTANCE CHECK, when the scenario has one. A take in which the
-//    behaviour never happened is not a recording of that scenario; promoting it
-//    freezes a cassette that answers a conversation where nothing occurred, and
-//    every replay after it grades that.
+//  * THE SUBSTANCE CHECK, when the scenario has one AND the behaviour was the
+//    live take's to produce. A take in which the behaviour never happened is not
+//    a recording of that scenario; promoting it freezes a cassette that answers
+//    a conversation where nothing occurred, and every replay after it grades
+//    that. A scenario whose fault is AUTHORED after the take is the exception,
+//    and the only one — its check describes the derived cassette, not the take.
 //
 // A staged path is used throughout so a re-record that hits an outage cannot
 // destroy the good cassette it was refreshing (measured: `--rerecord` during an
@@ -42,6 +44,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { deriveFaultCassette } from "./faults.js";
 import { baselineSeedHash, type ConfigPrecondition, type RecordedPrecondition, type Scenario } from "./harness.js";
+import { acquireSandboxLock } from "./lock.js";
 import { ENGINE_VERSION } from "./pin.js";
 import { runScenarioOnce } from "./runScenario.js";
 import { saveTranscript } from "./runTurn.js";
@@ -63,13 +66,52 @@ export function contaminationIn(cassette: string): string[] {
   return CONTAMINATION_MARKERS.filter(([m]) => text.includes(m)).map(([, label]) => label);
 }
 
-/** Does this capture carry an infrastructure failure rather than engine behaviour? */
+/**
+ * The failures that are the API's, not the engine's — the ones a walk should
+ * wait out rather than read.
+ *
+ * WIDER THAN THE FIRST VERSION, and the gap was measurable: a recorder loop
+ * retries on any throttle it recognises, and this predicate is what decides
+ * which reason the take is discarded FOR. A refusal this list missed was
+ * discarded a step later, by the substance check, as "the behaviour did not
+ * happen" — a sentence that stops the walk, because a substance failure is a
+ * finding to read rather than a budget to spend again. So the two vocabularies
+ * are one: the account-limit wording (`usage limit`, `quota`) and the two
+ * throttle statuses (429 for the rate limit itself, 529 for `Overloaded`) join
+ * the gateway ones, which were the only numbers here.
+ *
+ * The statuses are matched on word boundaries: they are the whole token in
+ * `API Error: 429 {…}`, and an unanchored `504` also sits inside a byte count.
+ */
 export const capturedInfraFailure = (messages: readonly unknown[]): boolean =>
   messages.some((m) => {
     const t = (m as { type?: string }).type;
     const msg = String((m as { message?: unknown }).message ?? "");
-    return t === "reforge-exception" && /rate limit|temporarily limiting|overloaded|502|503|504/i.test(msg);
+    return t === "reforge-exception" && /rate limit|temporarily limiting|usage limit|quota|overloaded|\b(?:429|502|503|504|529)\b/i.test(msg);
   });
+
+/**
+ * Is this take's substance the LIVE take's to prove?
+ *
+ * Only when the scenario has a check at all, the caller has not turned the check
+ * off — and the scenario's behaviour is not AUTHORED after the fact. That last
+ * clause is the C13c fix-round correction. A `deriveFault` scenario records a
+ * healthy turn and then has its first exchange rewritten into a failure
+ * (`deriveFaultCassette`, below); its check describes the DERIVED cassette, so
+ * it is false of every live take by construction. `hooks-stop-failure` asserts
+ * StopFailure fired and Stop did not, which is exactly what a healthy turn
+ * cannot show — so the check discarded the good recording every time and the
+ * scenario could not be re-recorded at all.
+ *
+ * The claim is not dropped, it is graded where it is true: `m1/run.ts` runs the
+ * same `check` on the replay of the derived cassette.
+ *
+ * A predicate rather than a conditional in place, because "which takes are
+ * graded live" is the sort of rule that is worth a control, and the alternative
+ * control is a live take.
+ */
+export const gradesSubstanceLive = (s: Scenario, requireSubstance?: boolean): boolean =>
+  requireSubstance !== false && s.check !== undefined && s.deriveFault === undefined;
 
 export interface RecordOptions {
   scenario: Scenario;
@@ -80,9 +122,10 @@ export interface RecordOptions {
   /** whose fallback verdict applies (§3.4) */
   engineB: string;
   /**
-   * Grade the take's substance before promoting it. Default true. Off only for
-   * a scenario whose `check` cannot run against a live take (none today; the
-   * flag exists so a caller has to say so rather than silently skip).
+   * Grade the take's substance before promoting it. Default true, and already
+   * off for a `deriveFault` scenario without anyone asking (see below): the flag
+   * is for a caller that wants to skip the check for some OTHER reason, and it
+   * exists so that caller has to say so rather than silently skip.
    */
   requireSubstance?: boolean;
 }
@@ -100,6 +143,13 @@ export interface RecordOutcome {
 export async function recordCassette(opts: RecordOptions): Promise<RecordOutcome> {
   const { scenario: s, declared, cassette, sidecar, engineB } = opts;
   const staged = `${cassette}.recording`;
+  // THE LOCK BEFORE THE FIRST DESTRUCTIVE ACT, not at the reset a layer down.
+  // `runScenarioOnce` → `resetSandbox` takes it, but the staged file is deleted
+  // on the way there — so a recorder that a live sibling is about to refuse
+  // would still have destroyed that sibling's in-flight take first. Acquiring
+  // here is free when the caller (or its parent) already holds it: the lock
+  // short-circuits on true ownership and exempts a holder's own children.
+  acquireSandboxLock(`recordCassette (${s.tag}: staged cassette + sandbox/ + config/)`);
   rmSync(staged, { force: true });
 
   const rec = await runScenarioOnce({ scenario: s, engineName: "engine-real", mode: "record", cassette: staged, side: "record", precondition: declared, engineB });
@@ -121,8 +171,8 @@ export async function recordCassette(opts: RecordOptions): Promise<RecordOutcome
   if (capturedInfraFailure(rec.messages)) {
     return discard(`the recording captured an infrastructure failure (not engine behaviour)${existsSync(cassette) ? " — the previous cassette is kept" : ""}`);
   }
-  if (opts.requireSubstance !== false && s.check) {
-    const failure = s.check(rec.messages, rec.events);
+  if (gradesSubstanceLive(s, opts.requireSubstance)) {
+    const failure = s.check!(rec.messages, rec.events);
     if (failure !== null) return discard(`the live take did not exercise the behaviour — ${failure}`);
   }
 

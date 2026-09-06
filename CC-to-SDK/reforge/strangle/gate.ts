@@ -149,6 +149,16 @@ for (const [label, argv] of [
   // holder refusing by name, a signalled holder releasing — are facts about
   // pids and signals that no in-process fake has.
   ["one writer at a time over sandbox/ + config/", ["src/lock.test.ts"]],
+  // …and the two rules that decide whether a LIVE take becomes a cassette at
+  // all. Neither is reachable from anything the gate can run — one fires on an
+  // API throttle, the other on a scenario whose fault is authored after the
+  // take — so both were wrong for a while and were found by reading: a throttle
+  // wording outside the predicate's vocabulary was discarded as a substance
+  // failure and stopped the recording walk, and a derived-fault scenario had its
+  // healthy take discarded every time by a check that only its DERIVED cassette
+  // can satisfy. The controls hold the vocabulary against the sentences the API
+  // actually sent, in both directions.
+  ["a live take is promoted for what it captured, not for what it derives", ["src/record.test.ts"]],
   // …and the archive that would have to CARRY a lock refusal. The refusal above
   // is a throw one line into this file, so the run it stops produces a header,
   // a stack, and no verdict — and until the tee moved below `console` the stack
