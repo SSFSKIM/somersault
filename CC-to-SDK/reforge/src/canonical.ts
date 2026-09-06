@@ -144,11 +144,26 @@ export const RUN_ID_SHAPE_SCRUBS: [RegExp, string][] = [
   [/<task-id>b[0-9a-z]{8}<\/task-id>/g, "<task-id><shell-task-id></task-id>"],
   [/\/tasks\/b[0-9a-z]{8}\.output\b/g, "/tasks/<shell-task-id>.output"],
   // …and the AUTO-backgrounding sentence, which is a different one from the
-  // manual one above: `WMt`'s timeout arm writes "was moved to the background
-  // (ID: <id>)" where the control-request arm writes "was manually backgrounded
-  // by user with ID: <id>". Two arms, two sentences, and a rule that covered one
-  // left `bash-timeout-background` missing the hash on every turn after the
-  // deadline.
+  // manual one above. The composer is `b1t` (chunk-fy12d89p.js @2135880) and it
+  // has FOUR arms, each with its own sentence: `backgroundedByUser` writes "was
+  // manually backgrounded by user with ID: <id>", `backgroundedToDeliverMessage`
+  // writes "was moved to the background (ID: <id>) so that a message that
+  // arrived while it was running can reach you", `timedOutAfterMs` writes "did
+  // not complete within its Ns timeout and was moved to the background
+  // (ID: <id>)", and the default writes "Command running in background with ID:
+  // <id>". A rule that covered one arm left `bash-timeout-background` missing
+  // the hash on every turn after the deadline.
+  //
+  // The rule below is anchored on "was moved to the background (ID: " and so
+  // covers TWO of the four — the timeout arm this scenario reaches and the
+  // message-delivery arm nothing in the corpus records yet. That is deliberate:
+  // the shared clause is the sentence, and an arm-specific anchor would have to
+  // be added the first time the other arm fires.
+  //
+  // NOT `WMt`, which is what an earlier version of this comment said. `WMt`
+  // @61843 is the EFFECTIVE-TIMEOUT clamp — it reads
+  // `CLAUDE_CODE_AUTO_BACKGROUND_TIMEOUT_MS` and returns a number. It decides
+  // WHEN the deadline lands; it composes no sentence at all.
   [/(was moved to the background \(ID: )b[0-9a-z]{8}(\))/g, "$1<shell-task-id>$2"],
   // …and the persisted tool-result file, whose id `src/differ.ts` maps out of the
   // same path on the differential side (`RUN_ID_TEXT_PATTERNS`).

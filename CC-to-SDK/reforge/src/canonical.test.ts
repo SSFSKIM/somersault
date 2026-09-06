@@ -123,6 +123,65 @@ const sameKey = (a: string, b: string) => hashed(a) === hashed(b);
 }
 
 // ---------------------------------------------------------------------------
+// LOCAL SHELL ids — `b` + 8 base36, engine-minted per run, written by the
+// executor into tool results and therefore into the NEXT request body. Eight
+// scrubs landed for these in C13c with no controls, against this module's own
+// rule that a scrub grows only with a paired regression test; the fix round
+// pays that. Every sentence below is the engine's, quoted from `b1t`
+// (chunk-fy12d89p.js @2135880) and from the retrieval and persistence
+// envelopes, not paraphrased.
+// ---------------------------------------------------------------------------
+{
+  const ID = "bjg986xvr";
+  const ID2 = "b7q2m4x1a";
+  const both = (make: (id: string) => string) => sameKey(make(ID), make(ID2));
+
+  // `b1t`'s four arms, three of which mint a sentence carrying the id.
+  check("shell id: the default arm — Command running in background with ID:",
+    both((i) => `Command running in background with ID: ${i}. Output is being written to: /x/y.`));
+  check("shell id: the manual arm — Command was manually backgrounded by user with ID:",
+    both((i) => `Command was manually backgrounded by user with ID: ${i}. Output is being written to: /x/y.`));
+  check("shell id: the TIMEOUT arm — was moved to the background (ID: …)",
+    both((i) => `Command did not complete within its 2s timeout and was moved to the background (ID: ${i}). Output is being written to: /x/y.`));
+  check("shell id: …and the same clause covers the message-delivery arm, which no cassette records yet",
+    both((i) => `Command was moved to the background (ID: ${i}) so that a message that arrived while it was running can reach you; it was not interrupted.`));
+
+  // The retrieval envelope and the notification attachment spell the same tag
+  // two ways, and the first pass covered only one of them.
+  check("shell id: <task_id> with an UNDERSCORE", both((i) => `<task_id>${i}</task_id>`));
+  check("shell id: <task-id> with a HYPHEN", both((i) => `<task-id>${i}</task-id>`));
+
+  // The two paths.
+  check("shell id: the task output path", both((i) => `/tmp/s/sess/tasks/${i}.output`));
+  check("shell id: the persisted tool-result path (.txt)", both((i) => `/tmp/s/sess/tool-results/${i}.txt`));
+  check("shell id: …and .json", both((i) => `/tmp/s/sess/tool-results/${i}.json`));
+  check("shell id: the session uuid in front of a tool-results path",
+    sameKey("/x/ac3f6c34-213f-4e2c-b142-a1b0940e7398/tool-results/b1a2b3c4d.txt", "/x/a2660536-9727-42c0-8c2b-202c5e9daa4c/tool-results/b1a2b3c4d.txt"));
+
+  // NEGATIVE CONTROLS. Every one of these scrubs is anchored on the engine's
+  // own sentence or on its own directory name rather than on the bare `b`+8
+  // shape, because that shape is also an ordinary English word of nine letters
+  // and an ordinary path segment.
+  check("shell id: a bare id in prose survives", hashed(`the token ${ID} is data`).includes(ID));
+  check("shell id: a bare id in prose still discriminates", !sameKey(`the token ${ID} is data`, `the token ${ID2} is data`));
+  check("shell id: a nine-letter word is not eaten", hashed("backwards").includes("backwards"));
+  check("shell id: a LOOKALIKE sentence is not the engine's", !sameKey(`Command started in background with ID: ${ID}`, `Command started in background with ID: ${ID2}`));
+  check("shell id: a non-tasks directory is not the output path", !sameKey(`/x/cache/${ID}.output`, `/x/cache/${ID2}.output`));
+  check("shell id: a non-tool-results directory is not the persisted path", !sameKey(`/x/cache/${ID}.txt`, `/x/cache/${ID2}.txt`));
+  check("shell id: a DIFFERENT tasks directory still discriminates",
+    !sameKey(`/a/tasks/${ID}.output`, `/b/tasks/${ID}.output`));
+  check("shell id: an AGENT id in the same shape of path is a different rule and still works",
+    sameKey("/tasks/a8b1bb212b0c2aeb2.output", "/tasks/a9c2bb770ba007053.output"));
+  check("shell id: the uuid rule is bound to /tool-results/ and spares a bare uuid path",
+    hashed("/x/ac3f6c34-213f-4e2c-b142-a1b0940e7398/other/b1a2b3c4d.txt").includes("ac3f6c34-213f-4e2c-b142-a1b0940e7398"));
+
+  // …and the DIFFER must not do any of this: these ids are mapped there, and a
+  // map keeps the consistency claim a scrub throws away.
+  check("shell id: the differ path leaves the id for its id MAP",
+    differed(`/tmp/s/sess/tool-results/${ID}.txt`).includes(ID));
+}
+
+// ---------------------------------------------------------------------------
 // inline clocks — two renderings, both measured in real request bodies.
 // ---------------------------------------------------------------------------
 {
