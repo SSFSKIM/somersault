@@ -3282,11 +3282,137 @@
           "sha256": "8758b53391b02124583341ef0bcfa372dd62b54eacdf8d83ea4acb187f7ddbeb"
         }
       ]
+    },
+    {
+      "file": "chunk-9e2ns8ty.js",
+      "fileSha256": "53d260820b9f7af2d3d03096e1321b57dbd682bc79a5c755df7f396bfa52fe45",
+      "scoutRange": {
+        "start": 162000,
+        "end": 175587
+      },
+      "exactStatementRange": {
+        "start": 162610,
+        "end": 175587,
+        "bytes": 12977
+      },
+      "counts": {
+        "statements": 5,
+        "functions": 4,
+        "classes": 0,
+        "variableStatements": 1,
+        "variableDeclarators": 7,
+        "imports": 0,
+        "expressions": 0,
+        "declarations": 11
+      },
+      "declarations": [
+        {
+          "name": "Jo",
+          "kind": "function",
+          "start": 162610,
+          "end": 162773,
+          "byteStart": 162610,
+          "byteEnd": 162773,
+          "sha256": "15d37c408ea5bf9c0c13e7a0556cc8529298b69e674509cfbe251fd65cbd9fb5"
+        },
+        {
+          "name": "Jn",
+          "kind": "function",
+          "start": 162773,
+          "end": 162899,
+          "byteStart": 162773,
+          "byteEnd": 162899,
+          "sha256": "1e8080407782f128c204a309388d4706494f0f7565b62b237fa5e1d75c471ba9"
+        },
+        {
+          "name": "XTe",
+          "kind": "function",
+          "start": 162899,
+          "end": 162976,
+          "byteStart": 162899,
+          "byteEnd": 162976,
+          "sha256": "dea7c4580e17a9c9ac27629f3136d3357f0a9b3be1035740603cdb85e9c1ddc0"
+        },
+        {
+          "name": "rt",
+          "kind": "variable",
+          "start": 162980,
+          "end": 163028,
+          "byteStart": 162980,
+          "byteEnd": 163028,
+          "sha256": "c8d18f112cbda85000a6357104bcb838a63e10d9723e7be43e5438f59167a324"
+        },
+        {
+          "name": "To",
+          "kind": "variable",
+          "start": 163029,
+          "end": 163057,
+          "byteStart": 163029,
+          "byteEnd": 163057,
+          "sha256": "1da381653cc6b69c995731ca3b2d4901d8e14ad46794c322915353a0ca2962db"
+        },
+        {
+          "name": "Io",
+          "kind": "variable",
+          "start": 163058,
+          "end": 163097,
+          "byteStart": 163058,
+          "byteEnd": 163097,
+          "sha256": "0634403b159b0d44625360824993ac85c57c33d196fa5083e3264b600110a659"
+        },
+        {
+          "name": "qa",
+          "kind": "variable",
+          "start": 163098,
+          "end": 163128,
+          "byteStart": 163098,
+          "byteEnd": 163128,
+          "sha256": "cbe62732b9e6a30075d47c91ec0f8b02e021b77b41d93c3b047efa1ca166e88c"
+        },
+        {
+          "name": "Ka",
+          "kind": "variable",
+          "start": 163129,
+          "end": 163167,
+          "byteStart": 163129,
+          "byteEnd": 163167,
+          "sha256": "50f5000eae5ee18262b84a5a4e55591157940e349556b4825b7dc9415ebde3b3"
+        },
+        {
+          "name": "Qn",
+          "kind": "variable",
+          "start": 163168,
+          "end": 163192,
+          "byteStart": 163168,
+          "byteEnd": 163192,
+          "sha256": "fe228ed20003478e2fc8e9c53f52556888473c47cb46504e71efcb0d7e2e165a"
+        },
+        {
+          "name": "Ht",
+          "kind": "variable",
+          "start": 163193,
+          "end": 163204,
+          "byteStart": 163193,
+          "byteEnd": 163204,
+          "sha256": "fb36f0d137ac0c30ba7afdf69a7c5c6ae9bbaf6d65b39ea419636ef30508d158"
+        },
+        {
+          "name": "bQn",
+          "kind": "function",
+          "start": 163205,
+          "end": 175587,
+          "byteStart": 163205,
+          "byteEnd": 175587,
+          "sha256": "bb8de285908e6e046bd207ac51535528106f52dd8c3cfd496a1a25423cf1916f"
+        }
+      ]
     }
   ],
   "roots": [
     {
       "role": "classifyCommand",
+      "wiring": "splice",
+      "scope": "graph",
       "anchor": "Parser aborted (timeout, resource limit, or over-length)",
       "file": "chunk-9e2ns8ty.js",
       "anchorOffset": 113392,
@@ -3302,6 +3428,8 @@
     },
     {
       "role": "classifyReadOnly",
+      "wiring": "splice",
+      "scope": "graph",
       "anchor": "Command too long for read-only analysis",
       "file": "chunk-fy12d89p.js",
       "anchorOffset": 970055,
@@ -3316,7 +3444,77 @@
       "sha256": "6e3cf434840462e9d013502462706f73aeca3ecdf5df0bebf838f537f5f72bc3"
     },
     {
+      "role": "checkBashPermissions",
+      "wiring": "splice",
+      "scope": "graph",
+      "anchor": "this agent's Bash use is clamped to a fixed set of command forms",
+      "file": "chunk-fy12d89p.js",
+      "anchorOffset": 1003750,
+      "binding": "$ct",
+      "params": 3,
+      "name": "$ct",
+      "kind": "function",
+      "start": 1003463,
+      "end": 1004739,
+      "byteStart": 1003463,
+      "byteEnd": 1004739,
+      "sha256": "71426551ba5c46fd778776f8d15b89867e1c7ee93fe51d08460c55b22e3050e8"
+    },
+    {
+      "role": "clampCrashFailClosed",
+      "wiring": "splice",
+      "scope": "engine",
+      "anchor": "permission check crashed and this agent carries a per-spawn bashCommandClamp",
+      "file": "chunk-fy12d89p.js",
+      "anchorOffset": 988070,
+      "binding": "XNt",
+      "params": 2,
+      "name": "XNt",
+      "kind": "function",
+      "start": 987955,
+      "end": 988249,
+      "byteStart": 987955,
+      "byteEnd": 988249,
+      "sha256": "effc651a80e5d4a88f16a8b6acc5dc8bbcaae94257cb03cb901cad7ce32b30ff"
+    },
+    {
+      "role": "decideModeSpecificCommand",
+      "wiring": "fold",
+      "scope": "graph",
+      "anchor": "Base command not found",
+      "file": "chunk-fy12d89p.js",
+      "anchorOffset": 976190,
+      "binding": "hrn",
+      "params": 2,
+      "name": "hrn",
+      "kind": "function",
+      "start": 976096,
+      "end": 976443,
+      "byteStart": 976096,
+      "byteEnd": 976443,
+      "sha256": "9baf8cf5cad9afb72afb8923e04e948d82c76a2fc69849cb82e8b13d713637cf"
+    },
+    {
+      "role": "decideBashPermissions",
+      "wiring": "fold",
+      "scope": "graph",
+      "anchor": "tengu_bash_ast_too_complex",
+      "file": "chunk-fy12d89p.js",
+      "anchorOffset": 1005140,
+      "binding": "jrn",
+      "params": 3,
+      "name": "jrn",
+      "kind": "function",
+      "start": 1004739,
+      "end": 1011392,
+      "byteStart": 1004739,
+      "byteEnd": 1011392,
+      "sha256": "1769e905f881642be3b695c9f496c3393eb616651c51348b022fc4c9668419aa"
+    },
+    {
       "role": "aggregateSubcommands",
+      "wiring": "fold",
+      "scope": "graph",
       "anchor": "Bare output redirection with no command; path layer approved",
       "file": "chunk-fy12d89p.js",
       "anchorOffset": 973154,
@@ -3332,6 +3530,8 @@
     },
     {
       "role": "parsePipeCommand",
+      "wiring": "fold",
+      "scope": "graph",
       "anchor": "Failed to parse command",
       "file": "chunk-fy12d89p.js",
       "anchorOffset": 975422,
@@ -3347,6 +3547,8 @@
     },
     {
       "role": "rejectCompoundOperators",
+      "wiring": "fold",
+      "scope": "graph",
       "anchor": "This command uses shell operators that require approval for safety",
       "file": "chunk-fy12d89p.js",
       "anchorOffset": 975662,
@@ -3361,19 +3563,21 @@
       "sha256": "a9e84c1b5531c565ac6b70fe6c8f906c2739ae223802f84f636d65fa5949f480"
     },
     {
-      "role": "decideModeSpecificCommand",
-      "anchor": "Base command not found",
-      "file": "chunk-fy12d89p.js",
-      "anchorOffset": 976190,
-      "binding": "hrn",
-      "params": 2,
-      "name": "hrn",
+      "role": "validateCommandSemantics",
+      "wiring": "fold",
+      "scope": "graph",
+      "anchor": "Newline followed by # inside a redirect target can hide arguments from path validation",
+      "file": "chunk-9e2ns8ty.js",
+      "anchorOffset": 175470,
+      "binding": "bQn",
+      "params": 1,
+      "name": "bQn",
       "kind": "function",
-      "start": 976096,
-      "end": 976443,
-      "byteStart": 976096,
-      "byteEnd": 976443,
-      "sha256": "9baf8cf5cad9afb72afb8923e04e948d82c76a2fc69849cb82e8b13d713637cf"
+      "start": 163205,
+      "end": 175587,
+      "byteStart": 163205,
+      "byteEnd": 175587,
+      "sha256": "bb8de285908e6e046bd207ac51535528106f52dd8c3cfd496a1a25423cf1916f"
     }
   ],
   "tables": [
@@ -3849,6 +4053,400 @@
         "cp",
         "cd"
       ]
+    }
+  ],
+  "tableDependencyClosure": [
+    {
+      "name": "gKe",
+      "kind": "table-dependency",
+      "start": 176846,
+      "end": 187342,
+      "byteStart": 176846,
+      "byteEnd": 187342,
+      "sha256": "80e3016212e70ca92286a4d7e468b9c5cecde5a700762467440486913e292e56"
+    },
+    {
+      "name": "Qa",
+      "kind": "table-dependency",
+      "start": 109282,
+      "end": 109334,
+      "byteStart": 109282,
+      "byteEnd": 109334,
+      "sha256": "0efe916dda3cc66bc1c3b5f4ef4d2d93c15fb2e4abba643be86ea5a13c712b3a"
+    },
+    {
+      "name": "wQn",
+      "kind": "table-dependency",
+      "start": 194818,
+      "end": 195889,
+      "byteStart": 194818,
+      "byteEnd": 195889,
+      "sha256": "a1b991a212e5bb5c7ce4876c13c4da40287488d9f8fa2a9c8d1f5ba6f8c1254d"
+    },
+    {
+      "name": "TQn",
+      "kind": "table-dependency",
+      "start": 195890,
+      "end": 196215,
+      "byteStart": 195890,
+      "byteEnd": 196215,
+      "sha256": "704691add1b7881d70376969d9250876bbc62f35d10c90dab56405d41a295513"
+    },
+    {
+      "name": "nyt",
+      "kind": "table-dependency",
+      "start": 194418,
+      "end": 194817,
+      "byteStart": 194418,
+      "byteEnd": 194817,
+      "sha256": "4f8d2e68fd2a097e7bb70104a67473f870911739b9e832cb1ca2e328fc045736"
+    },
+    {
+      "name": "mKe",
+      "kind": "table-dependency",
+      "start": 161131,
+      "end": 161181,
+      "byteStart": 161131,
+      "byteEnd": 161181,
+      "sha256": "cf838f55e86be62a677e71370b12c02cd99c1faf3a8352337f20bc7c8117acd0"
+    },
+    {
+      "name": "TLe",
+      "kind": "table-dependency",
+      "start": 161182,
+      "end": 161238,
+      "byteStart": 161182,
+      "byteEnd": 161238,
+      "sha256": "69091922793b13a0e3d4a36e843165e252e9a0ee83c44379a0419d056bfc0451"
+    },
+    {
+      "name": "hKe",
+      "kind": "table-dependency",
+      "start": 187690,
+      "end": 193953,
+      "byteStart": 187690,
+      "byteEnd": 193953,
+      "sha256": "b1ed5ae94eb805561d0029b12f2779982b655f3e5425cd9b49a0feaa047327ea"
+    },
+    {
+      "name": "en",
+      "kind": "table-dependency",
+      "start": 175917,
+      "end": 176021,
+      "byteStart": 175917,
+      "byteEnd": 176021,
+      "sha256": "9da736542d68ba1e3d90ef2e64f9e43ad53a47f55dd0bd5bc4fe7b624dfd5d4d"
+    },
+    {
+      "name": "Rt",
+      "kind": "table-dependency",
+      "start": 176022,
+      "end": 176063,
+      "byteStart": 176022,
+      "byteEnd": 176063,
+      "sha256": "4987be726182eb9f7429627678119368da63cee30de47e09e365ff706d0df50d"
+    },
+    {
+      "name": "Jt",
+      "kind": "table-dependency",
+      "start": 175748,
+      "end": 175874,
+      "byteStart": 175748,
+      "byteEnd": 175874,
+      "sha256": "d7887cdde794a2ea09de73c8ac2d3e15bca69fca7796c854c90c8af6a88ccdf0"
+    },
+    {
+      "name": "Et",
+      "kind": "table-dependency",
+      "start": 175591,
+      "end": 175665,
+      "byteStart": 175591,
+      "byteEnd": 175665,
+      "sha256": "5a8f2ebff3a111c6f4585a6f5b70633ad4dc5fe37895227f83766af1f0243acc"
+    },
+    {
+      "name": "qt",
+      "kind": "table-dependency",
+      "start": 175666,
+      "end": 175747,
+      "byteStart": 175666,
+      "byteEnd": 175747,
+      "sha256": "7d3d6eb27256c210c3ba499c2e4ecb96dfb533d082d372e30398526864f74321"
+    },
+    {
+      "name": "Qt",
+      "kind": "table-dependency",
+      "start": 175875,
+      "end": 175916,
+      "byteStart": 175875,
+      "byteEnd": 175916,
+      "sha256": "bf4e0b0c53ea186489817d75047657f2fcfe1edff9356a599e24b3fd6e13b8e6"
+    },
+    {
+      "name": "ir",
+      "kind": "table-dependency",
+      "start": 176064,
+      "end": 176152,
+      "byteStart": 176064,
+      "byteEnd": 176152,
+      "sha256": "2a0bc6ff25d43504c59e15661553118bdc441be88be76c1e649f6803ce632f94"
+    },
+    {
+      "name": "sr",
+      "kind": "table-dependency",
+      "start": 176153,
+      "end": 176218,
+      "byteStart": 176153,
+      "byteEnd": 176218,
+      "sha256": "4d3f1dddf09548abde95d81846300ed76c6cbfc6f1e1cde0004312c8ac6f628b"
+    },
+    {
+      "name": "Ne",
+      "kind": "table-dependency",
+      "start": 176511,
+      "end": 176842,
+      "byteStart": 176511,
+      "byteEnd": 176842,
+      "sha256": "87be71ba15bdb5a8611514755e8e494f88e57d6fe5986c7bdc08fc314189b74d"
+    },
+    {
+      "name": "Me",
+      "kind": "table-dependency",
+      "start": 109239,
+      "end": 109261,
+      "byteStart": 109239,
+      "byteEnd": 109261,
+      "sha256": "233cc5fb4ea708e96c0fa5c67b36a622a3d4b3605aeaf4d6d4ef355f7952e96b"
+    },
+    {
+      "name": "z",
+      "kind": "table-dependency",
+      "start": 109262,
+      "end": 109281,
+      "byteStart": 109262,
+      "byteEnd": 109281,
+      "sha256": "fc3dc77b6831251dfdb8d8d07d12af2f57ac8cfafe09e2df14f1b0bb48fe1e4d"
+    },
+    {
+      "name": "dWt",
+      "kind": "table-dependency",
+      "start": 194167,
+      "end": 194414,
+      "byteStart": 194167,
+      "byteEnd": 194414,
+      "sha256": "faa018de6bb6b7d4bcf427e937b8349172a3c5573a7cfe9e8a162025d8213d4c"
+    },
+    {
+      "name": "he",
+      "kind": "table-dependency",
+      "start": 187343,
+      "end": 187686,
+      "byteStart": 187343,
+      "byteEnd": 187686,
+      "sha256": "3cda02f82b59b5d0f87c22d1165657f60749733a36ceeb3c3a1e61870aa9cc8e"
+    },
+    {
+      "name": "ei",
+      "kind": "table-dependency",
+      "start": 176219,
+      "end": 176248,
+      "byteStart": 176219,
+      "byteEnd": 176248,
+      "sha256": "329630b294108ee4c7bcb0be43a23cf4e0130b81fd1ba8e3c8b03a4f4a165eef"
+    },
+    {
+      "name": "Za",
+      "kind": "table-dependency",
+      "start": 176249,
+      "end": 176295,
+      "byteStart": 176249,
+      "byteEnd": 176295,
+      "sha256": "3fbaf9a37b097f29278bb3ebd32f8722b7bbd3cc4027b1fe311323b5ed901402"
+    },
+    {
+      "name": "Ja",
+      "kind": "table-dependency",
+      "start": 176370,
+      "end": 176511,
+      "byteStart": 176370,
+      "byteEnd": 176511,
+      "sha256": "0c70bbd7a89e8016dc25bf3eddb139a8d6c159671afbeddfce484d001b2ce170"
+    },
+    {
+      "name": "tyt",
+      "kind": "table-dependency",
+      "start": 193954,
+      "end": 194109,
+      "byteStart": 193954,
+      "byteEnd": 194109,
+      "sha256": "1cbfe34d3ee8e96b8fb61bdbba754c1cda36a4a8261b8f8e57f4e0d2b6457fdc"
+    },
+    {
+      "name": "el",
+      "kind": "table-dependency",
+      "start": 194110,
+      "end": 194166,
+      "byteStart": 194110,
+      "byteEnd": 194166,
+      "sha256": "4f14230059d54608790815dd58a80e01856b1c5f519b178222aae83503b349f2"
+    },
+    {
+      "name": "Xa",
+      "kind": "table-dependency",
+      "start": 176299,
+      "end": 176369,
+      "byteStart": 176299,
+      "byteEnd": 176369,
+      "sha256": "1f35caf7c6f2e80191a96581b9c93466ca4a80935fc821854179892ae6b27691"
+    }
+  ],
+  "exclusions": [
+    {
+      "role": "destructive-telemetry-and-ui",
+      "file": "chunk-fy12d89p.js",
+      "start": 890386,
+      "end": 900456,
+      "names": [
+        "Htn",
+        "T9e",
+        "f9n",
+        "Ob",
+        "jtn",
+        "Wtn",
+        "ztn",
+        "Vhe",
+        "Gtn",
+        "Aee",
+        "_9e",
+        "S9e",
+        "qtn",
+        "Ktn",
+        "Vtn",
+        "Zj",
+        "Ytn",
+        "Xtn",
+        "Qtn",
+        "OP",
+        "Yhe",
+        "v9e",
+        "Xhe",
+        "Jtn",
+        "Ztn",
+        "enn",
+        "tnn",
+        "b9e"
+      ],
+      "reason": "No command-admission caller: f9n is interactive warning UI; Ob/Aee/OP feed execution telemetry and PowerShell. Defer to their owning waves."
+    },
+    {
+      "role": "environment-snapshot-state",
+      "file": "chunk-fy12d89p.js",
+      "start": 908522,
+      "end": 909566,
+      "names": [
+        "inn",
+        "P9e",
+        "ann",
+        "C8",
+        "A8",
+        "x9e",
+        "R8",
+        "oW"
+      ],
+      "reason": "Host-scoped mutable environment state stays behind C13b's named ports and belongs to C13d's shell snapshot ownership."
+    },
+    {
+      "role": "interactive-suggestions",
+      "file": "chunk-fy12d89p.js",
+      "start": 977790,
+      "end": 978197,
+      "names": [
+        "m9n",
+        "g9n"
+      ],
+      "reason": "Only interactive rule-suggestion consumers read these helpers."
+    },
+    {
+      "role": "bash-tool-alias",
+      "file": "chunk-fy12d89p.js",
+      "start": 978827,
+      "end": 978834,
+      "names": [
+        "N8e"
+      ],
+      "reason": "A tool-object matcher alias, not command-admission behavior; its tool caller remains a later leaf."
+    },
+    {
+      "role": "monitor-tool-helper",
+      "file": "chunk-fy12d89p.js",
+      "start": 987563,
+      "end": 987955,
+      "names": [
+        "h9n"
+      ],
+      "reason": "Shared Monitor/tool failure rendering; C13b deliberately admits adjacent XNt's clamp fail-closed decision but not this renderer."
+    },
+    {
+      "role": "sandbox-server-helper",
+      "file": "chunk-fy12d89p.js",
+      "start": 1012117,
+      "end": 1012303,
+      "names": [
+        "Grn",
+        "_9n"
+      ],
+      "reason": "Excluded-command plumbing for server/sandbox paths, outside the local command-admission leaf."
+    },
+    {
+      "role": "powershell-destructive-classifier",
+      "file": "chunk-fy12d89p.js",
+      "start": 1012880,
+      "end": 1015118,
+      "names": [
+        "qrn",
+        "sQe",
+        "y9n",
+        "Eye"
+      ],
+      "reason": "PowerShell-specific classifier data and helpers belong to C13f."
+    },
+    {
+      "role": "next-permission-region",
+      "file": "chunk-fy12d89p.js",
+      "start": 1015118,
+      "end": 1015363,
+      "names": [
+        "csn",
+        "iQe",
+        "Y8"
+      ],
+      "reason": "Tool-catalog/config declarations beyond the C5 boundary; Y8 is included only because the coarse endpoint overlaps its first byte."
+    },
+    {
+      "role": "executor-parse-wrapper",
+      "file": "chunk-9e2ns8ty.js",
+      "start": 112242,
+      "end": 112426,
+      "names": [
+        "dde"
+      ],
+      "reason": "Its Brn/LG/DHn/BashTool.call consumers belong to later executor/tool leaves; its classification core already reaches owned KTe."
+    },
+    {
+      "role": "argv-ui-telemetry-consumer",
+      "file": "chunk-fy12d89p.js",
+      "start": 2098641,
+      "end": 2099121,
+      "names": [
+        "jz"
+      ],
+      "reason": "Reads beyond argv[0], but only EOn recursion, interactive X9n suggestions, and tht/LG telemetry call it; no $ct/jrn admission caller."
+    }
+  ],
+  "deliberateDarkAdmissions": [
+    {
+      "binding": "oro",
+      "reason": "one occurrence (its declaration) and no consumer; owned because the approved table population names it, graded only by pinned-byte table parity"
     }
   ]
 }

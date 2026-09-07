@@ -16,6 +16,7 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { BUNDLE_MODULES, ENGINE_VERSION } from "../../src/pin.js";
+import { freeIdentifiers } from "../../strangle/scope.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = join(HERE, "..", "fixtures", `bash-safety-${ENGINE_VERSION}.json`);
@@ -57,6 +58,14 @@ function uniqueAnchor(modules: ModuleFile[], anchor: string): { module: ModuleFi
   }
   if (hits.length !== 1) throw new Error(`anchor ${JSON.stringify(anchor)} occurs ${hits.length} times graph-wide`);
   return hits[0];
+}
+
+function uniqueAnchorIn(module: ModuleFile, anchor: string): { module: ModuleFile; offset: number } {
+  const first = module.source.indexOf(anchor);
+  if (first < 0 || module.source.indexOf(anchor, first + Math.max(1, anchor.length)) >= 0) {
+    throw new Error(`anchor ${JSON.stringify(anchor)} is not unique in ${module.file}`);
+  }
+  return { module, offset: first };
 }
 
 function topLevelStatementAt(module: ModuleFile, offset: number): ts.Statement {
@@ -156,6 +165,54 @@ function variableDeclarators(module: ModuleFile): ts.VariableDeclaration[] {
   );
 }
 
+function namedTopLevelDeclarations(module: ModuleFile): Map<string, ts.Node> {
+  const out = new Map<string, ts.Node>();
+  for (const statement of module.sf.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name) out.set(statement.name.text, statement);
+    else if (ts.isClassDeclaration(statement) && statement.name) out.set(statement.name.text, statement);
+    else if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name)) out.set(declaration.name.text, declaration);
+      }
+    }
+  }
+  return out;
+}
+
+function transitiveDeclarations(module: ModuleFile, seeds: readonly string[]) {
+  const declarations = namedTopLevelDeclarations(module);
+  const seen = new Set<string>();
+  const queue = [...seeds];
+  while (queue.length > 0) {
+    const name = queue.shift()!;
+    if (seen.has(name)) continue;
+    const declaration = declarations.get(name);
+    if (!declaration) continue;
+    seen.add(name);
+    for (const dependency of freeIdentifiers(declaration)) {
+      if (declarations.has(dependency) && !seen.has(dependency)) queue.push(dependency);
+    }
+  }
+  return [...seen].map((name) => span(module, name, "table-dependency", declarations.get(name)!));
+}
+
+function exclusionGroup(module: ModuleFile, role: string, names: readonly string[], reason: string) {
+  const declarations = namedTopLevelDeclarations(module);
+  const rows = names.map((name) => {
+    const declaration = declarations.get(name);
+    if (!declaration) throw new Error(`${module.file}: exclusion ${role} lost declaration ${name}`);
+    return span(module, name, "excluded", declaration);
+  });
+  return {
+    role,
+    file: module.file,
+    start: Math.min(...rows.map((row) => row.start)),
+    end: Math.max(...rows.map((row) => row.end)),
+    names: rows.map((row) => row.name),
+    reason,
+  };
+}
+
 function tableBy(module: ModuleFile, role: string, predicate: (init: ts.Expression, text: string) => boolean) {
   const hits = variableDeclarators(module).filter((declaration) => {
     const init = declaration.initializer;
@@ -191,17 +248,21 @@ const classifierStart = topLevelStatementAt(classifier, CLASSIFIER_SCOUT.start).
 const classifierEnd = topLevelStatementAt(classifier, CLASSIFIER_SCOUT.end - 1).end;
 
 const rootSpecs = [
-  ["classifyCommand", "Parser aborted (timeout, resource limit, or over-length)"],
-  ["classifyReadOnly", "Command too long for read-only analysis"],
-  ["aggregateSubcommands", "Bare output redirection with no command; path layer approved"],
-  ["parsePipeCommand", "Failed to parse command"],
-  ["rejectCompoundOperators", "This command uses shell operators that require approval for safety"],
-  ["decideModeSpecificCommand", "Base command not found"],
+  ["classifyCommand", "Parser aborted (timeout, resource limit, or over-length)", "splice"],
+  ["classifyReadOnly", "Command too long for read-only analysis", "splice"],
+  ["checkBashPermissions", "this agent's Bash use is clamped to a fixed set of command forms", "splice", "graph"],
+  ["clampCrashFailClosed", "permission check crashed and this agent carries a per-spawn bashCommandClamp", "splice", "engine"],
+  ["decideModeSpecificCommand", "Base command not found", "fold"],
+  ["decideBashPermissions", "tengu_bash_ast_too_complex", "fold"],
+  ["aggregateSubcommands", "Bare output redirection with no command; path layer approved", "fold"],
+  ["parsePipeCommand", "Failed to parse command", "fold"],
+  ["rejectCompoundOperators", "This command uses shell operators that require approval for safety", "fold"],
+  ["validateCommandSemantics", "Newline followed by # inside a redirect target can hide arguments from path validation", "fold"],
 ] as const;
-const roots = rootSpecs.map(([role, anchor]) => {
-  const hit = uniqueAnchor(modules, anchor);
+const roots = rootSpecs.map(([role, anchor, wiring, scope = "graph"]) => {
+  const hit = scope === "engine" ? uniqueAnchorIn(engine, anchor) : uniqueAnchor(modules, anchor);
   const fn = enclosingFunction(hit.module, hit.offset);
-  return { role, anchor, file: hit.module.file, anchorOffset: hit.offset, binding: fn.name!.text, params: fn.parameters.length, ...span(hit.module, fn.name!.text, "function", fn) };
+  return { role, wiring, scope, anchor, file: hit.module.file, anchorOffset: hit.offset, binding: fn.name!.text, params: fn.parameters.length, ...span(hit.module, fn.name!.text, "function", fn) };
 });
 
 const tables = [
@@ -218,15 +279,60 @@ const tables = [
   tableBy(engine, "pathFlagValidators", (init, text) => ts.isObjectLiteralExpression(init) && text.includes("mv:(") && text.includes("cp:(") && text.includes("r<=1")),
 ];
 
+const graphTableSeeds = tables
+  .filter((table) => table.role === "commandAllowlist" || table.role === "commandAllowlistExtension")
+  .flatMap((table) => {
+    const declaration = variableDeclarators(engine).find((candidate) => ts.isIdentifier(candidate.name) && candidate.name.text === table.binding)!;
+    return freeIdentifiers(declaration.initializer!).filter((name) => namedTopLevelDeclarations(classifier).has(name));
+  });
+const tableDependencyClosure = transitiveDeclarations(classifier, graphTableSeeds);
+
+const exclusions = [
+  exclusionGroup(engine, "destructive-telemetry-and-ui", "Htn T9e f9n Ob jtn Wtn ztn Vhe Gtn Aee _9e S9e qtn Ktn Vtn Zj Ytn Xtn Qtn OP Yhe v9e Xhe Jtn Ztn enn tnn b9e".split(" "),
+    "No command-admission caller: f9n is interactive warning UI; Ob/Aee/OP feed execution telemetry and PowerShell. Defer to their owning waves."),
+  exclusionGroup(engine, "environment-snapshot-state", "inn P9e ann C8 A8 x9e R8 oW".split(" "),
+    "Host-scoped mutable environment state stays behind C13b's named ports and belongs to C13d's shell snapshot ownership."),
+  exclusionGroup(engine, "interactive-suggestions", ["m9n", "g9n"],
+    "Only interactive rule-suggestion consumers read these helpers."),
+  exclusionGroup(engine, "bash-tool-alias", ["N8e"],
+    "A tool-object matcher alias, not command-admission behavior; its tool caller remains a later leaf."),
+  exclusionGroup(engine, "monitor-tool-helper", ["h9n"],
+    "Shared Monitor/tool failure rendering; C13b deliberately admits adjacent XNt's clamp fail-closed decision but not this renderer."),
+  exclusionGroup(engine, "sandbox-server-helper", ["Grn", "_9n"],
+    "Excluded-command plumbing for server/sandbox paths, outside the local command-admission leaf."),
+  exclusionGroup(engine, "powershell-destructive-classifier", ["qrn", "sQe", "y9n", "Eye"],
+    "PowerShell-specific classifier data and helpers belong to C13f."),
+  exclusionGroup(engine, "next-permission-region", ["csn", "iQe", "Y8"],
+    "Tool-catalog/config declarations beyond the C5 boundary; Y8 is included only because the coarse endpoint overlaps its first byte."),
+  exclusionGroup(classifier, "executor-parse-wrapper", ["dde"],
+    "Its Brn/LG/DHn/BashTool.call consumers belong to later executor/tool leaves; its classification core already reaches owned KTe."),
+  exclusionGroup(engine, "argv-ui-telemetry-consumer", ["jz"],
+    "Reads beyond argv[0], but only EOn recursion, interactive X9n suggestions, and tht/LG telemetry call it; no $ct/jrn admission caller."),
+];
+
 const fixture = {
   engineVersion: ENGINE_VERSION,
   generatedBy: "research/tools/extract-bash-safety.ts",
   regions: [
-    region(engine, engineStart, engineEnd, { start: 890_302, end: 1_015_200 }),
-    region(classifier, classifierStart, classifierEnd, { start: 108_945, end: 162_000 }),
+    region(engine, engineStart, engineEnd, ENGINE_SCOUT),
+    region(classifier, classifierStart, classifierEnd, CLASSIFIER_SCOUT),
+    // Byte verification found the admission validator the coarse scout range
+    // omitted: `jrn` calls it directly, and nothing else does. Include every
+    // complete statement between the old endpoint and that folded callee.
+    region(
+      classifier,
+      classifierEnd,
+      roots.find((root) => root.role === "validateCommandSemantics")!.end,
+      { start: CLASSIFIER_SCOUT.end, end: roots.find((root) => root.role === "validateCommandSemantics")!.end },
+    ),
   ],
   roots,
   tables,
+  tableDependencyClosure,
+  exclusions,
+  deliberateDarkAdmissions: [
+    { binding: "oro", reason: "one occurrence (its declaration) and no consumer; owned because the approved table population names it, graded only by pinned-byte table parity" },
+  ],
 };
 const rendered = JSON.stringify(fixture, null, 2) + "\n";
 

@@ -10,7 +10,7 @@ C13b replaces the pinned engine’s Bash command classification and per-subcomma
 
 - [x] (2026-09-07 22:17Z) Re-read the campaign contracts, W10 scout, C13a corrected seam notes, current manifest, lock protocol, C13c scenario registration, and pinned 2.1.251 bytes.
 - [x] (2026-09-07 22:17Z) Verified the dispatch baseline is `8b08d87`, the registered tag is exactly `bash-compound-safety`, its cassette exists, and the old 166/166 log survives although the prepared graph entrypoints do not.
-- [x] (2026-09-07 22:42Z) Derived and committed the pin-keyed population fixture for both scout regions: exact AST-snapped spans, every top-level declaration, six approved roots, and eleven flag/effect tables. Final owned-closure versus exclusion adjudication remains part of the implementation record.
+- [x] (2026-09-07 22:42Z) Derived and committed the pin-keyed population fixture for both scout regions: exact AST-snapped spans, every top-level declaration, four anchored runtime roots, six folded admission functions, eleven flag/effect tables, their transitive table dependencies, and ten evidence-backed exclusion groups. Final owned-closure versus exclusion adjudication remains part of the implementation record.
 - [ ] Write the pinned-byte parity oracle and table-assertion negative controls, run them RED for missing owned modules, then implement the classifier half GREEN.
 - [ ] Implement the engine-chunk command-safety half, including anchored adapters, owned/folded pure helpers, table equality assertions, and a named compound aggregate contract; keep each TDD cycle recorded in durable logs.
 - [ ] Register all owned modules in engine-ts, add manifest/footprint/attestation/gate wiring, update the closure ledger, and regenerate only derived artifacts whose focused checks require it.
@@ -24,6 +24,8 @@ C13b replaces the pinned engine’s Bash command classification and per-subcomma
 - Observation: snapping the scout’s coarse offsets to complete top-level statements yields 254 declared entries over bytes 890302–1015363 in `chunk-fy12d89p.js`, and 105 over bytes 108945–162610 in `chunk-9e2ns8ty.js`. The classifier scout endpoint 162000 is inside a multi-declarator statement, so treating it as an excision boundary would silently split declarations.
   Evidence: `research/tools/extract-bash-safety.ts --check` and `research/fixtures/bash-safety-2.1.251.json`.
 - Observation: the baseline log exists at `reforge/build/gate-20260906-1939.log`, but the prepared `build/graph` and `build/strangled` CLI entrypoints are absent. Focused replay work must prepare once under the sandbox lock rather than assuming old artifacts survived.
+- Observation: byte-level caller tracing changes the scout’s splice cut. The minimal runtime roots are `KTe`, `_8e`, `$ct`, and the deliberately admitted clamp-crash fallback `XNt`; `jrn`, `w8e`, `mrn`, `drn`, `hrn`, and the previously omitted `bQn` are pure admission collaborators folded beneath `$ct`. The 53,180-byte classifier endpoint lands inside a declaration, and `bQn` at bytes 163205–175587 is a required sole callee of `jrn`.
+  Evidence: `research/fixtures/bash-safety-2.1.251.json` records ten rooted/folded functions, the classifier extension, table closure, and exclusions with pinned spans.
 - Observation: the existing `bash-compound-safety` recording reaches neither W6 `findSafetyCheckReason` caller it was expected to close. Replacing each exact call site with a unique throwing probe still left the replay green; the subshell in the recorded command is rejected by `mrn` before the `drn` multi-`cd` aggregate, and the command has no duplicate normalized subcommand for `jrn`’s merge tie-break.
   Evidence: `reforge/build/c13b-fy-multicd-reachability.log` and `reforge/build/c13b-fy-tiebreak-reachability.log`, both `EXIT_STATUS=0`; the faithful build was restored afterward.
 
@@ -34,6 +36,9 @@ C13b replaces the pinned engine’s Bash command classification and per-subcomma
   Date/Author: 2026-09-07 / C13b implementer.
 - Decision: treat C13a’s parser exports and sentinel as the only parser implementation dependency. The owned classifier imports `PARSE_ABORTED` rather than minting a symbol, keeps positional `commandArgv` semantics, and treats only `ERROR`, `test_rhs_missing`, `backtick_escape_unsupported`, and `backtick_body_overrun` as recovery-only.
   Rationale: these are corrected, byte-verified seam contracts and are already graded by parser parity.
+  Date/Author: 2026-09-07 / C13b implementer.
+- Decision: use four runtime splice roots: `KTe`, `_8e`, `$ct`, and `XNt`. Fold the six lower admission functions beneath `$ct`; do not add six redundant seams.
+  Rationale: byte-level caller tracing shows each lower function is reached only through the `$ct` admission component. `XNt` is intentionally included beyond the audit’s minimum because its 294-byte clamp-crash fail-closed decision is command admission, uniquely scoped to the Bash chunk, and leaving it gains no useful boundary.
   Date/Author: 2026-09-07 / C13b implementer.
 - Decision: derive a complete declaration population before finalizing splice granularity. Anchored public roots own their transitive pure closure; declarations outside that closure are either separately rooted or explicitly excluded with caller and byte evidence.
   Rationale: claiming the scout’s byte ranges wholesale without accounting for every declaration would silently narrow ownership; copying unrelated neighboring permission/path code would overclaim it.
@@ -100,3 +105,5 @@ Revision note (2026-09-07 22:42Z): the population milestone is complete. The fix
 Revision note (2026-09-07 22:50Z): targeted throwing probes proved the registered compound cassette does not execute either W6 `findSafetyCheckReason` call site. The plan preserves direct parity acceptance and records the missing end-to-end observation separately.
 
 Revision note (2026-09-07 22:54Z): fixed the population locator to treat TypeScript AST spans as half-open. A boundary equal to one statement’s end is the next statement’s start; the previous inclusive test silently attributed the preceding declarations to both regions.
+
+Revision note (2026-09-07 23:19Z): caller tracing finalized the population: four splices, six folds, the omitted `bQn` extension, eleven tables with their closure, and explicit exclusion groups. The plan now follows actual admission callers rather than the scout’s invalid mid-declaration ranges.
