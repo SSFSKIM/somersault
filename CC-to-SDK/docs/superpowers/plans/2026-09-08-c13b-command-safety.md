@@ -1,0 +1,94 @@
+# Own the C13b Bash command-safety chain
+
+This execution plan is a living document. `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` stay current while the work proceeds. It follows the repository’s approved reforge-full campaign and the execution-plan discipline in the installed `doperpowers:execplan` skill.
+
+## Purpose / Big Picture
+
+C13b replaces the pinned engine’s Bash command classification and per-subcommand permission logic with reforge-owned JavaScript while leaving the surrounding engine and C13a parser seam unchanged. Afterward, the existing W6 Bash permission matrix and the recorded `bash-compound-safety` scenario must make the same decisions through owned code, and every owned flag/effect table must reject a graph-side value that differs from the pinned table. This is parity work, not a customization; the real binary and extracted bundle remain read-only oracles.
+
+## Progress
+
+- [x] (2026-09-07 22:17Z) Re-read the campaign contracts, W10 scout, C13a corrected seam notes, current manifest, lock protocol, C13c scenario registration, and pinned 2.1.251 bytes.
+- [x] (2026-09-07 22:17Z) Verified the dispatch baseline is `8b08d87`, the registered tag is exactly `bash-compound-safety`, its cassette exists, and the old 166/166 log survives although the prepared graph entrypoints do not.
+- [ ] Derive and commit a pin-keyed population fixture for both stated byte regions, including actual byte spans, declarations owned through each anchored root, table declarations, consumers, and explicit exclusions.
+- [ ] Write the pinned-byte parity oracle and table-assertion negative controls, run them RED for missing owned modules, then implement the classifier half GREEN.
+- [ ] Implement the engine-chunk command-safety half, including anchored adapters, owned/folded pure helpers, table equality assertions, and a named compound aggregate contract; keep each TDD cycle recorded in durable logs.
+- [ ] Register all owned modules in engine-ts, add manifest/footprint/attestation/gate wiring, update the closure ledger, and regenerate only derived artifacts whose focused checks require it.
+- [ ] Run focused mechanism, derivation, contract, permission-matrix Bash cells, `bash-compound-safety` replay, liveness/negative controls, attestation check, reachability, ledger, and TypeScript verification. Do not run the full strangler gate.
+- [ ] Update `reforge/README.md` and the campaign spec’s C13b row/living tail with evidence and limits, commit explicit paths in logical units, and push the completed branch.
+
+## Surprises & Discoveries
+
+- Observation: C13c already registered and recorded the required scenario under the exact tag `bash-compound-safety`; no additional live take is authorized or presently needed.
+  Evidence: `reforge/w10/scenarios.ts` defines the tag and `reforge/cassettes/m1-bash-compound-safety.jsonl` is present.
+- Observation: the scout’s coarse regions require a declaration-level accounting before ownership can be claimed. The engine range contains 270 top-level bindings by AST counting, while `KTe` reaches 78 of 103 bindings in the classifier range; the remaining declarations include consumers’ tables as well as unrelated neighbors.
+  Evidence: scratch AST inventory over `/Users/new/claude-code-bundle/2.1.251/modules/chunk-fy12d89p.js` and `chunk-9e2ns8ty.js`, using the repository’s TypeScript parser and `strangle/scope.ts` free-variable walk.
+- Observation: the baseline log exists at `reforge/build/gate-20260906-1939.log`, but the prepared `build/graph` and `build/strangled` CLI entrypoints are absent. Focused replay work must prepare once under the sandbox lock rather than assuming old artifacts survived.
+
+## Decision Log
+
+- Decision: use the existing shared checkout and current `main` branch rather than an isolated worktree.
+  Rationale: the task explicitly requires the current branch and gives shared-checkout staging and lock rules; sandbox/build writers will serialize through `src/lock.ts`.
+  Date/Author: 2026-09-07 / C13b implementer.
+- Decision: treat C13a’s parser exports and sentinel as the only parser implementation dependency. The owned classifier imports `PARSE_ABORTED` rather than minting a symbol, keeps positional `commandArgv` semantics, and treats only `ERROR`, `test_rhs_missing`, `backtick_escape_unsupported`, and `backtick_body_overrun` as recovery-only.
+  Rationale: these are corrected, byte-verified seam contracts and are already graded by parser parity.
+  Date/Author: 2026-09-07 / C13b implementer.
+- Decision: derive a complete declaration population before finalizing splice granularity. Anchored public roots own their transitive pure closure; declarations outside that closure are either separately rooted or explicitly excluded with caller and byte evidence.
+  Rationale: claiming the scout’s byte ranges wholesale without accounting for every declaration would silently narrow ownership; copying unrelated neighboring permission/path code would overclaim it.
+  Date/Author: 2026-09-07 / C13b implementer.
+- Decision: the pinned-byte oracle binds upstream bodies to upstream helpers and exercises owned adapters, while table controls perturb one named entry at a time.
+  Rationale: sharing owned helpers between oracle and implementation can hide the same defect on both sides; a generic “something changed” control does not prove which table assertion is live.
+  Date/Author: 2026-09-07 / C13b implementer.
+
+## Outcomes & Retrospective
+
+Work is in progress. Closure is parent-owned: this plan will report focused implementation evidence but will not claim C13b finally closed before independent review and the parent’s full gate.
+
+## Context and Orientation
+
+`reforge/strangle/manifest.ts` declares each splice, its literal anchor, structural target signature, exhaustive captures, and covering scenarios. A splice replaces one pinned function body with a call through `globalThis.__reforge`; its adapter under `reforge/strangle/modules/` installs the owned reference function and rejects stale primitive/table inputs. `reforge/engine-ts/modules/index.ts` imports the same reference implementation, proving dual wiring and static independence from extracted artifacts. `reforge/strangle/attestation.ts` accounts for every branch in owned modules. `reforge/ledger.json` records subsystem ownership and upstream footprint hashes.
+
+C13a already owns `reforge/strangle/modules/shell-parser/reference.js`. Its `PARSE_ABORTED` symbol has identity semantics. C13b consumes its parser, tree nodes, command-node walk, and argv extraction. C13c already supplies the offline recording `reforge/cassettes/m1-bash-compound-safety.jsonl`; this plan reuses it and does not record live by default.
+
+The pinned source of truth is `/Users/new/claude-code-bundle/2.1.251/modules/`. It is read-only. All offsets and expected behavior in new fixtures and tests must be re-derived from those bytes, not copied from the scout.
+
+## Plan of Work
+
+First add a pin-keyed extractor and fixture that locate the two source regions by stable structure or literals, enumerate every top-level declaration and table, compute anchored-root closures, and list exclusions with evidence. The check mode must fail when the fixture differs from the pin.
+
+Next write a focused `strangle/bash-safety-parity.test.ts` before the implementation. It will extract the exact upstream targets using `resolveAnchor`, `selectExcision`, and manifest capture derivations; bind upstream bodies to upstream helpers; drive partitions covering parser rejection, redirection/heredoc extraction, read-only classification, wrapper peeling, effect tables, pipe/subshell behavior, multiple `cd` commands, and duplicate-subcommand tie-breaking; and compare full decision values including `decisionReason.subcommandResults`. Each behavioral partition and each table gets a named mutant that must differ.
+
+Implement one readable shared reference layer for the classifier and one for engine-side safety, with thin per-splice adapters and sabotage twins. Pure helpers that have no stable anchor are folded into these reference layers. State, filesystem, settings, existing permission context, telemetry, and session-dependent policy remain named adapter ports. Structured table assertions compare keys, primitive leaves, ordered set members, and declared callable slots; parity tests grade callable behavior against upstream bytes.
+
+Finally wire the new rows into the manifest, engine-ts registry, attestation inventory, gate contract phase, and ledger. Build and backfill footprints using existing scripts. Focused replays will use the registered C13c cassette and only the W6 Bash-bearing permission cells. Documentation will state exact owned spans and exclusions, focused verdict counts, and parent-owned closure.
+
+## Concrete Steps
+
+All commands run from `/Users/new/Developer/GitHub/somersault/CC-to-SDK/reforge`.
+
+1. Run the population extractor in write mode once, then `npx tsx research/tools/extract-bash-safety.ts --check`.
+2. Run `npx tsx strangle/bash-safety-parity.test.ts` before modules exist and archive the expected RED in `build/c13b-red.log`.
+3. Implement classifier and safety reference modules/adapters in small GREEN cycles, rerunning the focused oracle after each.
+4. Run mechanism and registration checks: `npx tsx strangle/mechanism.test.ts`, `npx tsx strangle/perturb.ts`, `npx tsx engine-ts/check-reachability.ts`, and `npx tsx engine-ts/skeleton.test.ts`.
+5. Prepare once if needed using `npx tsx strangle/prepare.ts`, then replay the named W6 Bash cells and `npx tsx m1/run.ts --scenario bash-compound-safety` through the faithful strangled build. Archive complete output under `build/`.
+6. Run `npx tsx strangle/attest.ts --check`, `npx tsx ledger/backfill-captures.ts --check`, `npx tsx ledger/check.ts`, focused contract suites, and `npx tsc --noEmit`.
+
+## Validation and Acceptance
+
+Acceptance requires all of the following observable results: the population check reports every planned declaration accounted for with no silent remainder; the parity oracle reports all behavior comparisons and named mutants passing against pinned bytes; every owned table’s perturbation emits that table’s stale-value error; W6’s Bash permission cells remain green through the owned chain; `bash-compound-safety` passes offline and its contract observes a multi-part `subcommandResults` aggregate rather than only successful shell output; each new splice sabotage produces a named divergence or a reviewed dark verdict; reachability and skeleton registration are green; attestation has zero unadjudicated branches; ledger footprints match the pinned bytes; and TypeScript compiles cleanly.
+
+The parent owns independent review and the final full strangler gate. This implementer will not report campaign closure from focused results alone.
+
+## Idempotence and Recovery
+
+Extractors support `--check`, footprint backfill supports `--check`, and focused tests are repeatable offline. All sandbox resets go through the existing lock; a live holder is waited out or reported, never evicted. Prepared build artifacts are disposable and may be rebuilt. No command mutates the pinned bundle, user configuration, credentials, `harness/src/tui`, the untracked sibling `pi/`, or live Claude installation paths.
+
+## Artifacts and Notes
+
+Durable logs live under `reforge/build/` and are gitignored. The final README record cites exact log paths and counts. The source plan, pin-keyed fixture, tests, modules, manifest, attestation metadata, registry, ledger, README, and parent spec are committed; generated engine trees and credentials are not.
+
+## Interfaces and Dependencies
+
+Owned classifier code imports parser behavior only from `strangle/modules/shell-parser/reference.js`, including the one `PARSE_ABORTED` instance. Thin adapters use shared assertion utilities under `strangle/modules/shared/`. The oracle uses the manifest’s real anchor, AST, and capture machinery rather than a parallel extractor. No new runtime package is required.
+
+Revision note (2026-09-07): initial plan written after byte-level inventory and before implementation; it makes declaration accounting a first milestone because the scout’s regions are deliberately coarse.
