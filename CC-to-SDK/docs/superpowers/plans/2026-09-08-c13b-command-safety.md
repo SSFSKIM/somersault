@@ -10,7 +10,7 @@ C13b replaces the pinned engine’s Bash command classification and per-subcomma
 
 - [x] (2026-09-07 22:17Z) Re-read the campaign contracts, W10 scout, C13a corrected seam notes, current manifest, lock protocol, C13c scenario registration, and pinned 2.1.251 bytes.
 - [x] (2026-09-07 22:17Z) Verified the dispatch baseline is `8b08d87`, the registered tag is exactly `bash-compound-safety`, its cassette exists, and the old 166/166 log survives although the prepared graph entrypoints do not.
-- [ ] Derive and commit a pin-keyed population fixture for both stated byte regions, including actual byte spans, declarations owned through each anchored root, table declarations, consumers, and explicit exclusions.
+- [x] (2026-09-07 22:42Z) Derived and committed the pin-keyed population fixture for both scout regions: exact AST-snapped spans, every top-level declaration, six approved roots, and eleven flag/effect tables. Final owned-closure versus exclusion adjudication remains part of the implementation record.
 - [ ] Write the pinned-byte parity oracle and table-assertion negative controls, run them RED for missing owned modules, then implement the classifier half GREEN.
 - [ ] Implement the engine-chunk command-safety half, including anchored adapters, owned/folded pure helpers, table equality assertions, and a named compound aggregate contract; keep each TDD cycle recorded in durable logs.
 - [ ] Register all owned modules in engine-ts, add manifest/footprint/attestation/gate wiring, update the closure ledger, and regenerate only derived artifacts whose focused checks require it.
@@ -21,8 +21,8 @@ C13b replaces the pinned engine’s Bash command classification and per-subcomma
 
 - Observation: C13c already registered and recorded the required scenario under the exact tag `bash-compound-safety`; no additional live take is authorized or presently needed.
   Evidence: `reforge/w10/scenarios.ts` defines the tag and `reforge/cassettes/m1-bash-compound-safety.jsonl` is present.
-- Observation: the scout’s coarse regions require a declaration-level accounting before ownership can be claimed. The engine range contains 270 top-level bindings by AST counting, while `KTe` reaches 78 of 103 bindings in the classifier range; the remaining declarations include consumers’ tables as well as unrelated neighbors.
-  Evidence: scratch AST inventory over `/Users/new/claude-code-bundle/2.1.251/modules/chunk-fy12d89p.js` and `chunk-9e2ns8ty.js`, using the repository’s TypeScript parser and `strangle/scope.ts` free-variable walk.
+- Observation: snapping the scout’s coarse offsets to complete top-level statements yields 254 declared entries over bytes 890027–1015199 in `chunk-fy12d89p.js`, and 106 over bytes 108537–162610 in `chunk-9e2ns8ty.js`. The classifier scout endpoint 162000 is inside a multi-declarator statement, so treating it as an excision boundary would silently split declarations.
+  Evidence: `research/tools/extract-bash-safety.ts --check` and `research/fixtures/bash-safety-2.1.251.json`.
 - Observation: the baseline log exists at `reforge/build/gate-20260906-1939.log`, but the prepared `build/graph` and `build/strangled` CLI entrypoints are absent. Focused replay work must prepare once under the sandbox lock rather than assuming old artifacts survived.
 
 ## Decision Log
@@ -92,3 +92,5 @@ Durable logs live under `reforge/build/` and are gitignored. The final README re
 Owned classifier code imports parser behavior only from `strangle/modules/shell-parser/reference.js`, including the one `PARSE_ABORTED` instance. Thin adapters use shared assertion utilities under `strangle/modules/shared/`. The oracle uses the manifest’s real anchor, AST, and capture machinery rather than a parallel extractor. No new runtime package is required.
 
 Revision note (2026-09-07): initial plan written after byte-level inventory and before implementation; it makes declaration accounting a first milestone because the scout’s regions are deliberately coarse.
+
+Revision note (2026-09-07 22:42Z): the population milestone is complete. The fixture records AST-complete spans rather than pretending the scout’s mid-statement endpoint is an ownership boundary.
