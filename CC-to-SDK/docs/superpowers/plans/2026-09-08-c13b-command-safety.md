@@ -11,7 +11,7 @@ C13b replaces the pinned engine’s Bash command classification and per-subcomma
 - [x] (2026-09-07 22:17Z) Re-read the campaign contracts, W10 scout, C13a corrected seam notes, current manifest, lock protocol, C13c scenario registration, and pinned 2.1.251 bytes.
 - [x] (2026-09-07 22:17Z) Verified the dispatch baseline is `8b08d87`, the registered tag is exactly `bash-compound-safety`, its cassette exists, and the old 166/166 log survives although the prepared graph entrypoints do not.
 - [x] (2026-09-07 22:42Z) Derived and committed the pin-keyed population fixture for both scout regions: exact AST-snapped spans, every top-level declaration, four anchored runtime roots, six folded admission functions, eleven flag/effect tables, their transitive table dependencies, and ten evidence-backed exclusion groups. Final owned-closure versus exclusion adjudication remains part of the implementation record.
-- [ ] Write the pinned-byte parity oracle and table-assertion negative controls, run them RED for missing owned modules, then implement the classifier half GREEN.
+- [x] (2026-09-08 00:10Z) Implemented the classifier half and eleven owned tables. Pinned-byte oracles pass 6,613 classifier differentials and 1,286 table checks; real adapter controls pass 44 checks and name every perturbed table path. The classifier splice is live on `perm-rule-deny`, faithful replay is green, and engine-ts registration/reachability is green.
 - [ ] Implement the engine-chunk command-safety half, including anchored adapters, owned/folded pure helpers, table equality assertions, and a named compound aggregate contract; keep each TDD cycle recorded in durable logs.
 - [ ] Register all owned modules in engine-ts, add manifest/footprint/attestation/gate wiring, update the closure ledger, and regenerate only derived artifacts whose focused checks require it.
 - [ ] Run focused mechanism, derivation, contract, permission-matrix Bash cells, `bash-compound-safety` replay, liveness/negative controls, attestation check, reachability, ledger, and TypeScript verification. Do not run the full strangler gate.
@@ -28,6 +28,10 @@ C13b replaces the pinned engine’s Bash command classification and per-subcomma
   Evidence: `research/fixtures/bash-safety-2.1.251.json` records ten rooted/folded functions, the classifier extension, table closure, and exclusions with pinned spans.
 - Observation: the existing `bash-compound-safety` recording reaches neither W6 `findSafetyCheckReason` caller it was expected to close. Replacing each exact call site with a unique throwing probe still left the replay green; the subshell in the recorded command is rejected by `mrn` before the `drn` multi-`cd` aggregate, and the command has no duplicate normalized subcommand for `jrn`’s merge tie-break.
   Evidence: `reforge/build/c13b-fy-multicd-reachability.log` and `reforge/build/c13b-fy-tiebreak-reachability.log`, both `EXIT_STATUS=0`; the faithful build was restored afterward.
+- Observation: table ownership needs a distinct data splice: the original graph initializer must execute once so its independently constructed value can be structurally asserted before consumers receive the owned replacement. `asserted-variable-declarator` supplies that exact value without treating callable slots as identity-bearing.
+  Evidence: `strangle/mechanism.test.ts` passes 135 checks; `strangle/bash-safety-table-adapters.test.ts` passes 44 checks and requires each graph perturbation to name its exact table path.
+- Observation: the eleven direct table declarations occupy 22,674 pinned bytes, not the scout’s approximate 17 KB, and reach 27 additional declaration dependencies. The contract evaluates those exact upstream declarations and performs 1,263 pinned-byte callback comparisons over 83 callable slots.
+  Evidence: `research/fixtures/bash-safety-2.1.251.json` and `reforge/build/c13b-table-preintegration.log`.
 
 ## Decision Log
 
@@ -107,3 +111,5 @@ Revision note (2026-09-07 22:50Z): targeted throwing probes proved the registere
 Revision note (2026-09-07 22:54Z): fixed the population locator to treat TypeScript AST spans as half-open. A boundary equal to one statement’s end is the next statement’s start; the previous inclusive test silently attributed the preceding declarations to both regions.
 
 Revision note (2026-09-07 23:19Z): caller tracing finalized the population: four splices, six folds, the omitted `bQn` extension, eleven tables with their closure, and explicit exclusion groups. The plan now follows actual admission callers rather than the scout’s invalid mid-declaration ranges.
+
+Revision note (2026-09-08 00:10Z): classifier and table cores are GREEN against pinned bytes. The runtime table declarators and remaining engine-side safety roots are in integration; no closure claim is made.
