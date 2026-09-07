@@ -150,6 +150,7 @@ function matchesShape(n: ts.Node, shape: TargetShape): boolean {
     // the graph invokes, so the two have different failure modes and deserve
     // different declarations.
     case "variable-declarator":
+    case "asserted-variable-declarator":
       return ts.isVariableDeclaration(n) && n.initializer !== undefined;
   }
 }
@@ -513,7 +514,7 @@ export async function gradeDeclaratorValue(args: {
  * to `arrow-initializer`, whose delegation is a callable the graph invokes per
  * call rather than a value computed once.
  */
-function exciseVariable(sf: ts.SourceFile, decl: ts.VariableDeclaration): Excision {
+function exciseVariable(sf: ts.SourceFile, decl: ts.VariableDeclaration, assertOriginal = false): Excision {
   if (!ts.isIdentifier(decl.name)) throw new Error("variable-declarator target is bound by a destructuring pattern — nothing to name the delegation after");
   const name = decl.name.text;
   const init = decl.initializer!;
@@ -524,14 +525,17 @@ function exciseVariable(sf: ts.SourceFile, decl: ts.VariableDeclaration): Excisi
     );
   }
   return {
-    shape: "variable-declarator",
+    shape: assertOriginal ? "asserted-variable-declarator" : "variable-declarator",
     label: name,
     node: init,
     signature: signatureOf(init, 0, { declarator: declaratorIndex(decl) }),
     start: init.getStart(sf),
     end: init.getEnd(),
     original: sf.text.slice(init.getStart(sf), init.getEnd()),
-    shapeArgs: [],
+    // C13b's owned-data variant evaluates the graph initializer exactly once
+    // and hands that value to the adapter for a structural equality assertion.
+    // The ordinary constant/prompt variant has no graph argument.
+    shapeArgs: assertOriginal ? [sf.text.slice(init.getStart(sf), init.getEnd())] : [],
     render: (fn, args) => `globalThis.__reforge.${fn}(${args.join(",")})`,
   };
 }
@@ -663,7 +667,8 @@ export function excise(sf: ts.SourceFile, anchorIdx: number, shape: TargetShape)
     if (shape === "switch-case") return exciseCase(sf, node as ts.CaseClause);
     if (shape === "free-function") return exciseFunction(sf, node as ts.FunctionDeclaration);
     if (shape === "arrow-initializer") return exciseArrow(sf, node as ts.ArrowFunction);
-    if (shape === "variable-declarator") return exciseVariable(sf, node as ts.VariableDeclaration);
+    if (shape === "variable-declarator" || shape === "asserted-variable-declarator")
+      return exciseVariable(sf, node as ts.VariableDeclaration, shape === "asserted-variable-declarator");
     return exciseMethod(sf, node as ts.MethodDeclaration, shape);
   }
   throw new Error(`no enclosing ${shape} node above the anchor — re-check the target shape`);

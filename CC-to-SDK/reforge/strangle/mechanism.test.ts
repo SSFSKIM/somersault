@@ -708,6 +708,18 @@ function footprintOf(owner: string, helper: string) {
   const spliced = consts.slice(0, cut.start) + cut.render("f", cut.shapeArgs) + consts.slice(cut.end);
   check("splicing it leaves the sibling declarators untouched",
     spliced.includes('promptB="other"') && spliced.includes("count=7") && spliced.startsWith("var promptA=globalThis"));
+  // C13b's table shape keeps the upstream initializer alive exactly once as
+  // the adapter's assertion input, then returns the owned table. A target that
+  // dropped this argument would still replace the table and every differential
+  // could agree on the owned value while the promised graph equality check
+  // never ran.
+  const asserted = excise(sf, consts.indexOf("DECL_ANCHOR"), "asserted-variable-declarator");
+  check("an asserted declarator forwards the ORIGINAL initializer exactly once",
+    asserted.shapeArgs.length === 1 && asserted.shapeArgs[0] === asserted.original,
+    JSON.stringify(asserted.shapeArgs));
+  check("the asserted-table delegation evaluates upstream before the adapter",
+    asserted.render("assertTable", asserted.shapeArgs) === `globalThis.__reforge.assertTable(${asserted.original})`,
+    asserted.render("assertTable", asserted.shapeArgs));
   throws("a function-like initializer is refused, and names the shape that owns it",
     () => excise(sf, consts.indexOf("FN_ANCHOR"), "variable-declarator"), /arrow-initializer/);
   check("a non-literal initializer reports no value rather than being evaluated",
@@ -830,7 +842,7 @@ console.log(`=== splice mechanism: ${pass} check(s) ===`);
 for (const f of failures) console.log(`  FAIL — ${f}`);
 console.log(
   failures.length === 0
-    ? "PASS — footprint covers the closure surface, the inventory is exhaustive, the target guard holds, computed keys are refused, defaults forward once, anchor scoping is unambiguous, generators delegate by yield*, same-anchored siblings are selected or refused, arrow initializers excise alone, declarator values are compared against upstream's bytes or refused"
+    ? "PASS — footprint covers the closure surface, the inventory is exhaustive, the target guard holds, computed keys are refused, defaults forward once, anchor scoping is unambiguous, generators delegate by yield*, same-anchored siblings are selected or refused, arrow initializers excise alone, declarator values are compared against upstream's bytes or refused, and owned-data declarators forward the original value for assertion"
     : `FAIL — ${failures.length} violation(s)`,
 );
 process.exitCode = failures.length === 0 ? 0 : 1;

@@ -173,7 +173,7 @@ for (const sp of SPLICES) {
   // lives in ast.ts so the mechanism fixtures can watch it fire; a non-literal
   // initializer refuses the build unless the row adjudicates it.
   const valueNote =
-    sp.target === "variable-declarator"
+    (sp.target === "variable-declarator" || sp.target === "asserted-variable-declarator")
       ? ` [${await gradeDeclaratorValue({
           name: sp.name,
           node: cut.node,

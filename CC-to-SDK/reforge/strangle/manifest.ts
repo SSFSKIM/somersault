@@ -60,7 +60,7 @@
 //   `effectful-port` is forwarded and stays a typed delegation argument.
 import type { TargetSignature } from "./ast.js";
 
-export type TargetShape = "sibling-method" | "free-function" | "class-method" | "switch-case" | "arrow-initializer" | "variable-declarator";
+export type TargetShape = "sibling-method" | "free-function" | "class-method" | "switch-case" | "arrow-initializer" | "variable-declarator" | "asserted-variable-declarator";
 
 export type CaptureClass = "primitive" | "pure-helper" | "effectful-port";
 
@@ -111,7 +111,7 @@ export interface Splice {
   /** delegation export name on globalThis.__reforge */
   fn: string;
   /**
-   * `variable-declarator` rows only: the written carve-out for an initializer
+   * `variable-declarator` and `asserted-variable-declarator` rows only: the written carve-out for an initializer
    * that is not a plain literal, so the build cannot compare the owned value
    * against the pinned chunk's bytes.
    *
