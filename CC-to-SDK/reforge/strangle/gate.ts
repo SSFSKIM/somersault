@@ -370,6 +370,10 @@ for (const [label, script] of [
 console.log("━━━ contracts: owned helpers + the formatter arms the corpus does not reach ━━━");
 for (const [label, script] of [
   ["owned-implementation contracts", "strangle/contracts.test.ts"],
+  // C13b owns eleven structured Bash flag/effect tables. The adapter compares
+  // structure at graph startup; this oracle separately evaluates all callable
+  // slots against their exact pinned declarations and perturbs every table.
+  ["bash-safety tables vs the pinned bundle", "strangle/bash-safety-tables.test.ts"],
   // The description functions get their own contract test, and it is a
   // different KIND: rather than partitioning inputs by hand it extracts the four
   // upstream bodies out of the pinned bundle, runs them with stubbed ports, and
