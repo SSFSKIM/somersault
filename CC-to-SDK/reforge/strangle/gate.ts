@@ -374,6 +374,7 @@ for (const [label, script] of [
   // structure at graph startup; this oracle separately evaluates all callable
   // slots against their exact pinned declarations and perturbs every table.
   ["bash-safety tables vs the pinned bundle", "strangle/bash-safety-tables.test.ts"],
+  ["bash-safety table adapters assert and sabotage named entries", "strangle/bash-safety-table-adapters.test.ts"],
   // C13b's KTe classifier core: the owned side consumes C13a's exact
   // PARSE_ABORTED identity while the oracle evaluates pinned parser/classifier
   // bytes independently over the parser corpus and classifier-only guards.
