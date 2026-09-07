@@ -194,6 +194,10 @@ for (const [label, argv] of [
   // patterns the stall detector's other input is made of — so the scripted
   // child's `--prompt-tail` is checked against the artifact instead of believed.
   ["shell-timers fixture matches the pin", ["research/tools/extract-shell-timers.ts", "--check"]],
+  // C13b/W10b: the scout names two coarse command-safety ranges, one ending
+  // mid-statement. This fixture snaps them to AST boundaries and inventories
+  // every declaration, the six anchored roots, and eleven flag/effect tables.
+  ["bash-safety fixture matches the pin", ["research/tools/extract-bash-safety.ts", "--check"]],
   ["gate-defaults fixture matches the pin", ["research/tools/extract-gate-defaults.ts", "--check"]],
   // The hook wave's population under test, and the third pin-keyed fixture. W5
   // enumerated "the events that exist" by judgment twice and was wrong twice —
