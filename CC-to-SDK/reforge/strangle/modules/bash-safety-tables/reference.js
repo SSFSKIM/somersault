@@ -265,11 +265,20 @@ const GIT_SAFE_COMMANDS = {
       ...GIT_FILTER_FLAGS,
     },
     additionalCommandIsDangerousCallback: (_command, args) => {
-      let r = new Set(["show", "list"]),
-        o = new Set(["expire", "delete", "exists", "drop", "write"]),
-        u = args[0];
-      if (u && !u.startsWith("-") && !r.has(u)) return true;
-      for (let d of args) if (o.has(d)) return true;
+      let allowedReflogSubcommands = new Set(["show", "list"]),
+        mutatingReflogSubcommands = new Set([
+          "expire",
+          "delete",
+          "exists",
+          "drop",
+          "write",
+        ]),
+        subcommand = args[0];
+      if (
+        subcommand && !subcommand.startsWith("-") &&
+        !allowedReflogSubcommands.has(subcommand)
+      ) return true;
+      for (let arg of args) if (mutatingReflogSubcommands.has(arg)) return true;
       return false;
     },
   },
@@ -298,15 +307,15 @@ const GIT_SAFE_COMMANDS = {
     },
     additionalCommandIsDangerousCallback: (_command, args) => {
       if (gitArgumentsAreDangerous(args)) return true;
-      let r = false;
-      for (let o = 0; o < args.length; o++) {
-        let u = args[o];
-        if (!r && u === "--") {
-          r = true;
+      let afterDoubleDash = false;
+      for (let index = 0; index < args.length; index++) {
+        let arg = args[index];
+        if (!afterDoubleDash && arg === "--") {
+          afterDoubleDash = true;
           continue;
         }
-        if (!r && (!u || u.startsWith("-"))) {
-          if (u === "--sort") o++;
+        if (!afterDoubleDash && (!arg || arg.startsWith("-"))) {
+          if (arg === "--sort") index++;
           continue;
         }
         return true;
@@ -428,19 +437,23 @@ const GIT_SAFE_COMMANDS = {
   "git remote show": {
     safeFlags: { "-n": "none" },
     additionalCommandIsDangerousCallback: (_command, args) => {
-      let r = args.indexOf("--"),
-        o = r === -1 ? args : args.slice(0, r),
-        u = r === -1 ? [] : args.slice(r + 1),
-        d = o.filter((S) => S !== "-n").concat(u);
-      if (d.length !== 1) return true;
-      if (!o.includes("-n")) return true;
-      return !/^[a-zA-Z0-9_][a-zA-Z0-9_-]*$/.test(d[0]);
+      let separatorIndex = args.indexOf("--"),
+        flagArgs = separatorIndex === -1 ? args : args.slice(0, separatorIndex),
+        trailingArgs = separatorIndex === -1
+          ? []
+          : args.slice(separatorIndex + 1),
+        remoteNames = flagArgs.filter((arg) => arg !== "-n").concat(
+          trailingArgs,
+        );
+      if (remoteNames.length !== 1) return true;
+      if (!flagArgs.includes("-n")) return true;
+      return !/^[a-zA-Z0-9_][a-zA-Z0-9_-]*$/.test(remoteNames[0]);
     },
   },
   "git remote": {
     safeFlags: { "-v": "none", "--verbose": "none" },
     additionalCommandIsDangerousCallback: (_command, args) =>
-      args.some((r) => r !== "-v" && r !== "--verbose"),
+      args.some((arg) => arg !== "-v" && arg !== "--verbose"),
   },
   "git merge-base": {
     safeFlags: {
@@ -638,7 +651,7 @@ const GIT_SAFE_COMMANDS = {
     },
     additionalCommandIsDangerousCallback: (_command, args) => {
       if (gitArgumentsAreDangerous(args)) return true;
-      let r = new Set([
+      let flagsWithValues = new Set([
           "--contains",
           "--no-contains",
           "--merged",
@@ -648,31 +661,32 @@ const GIT_SAFE_COMMANDS = {
           "--format",
           "-n",
         ]),
-        o = 0,
-        u = false,
-        d = false;
-      while (o < args.length) {
-        let S = args[o];
-        if (!S) {
-          o++;
+        index = 0,
+        listMode = false,
+        afterDoubleDash = false;
+      while (index < args.length) {
+        let arg = args[index];
+        if (!arg) {
+          index++;
           continue;
         }
-        if (S === "--" && !d) {
-          d = true, o++;
+        if (arg === "--" && !afterDoubleDash) {
+          afterDoubleDash = true, index++;
           continue;
         }
-        if (!d && S.startsWith("-")) {
-          if (S === "--list" || S === "-l") u = true;
+        if (!afterDoubleDash && arg.startsWith("-")) {
+          if (arg === "--list" || arg === "-l") listMode = true;
           else if (
-            S[0] === "-" && S[1] !== "-" && S.length > 2 && !S.includes("=") &&
-            S.slice(1).includes("l")
-          ) u = true;
-          if (S.includes("=")) o++;
-          else if (r.has(S)) o += 2;
-          else o++;
+            arg[0] === "-" && arg[1] !== "-" && arg.length > 2 &&
+            !arg.includes("=") &&
+            arg.slice(1).includes("l")
+          ) listMode = true;
+          if (arg.includes("=")) index++;
+          else if (flagsWithValues.has(arg)) index += 2;
+          else index++;
         } else {
-          if (!u) return true;
-          o++;
+          if (!listMode) return true;
+          index++;
         }
       }
       return false;
@@ -707,35 +721,42 @@ const GIT_SAFE_COMMANDS = {
     },
     additionalCommandIsDangerousCallback: (_command, args) => {
       if (gitArgumentsAreDangerous(args)) return true;
-      let r = new Set(["--contains", "--no-contains", "--points-at", "--sort"]),
-        o = new Set(["--merged", "--no-merged"]),
-        u = 0,
-        d = "",
-        S = false,
-        _ = false;
-      while (u < args.length) {
-        let x = args[u];
-        if (!x) {
-          u++;
+      let flagsWithValues = new Set([
+          "--contains",
+          "--no-contains",
+          "--points-at",
+          "--sort",
+        ]),
+        mergeFilterFlags = new Set(["--merged", "--no-merged"]),
+        index = 0,
+        previousFlag = "",
+        listMode = false,
+        afterDoubleDash = false;
+      while (index < args.length) {
+        let arg = args[index];
+        if (!arg) {
+          index++;
           continue;
         }
-        if (x === "--" && !_) {
-          _ = true, d = "", u++;
+        if (arg === "--" && !afterDoubleDash) {
+          afterDoubleDash = true, previousFlag = "", index++;
           continue;
         }
-        if (!_ && x.startsWith("-")) {
-          if (x === "--list" || x === "-l") S = true;
+        if (!afterDoubleDash && arg.startsWith("-")) {
+          if (arg === "--list" || arg === "-l") listMode = true;
           else if (
-            x[0] === "-" && x[1] !== "-" && x.length > 2 && !x.includes("=") &&
-            x.slice(1).includes("l")
-          ) S = true;
-          if (x.includes("=")) d = beforeDelimiter(x, "="), u++;
-          else if (r.has(x)) d = x, u += 2;
-          else d = x, u++;
+            arg[0] === "-" && arg[1] !== "-" && arg.length > 2 &&
+            !arg.includes("=") &&
+            arg.slice(1).includes("l")
+          ) listMode = true;
+          if (arg.includes("=")) {
+            previousFlag = beforeDelimiter(arg, "="), index++;
+          } else if (flagsWithValues.has(arg)) previousFlag = arg, index += 2;
+          else previousFlag = arg, index++;
         } else {
-          let P = o.has(d);
-          if (!S && !P) return true;
-          u++;
+          let mergeFilterMode = mergeFilterFlags.has(previousFlag);
+          if (!listMode && !mergeFilterMode) return true;
+          index++;
         }
       }
       return false;
@@ -1269,7 +1290,7 @@ const PYRIGHT_SAFE_COMMANDS = {
       "--warnings": "none",
     },
     additionalCommandIsDangerousCallback: (_command, args) =>
-      args.some((r) => r === "--watch" || r === "-w"),
+      args.some((arg) => arg === "--watch" || arg === "-w"),
   },
 };
 
@@ -1572,30 +1593,34 @@ export function createSafeCommandTable(isSedReadOnly) {
     },
     man: {
       additionalCommandIsDangerousCallback: (_command, args) => {
-        let r = new Set(["-k", "-f", "--apropos", "--whatis"]),
-          o = new Set(["-S", "-s"]),
-          u = false;
-        for (let C of args) {
-          if (C === "--") break;
-          if (!C.startsWith("-") || C === "-") continue;
-          if (C.startsWith("--")) { if (r.has(C)) u = true; }
-          else if (/[kf]/.test(C.slice(1))) u = true;
+        let searchFlags = new Set(["-k", "-f", "--apropos", "--whatis"]),
+          flagsWithValues = new Set(["-S", "-s"]),
+          compactSearchMode = false;
+        for (let arg of args) {
+          if (arg === "--") break;
+          if (!arg.startsWith("-") || arg === "-") continue;
+          if (arg.startsWith("--")) {
+            if (searchFlags.has(arg)) compactSearchMode = true;
+          } else if (/[kf]/.test(arg.slice(1))) compactSearchMode = true;
         }
-        let d = false, _ = false;
-        for (let C = 0; C < args.length; C++) {
-          let A = args[C];
-          if (!_ && A === "--") {
-            _ = true;
+        let searchMode = false, operandsStarted = false;
+        for (let index = 0; index < args.length; index++) {
+          let arg = args[index];
+          if (!operandsStarted && arg === "--") {
+            operandsStarted = true;
             continue;
           }
-          if (!(_ || !A.startsWith("-") || A === "-")) {
-            if (r.has(A)) d = true;
-            else if (o.has(A)) C++;
+          if (!(operandsStarted || !arg.startsWith("-") || arg === "-")) {
+            if (searchFlags.has(arg)) searchMode = true;
+            else if (flagsWithValues.has(arg)) index++;
             continue;
           }
-          if (_ = true, containsShellExpansion(A)) return true;
-          if (u && A.startsWith("-")) return true;
-          if (!d && (A.includes("/") || A.includes("\\") || A.includes("~"))) {
+          if (operandsStarted = true, containsShellExpansion(arg)) return true;
+          if (compactSearchMode && arg.startsWith("-")) return true;
+          if (
+            !searchMode &&
+            (arg.includes("/") || arg.includes("\\") || arg.includes("~"))
+          ) {
             return true;
           }
         }
@@ -1617,9 +1642,9 @@ export function createSafeCommandTable(isSedReadOnly) {
     },
     help: {
       additionalCommandIsDangerousCallback: (_command, args) =>
-        args.some((r) =>
-          r.includes("/") || r.includes("\\") || r.includes("~") ||
-          containsShellExpansion(r)
+        args.some((arg) =>
+          arg.includes("/") || arg.includes("\\") || arg.includes("~") ||
+          containsShellExpansion(arg)
         ),
       safeFlags: { "-d": "none" },
     },
@@ -1685,7 +1710,9 @@ export function createSafeCommandTable(isSedReadOnly) {
         "--version": "none",
       },
       additionalCommandIsDangerousCallback: (_command, args) =>
-        args.some((r) => !r.startsWith("-") && /^[a-zA-Z]*e[a-zA-Z]*$/.test(r)),
+        args.some((arg) =>
+          !arg.startsWith("-") && /^[a-zA-Z]*e[a-zA-Z]*$/.test(arg)
+        ),
     },
     base64: {
       respectsDoubleDash: false,
@@ -1857,17 +1884,23 @@ export function createSafeCommandTable(isSedReadOnly) {
         "--version": "none",
       },
       additionalCommandIsDangerousCallback: (_command, args) => {
-        let r = new Set(["-d", "--date", "-r", "--reference", "--rfc-3339"]),
-          o = 0;
-        while (o < args.length) {
-          let u = args[o];
-          if (u.startsWith("--") && u.includes("=")) o++;
-          else if (u.startsWith("-")) {
-            if (r.has(u)) o += 2;
-            else o++;
+        let flagsWithValues = new Set([
+            "-d",
+            "--date",
+            "-r",
+            "--reference",
+            "--rfc-3339",
+          ]),
+          index = 0;
+        while (index < args.length) {
+          let arg = args[index];
+          if (arg.startsWith("--") && arg.includes("=")) index++;
+          else if (arg.startsWith("-")) {
+            if (flagsWithValues.has(arg)) index += 2;
+            else index++;
           } else {
-            if (!u.startsWith("+")) return true;
-            o++;
+            if (!arg.startsWith("+")) return true;
+            index++;
           }
         }
         return false;
@@ -1940,18 +1973,21 @@ export function createSafeCommandTable(isSedReadOnly) {
         "-u": "string",
       },
       additionalCommandIsDangerousCallback: (_command, args) => {
-        for (let r = 0; r < args.length; r++) {
-          let o = args[r];
-          if (o === "+m" || o.startsWith("+m")) return true;
-          if (/^-[a-zA-Z]*i\S*@/.test(o)) {
-            let u = beforeDelimiter(o.slice(o.indexOf("@") + 1), ":");
-            if (/[a-zA-Z]/.test(u)) return true;
+        for (let index = 0; index < args.length; index++) {
+          let arg = args[index];
+          if (arg === "+m" || arg.startsWith("+m")) return true;
+          if (/^-[a-zA-Z]*i\S*@/.test(arg)) {
+            let host = beforeDelimiter(arg.slice(arg.indexOf("@") + 1), ":");
+            if (/[a-zA-Z]/.test(host)) return true;
           }
-          if (/^-[a-zA-Z]*i$/.test(o)) {
-            let u = args[r + 1] ?? "";
-            if (u.includes("@")) {
-              let d = beforeDelimiter(u.slice(u.indexOf("@") + 1), ":");
-              if (/[a-zA-Z]/.test(d)) return true;
+          if (/^-[a-zA-Z]*i$/.test(arg)) {
+            let nextArg = args[index + 1] ?? "";
+            if (nextArg.includes("@")) {
+              let host = beforeDelimiter(
+                nextArg.slice(nextArg.indexOf("@") + 1),
+                ":",
+              );
+              if (/[a-zA-Z]/.test(host)) return true;
             }
           }
         }
@@ -2014,7 +2050,7 @@ export function createSafeCommandTable(isSedReadOnly) {
     tput: {
       safeFlags: { "-T": "string", "-V": "none", "-x": "none" },
       additionalCommandIsDangerousCallback: (_command, args) => {
-        let r = new Set([
+        let unsafeCapabilities = new Set([
             "init",
             "reset",
             "rs1",
@@ -2040,22 +2076,22 @@ export function createSafeCommandTable(isSedReadOnly) {
             "smcup",
             "rmcup",
           ]),
-          o = new Set(["-T"]),
-          u = 0,
-          d = false;
-        while (u < args.length) {
-          let _ = args[u];
-          if (_ === "--") d = true, u++;
-          else if (!d && _.startsWith("-")) {
-            if (_ === "-S") return true;
-            if (!_.startsWith("--") && _.length > 2 && _.includes("S")) {
+          flagsWithValues = new Set(["-T"]),
+          index = 0,
+          afterDoubleDash = false;
+        while (index < args.length) {
+          let arg = args[index];
+          if (arg === "--") afterDoubleDash = true, index++;
+          else if (!afterDoubleDash && arg.startsWith("-")) {
+            if (arg === "-S") return true;
+            if (!arg.startsWith("--") && arg.length > 2 && arg.includes("S")) {
               return true;
             }
-            if (o.has(_)) u += 2;
-            else u++;
+            if (flagsWithValues.has(arg)) index += 2;
+            else index++;
           } else {
-            if (r.has(_)) return true;
-            u++;
+            if (unsafeCapabilities.has(arg)) return true;
+            index++;
           }
         }
         return false;
@@ -2130,37 +2166,40 @@ export function createSafeCommandTable(isSedReadOnly) {
         "--inet-sockopt": "none",
       },
       additionalCommandIsDangerousCallback: (_command, args) => {
-        let r =
+        let filterKeywords =
             /^(dst|src|dport|sport|and|or|not|eq|ne|ge|le|gt|lt|autobound|state|exclude|dev|fwmark|cgroup)$/,
-          o = /^(state|exclude|dport|sport|dev|fwmark|cgroup)$/,
-          u = /^(-f|--family|-A|--query|--socket)$/,
-          d = [],
-          _ = false;
-        for (let x = 0; x < args.length; x++) {
-          let M = args[x];
-          if (!_ && M === "--") {
-            _ = true;
+          keywordsWithOperand =
+            /^(state|exclude|dport|sport|dev|fwmark|cgroup)$/,
+          flagsWithValues = /^(-f|--family|-A|--query|--socket)$/,
+          operands = [],
+          afterDoubleDash = false;
+        for (let index = 0; index < args.length; index++) {
+          let arg = args[index];
+          if (!afterDoubleDash && arg === "--") {
+            afterDoubleDash = true;
             continue;
           }
-          if (!_ && M.startsWith("-")) {
-            if (u.test(M)) x++;
+          if (!afterDoubleDash && arg.startsWith("-")) {
+            if (flagsWithValues.test(arg)) index++;
             continue;
           }
-          d.push(M);
+          operands.push(arg);
         }
-        let C = d.join(" ").split(/[\s()=!<>&|,]+/).filter(Boolean), A = false;
-        for (let x of C) {
-          if (A) {
-            A = false;
+        let tokens = operands.join(" ").split(/[\s()=!<>&|,]+/).filter(Boolean),
+          skipNextOperand = false;
+        for (let token of tokens) {
+          if (skipNextOperand) {
+            skipNextOperand = false;
             continue;
           }
-          if (r.test(x)) {
-            A = o.test(x);
+          if (filterKeywords.test(token)) {
+            skipNextOperand = keywordsWithOperand.test(token);
             continue;
           }
           if (
-            /[g-zG-Z]/.test(x) ||
-            /[a-fA-F]/.test(x) && (x.includes(".") || !x.includes(":"))
+            /[g-zG-Z]/.test(token) ||
+            /[a-fA-F]/.test(token) &&
+              (token.includes(".") || !token.includes(":"))
           ) return true;
         }
         return false;
@@ -2207,19 +2246,24 @@ export function createSafeCommandTable(isSedReadOnly) {
       },
       additionalCommandIsDangerousCallback: (_command, args) => {
         if (
-          args.some((r) =>
-            r === "-v" || r === "-R" || r === "-a" || r === "-o" || /\[/.test(r)
+          args.some((arg) =>
+            arg === "-v" || arg === "-R" || arg === "-a" || arg === "-o" ||
+            /\[/.test(arg)
           )
         ) return true;
-        for (let r = 0; r < args.length; r++) {
-          if (TEST_NUMERIC_OPERATORS.has(args[r])) {
-            for (let o of [args[r - 1], args[r + 1]]) {
-              if (o !== void 0 && !SHELL_INTEGER_PATTERN.test(o)) return true;
+        for (let index = 0; index < args.length; index++) {
+          if (TEST_NUMERIC_OPERATORS.has(args[index])) {
+            for (let operand of [args[index - 1], args[index + 1]]) {
+              if (operand !== void 0 && !SHELL_INTEGER_PATTERN.test(operand)) {
+                return true;
+              }
             }
           }
-          if (args[r] === "-t") {
-            let o = args[r + 1];
-            if (o !== void 0 && !SHELL_INTEGER_PATTERN.test(o)) return true;
+          if (args[index] === "-t") {
+            let descriptor = args[index + 1];
+            if (
+              descriptor !== void 0 && !SHELL_INTEGER_PATTERN.test(descriptor)
+            ) return true;
           }
         }
         return false;
@@ -2381,18 +2425,20 @@ function searchArguments(args, flagsWithValues, fallback = []) {
 
 export function createFileArgumentExtractors(homeDirectory) {
   return {
-    cd: (e) => {
-      let t = positionalArguments(e);
-      if (t.length === 0) return e.at(-1) === "-" ? ["-"] : [homeDirectory()];
-      return [t[0]];
+    cd: (args) => {
+      let positional = positionalArguments(args);
+      if (positional.length === 0) {
+        return args.at(-1) === "-" ? ["-"] : [homeDirectory()];
+      }
+      return [positional[0]];
     },
-    ls: (e) => {
-      let t = positionalArguments(e);
-      return t.length > 0 ? t : ["."];
+    ls: (args) => {
+      let positional = positionalArguments(args);
+      return positional.length > 0 ? positional : ["."];
     },
-    find: (e) => {
-      let t = [],
-        r = new Set([
+    find: (args) => {
+      let paths = [],
+        referenceFlags = new Set([
           "-newer",
           "-anewer",
           "-cnewer",
@@ -2405,31 +2451,34 @@ export function createFileArgumentExtractors(homeDirectory) {
           "-ipath",
           "-iwholename",
         ]),
-        o = /^-newer[acmBt][acmtB]$/,
-        u = false,
-        d = false;
-      for (let _ = 0; _ < e.length; _++) {
-        let C = e[_];
-        if (!C) continue;
-        if (d) {
-          t.push(C);
+        referenceFlagPattern = /^-newer[acmBt][acmtB]$/,
+        expressionStarted = false,
+        afterDoubleDash = false;
+      for (let index = 0; index < args.length; index++) {
+        let arg = args[index];
+        if (!arg) continue;
+        if (afterDoubleDash) {
+          paths.push(arg);
           continue;
         }
-        if (C === "--") {
-          d = true;
+        if (arg === "--") {
+          afterDoubleDash = true;
           continue;
         }
-        if (C.startsWith("-")) {
-          if (["-H", "-L", "-P"].includes(C)) continue;
-          if (u = true, r.has(C) || o.test(C)) {
-            let A = e[_ + 1];
-            if (A) t.push(A), _++;
+        if (arg.startsWith("-")) {
+          if (["-H", "-L", "-P"].includes(arg)) continue;
+          if (
+            expressionStarted = true,
+              referenceFlags.has(arg) || referenceFlagPattern.test(arg)
+          ) {
+            let referencePath = args[index + 1];
+            if (referencePath) paths.push(referencePath), index++;
           }
           continue;
         }
-        if (!u) t.push(C);
+        if (!expressionStarted) paths.push(arg);
       }
-      return t.length > 0 ? t : ["."];
+      return paths.length > 0 ? paths : ["."];
     },
     mkdir: positionalArguments,
     touch: positionalArguments,
@@ -2470,8 +2519,8 @@ export function createFileArgumentExtractors(homeDirectory) {
     file: positionalArguments,
     stat: positionalArguments,
     diff: positionalArguments,
-    awk: (e) => {
-      let t = new Set([
+    awk: (args) => {
+      let flagsWithValues = new Set([
           "-F",
           "--field-separator",
           "-v",
@@ -2479,46 +2528,55 @@ export function createFileArgumentExtractors(homeDirectory) {
           "-e",
           "--source",
         ]),
-        r = new Set(["-f", "--file", "-E", "--exec"]),
-        o = [],
-        u = false,
-        d = false,
-        _ = false;
-      for (let C = 0; C < e.length; C++) {
-        let A = e[C];
-        if (A === void 0 || A === null) continue;
-        if (!u && !_ && A === "--") {
-          u = true;
+        programFileFlags = new Set(["-f", "--file", "-E", "--exec"]),
+        paths = [],
+        afterDoubleDash = false,
+        programSeen = false,
+        operandSeen = false;
+      for (let index = 0; index < args.length; index++) {
+        let arg = args[index];
+        if (arg === void 0 || arg === null) continue;
+        if (!afterDoubleDash && !operandSeen && arg === "--") {
+          afterDoubleDash = true;
           continue;
         }
-        if (!u && !_ && A !== "-" && A.startsWith("-")) {
-          let x = A.indexOf("="), M = x >= 0 ? A.slice(0, x) : A;
-          if (t.has(M)) {
-            if (M === "-e" || M === "--source") d = true;
-            if (x < 0) C++;
+        if (
+          !afterDoubleDash && !operandSeen && arg !== "-" && arg.startsWith("-")
+        ) {
+          let equalsIndex = arg.indexOf("="),
+            flag = equalsIndex >= 0 ? arg.slice(0, equalsIndex) : arg;
+          if (flagsWithValues.has(flag)) {
+            if (flag === "-e" || flag === "--source") programSeen = true;
+            if (equalsIndex < 0) index++;
             continue;
           }
-          if (r.has(M)) {
-            if (d = true, x >= 0) o.push(A.slice(x + 1));
-            else {
-              let F = e[C + 1];
-              if (F !== void 0) o.push(F), C++;
+          if (programFileFlags.has(flag)) {
+            if (programSeen = true, equalsIndex >= 0) {
+              paths.push(arg.slice(equalsIndex + 1));
+            } else {
+              let programFile = args[index + 1];
+              if (programFile !== void 0) paths.push(programFile), index++;
             }
             continue;
           }
           continue;
         }
-        if (_ && !u) {
-          let x = attachedFlagValue(A, ["-f", "--file", "-E", "--exec"]);
-          if (x !== void 0) o.push(x);
+        if (operandSeen && !afterDoubleDash) {
+          let attachedPath = attachedFlagValue(arg, [
+            "-f",
+            "--file",
+            "-E",
+            "--exec",
+          ]);
+          if (attachedPath !== void 0) paths.push(attachedPath);
         }
-        if (_ = true, !d) {
-          d = true;
+        if (operandSeen = true, !programSeen) {
+          programSeen = true;
           continue;
         }
-        o.push(A);
+        paths.push(arg);
       }
-      return o;
+      return paths;
     },
     strings: positionalArguments,
     hexdump: positionalArguments,
@@ -2528,15 +2586,16 @@ export function createFileArgumentExtractors(homeDirectory) {
     sha256sum: positionalArguments,
     sha1sum: positionalArguments,
     md5sum: positionalArguments,
-    tr: (e) => {
-      let t = e.some((o) =>
-        o === "-d" || o === "--delete" || o.startsWith("-") && o.includes("d")
+    tr: (args) => {
+      let deleteMode = args.some((arg) =>
+        arg === "-d" || arg === "--delete" ||
+        arg.startsWith("-") && arg.includes("d")
       );
-      return positionalArguments(e).slice(t ? 1 : 2);
+      return positionalArguments(args).slice(deleteMode ? 1 : 2);
     },
-    grep: (e) => {
-      let r = searchArguments(
-        e,
+    grep: (args) => {
+      let paths = searchArguments(
+        args,
         new Set([
           "-e",
           "--regexp",
@@ -2557,13 +2616,14 @@ export function createFileArgumentExtractors(homeDirectory) {
         ]),
       );
       if (
-        r.length === 0 && e.some((o) => ["-r", "-R", "--recursive"].includes(o))
+        paths.length === 0 &&
+        args.some((arg) => ["-r", "-R", "--recursive"].includes(arg))
       ) return ["."];
-      return r;
+      return paths;
     },
-    rg: (e) =>
+    rg: (args) =>
       searchArguments(
-        e,
+        args,
         new Set([
           "-e",
           "--regexp",
@@ -2589,39 +2649,48 @@ export function createFileArgumentExtractors(homeDirectory) {
         ]),
         ["."],
       ),
-    sed: (e) => {
-      let t = [], r = false, o = false, u = false, d = false;
-      for (let _ = 0; _ < e.length; _++) {
-        if (r) {
-          r = false;
+    sed: (args) => {
+      let paths = [],
+        skipNext = false,
+        expressionSeen = false,
+        afterDoubleDash = false,
+        operandSeen = false;
+      for (let index = 0; index < args.length; index++) {
+        if (skipNext) {
+          skipNext = false;
           continue;
         }
-        let C = e[_];
-        if (!C) continue;
-        if (!u && !d && C === "--") {
-          u = true;
+        let arg = args[index];
+        if (!arg) continue;
+        if (!afterDoubleDash && !operandSeen && arg === "--") {
+          afterDoubleDash = true;
           continue;
         }
-        if (!u && !d && C !== "-" && C.startsWith("-")) {
-          if (["-f", "--file"].includes(C)) {
-            let A = e[_ + 1];
-            if (A) t.push(A), r = true;
-            o = true;
-          } else if (["-e", "--expression"].includes(C)) r = true, o = true;
-          else if (C.includes("e") || C.includes("f")) o = true;
+        if (
+          !afterDoubleDash && !operandSeen && arg !== "-" && arg.startsWith("-")
+        ) {
+          if (["-f", "--file"].includes(arg)) {
+            let file = args[index + 1];
+            if (file) paths.push(file), skipNext = true;
+            expressionSeen = true;
+          } else if (["-e", "--expression"].includes(arg)) {
+            skipNext = true, expressionSeen = true;
+          } else if (arg.includes("e") || arg.includes("f")) {
+            expressionSeen = true;
+          }
           continue;
         }
-        if (d = true, !o) {
-          o = true;
+        if (operandSeen = true, !expressionSeen) {
+          expressionSeen = true;
           continue;
         }
-        t.push(C);
+        paths.push(arg);
       }
-      return t;
+      return paths;
     },
-    jq: (e) => {
-      let t = [],
-        r = new Set([
+    jq: (args) => {
+      let paths = [],
+        flagsWithValues = new Set([
           "-e",
           "--expression",
           "--arg",
@@ -2633,46 +2702,50 @@ export function createFileArgumentExtractors(homeDirectory) {
           "--indent",
           "--tab",
         ]),
-        o = false,
-        u = false;
-      for (let d = 0; d < e.length; d++) {
-        let _ = e[d];
-        if (_ === void 0 || _ === null) continue;
-        if (!u && _ === "--") {
-          u = true;
+        filterSeen = false,
+        afterDoubleDash = false;
+      for (let index = 0; index < args.length; index++) {
+        let arg = args[index];
+        if (arg === void 0 || arg === null) continue;
+        if (!afterDoubleDash && arg === "--") {
+          afterDoubleDash = true;
           continue;
         }
-        if (!u && _.startsWith("-")) {
-          let C = _.indexOf("="), A = C >= 0 ? _.slice(0, C) : _;
-          if (["-e", "--expression"].includes(A)) o = true;
-          if (["-f", "--from-file"].includes(A)) {
-            if (o = true, C >= 0) t.push(_.slice(C + 1));
-            else {
-              let x = e[d + 1];
-              if (x !== void 0) t.push(x), d++;
+        if (!afterDoubleDash && arg.startsWith("-")) {
+          let equalsIndex = arg.indexOf("="),
+            flag = equalsIndex >= 0 ? arg.slice(0, equalsIndex) : arg;
+          if (["-e", "--expression"].includes(flag)) filterSeen = true;
+          if (["-f", "--from-file"].includes(flag)) {
+            if (filterSeen = true, equalsIndex >= 0) {
+              paths.push(arg.slice(equalsIndex + 1));
+            } else {
+              let file = args[index + 1];
+              if (file !== void 0) paths.push(file), index++;
             }
             continue;
           }
-          if (["--slurpfile", "--rawfile"].includes(A)) {
-            let x = e[d + 2];
-            if (x !== void 0) t.push(x);
-            d += 2;
+          if (["--slurpfile", "--rawfile"].includes(flag)) {
+            let file = args[index + 2];
+            if (file !== void 0) paths.push(file);
+            index += 2;
             continue;
           }
-          if (r.has(A) && C < 0) d++;
+          if (flagsWithValues.has(flag) && equalsIndex < 0) index++;
           continue;
         }
-        if (!o) {
-          o = true;
+        if (!filterSeen) {
+          filterSeen = true;
           continue;
         }
-        t.push(_);
+        paths.push(arg);
       }
-      return t;
+      return paths;
     },
-    git: (e) => {
-      if (e.length >= 1 && e[0] === "diff") {
-        if (e.includes("--no-index")) return positionalArguments(e.slice(1));
+    git: (args) => {
+      if (args.length >= 1 && args[0] === "diff") {
+        if (args.includes("--no-index")) {
+          return positionalArguments(args.slice(1));
+        }
       }
       return [];
     },
@@ -2756,22 +2829,22 @@ export const FILE_EFFECT_KINDS = {
   md5sum: "read",
 };
 export const FILE_ARGUMENT_SAFETY = {
-  mv: (e) => !e.some((t) => t?.startsWith("-")),
-  cp: (e) => !e.some((t) => t?.startsWith("-")),
-  cd: (e) => {
-    let t = false, r = 0;
-    for (let o of e) {
-      if (!t) {
-        if (o === "--") {
-          t = true;
+  mv: (args) => !args.some((arg) => arg?.startsWith("-")),
+  cp: (args) => !args.some((arg) => arg?.startsWith("-")),
+  cd: (args) => {
+    let positionalStarted = false, positionalCount = 0;
+    for (let arg of args) {
+      if (!positionalStarted) {
+        if (arg === "--") {
+          positionalStarted = true;
           continue;
         }
-        if (o.startsWith("-") && o !== "-") continue;
-        t = true;
+        if (arg.startsWith("-") && arg !== "-") continue;
+        positionalStarted = true;
       }
-      r++;
+      positionalCount++;
     }
-    return r <= 1;
+    return positionalCount <= 1;
   },
 };
 export const WRAPPER_VALUE_FLAGS = {
@@ -2927,8 +3000,8 @@ export const WRAPPER_COMMAND_FLAGS = {
   script: new Set(["-c", "--command"]),
 };
 export const WRAPPER_POSITIONAL_VALIDATORS = {
-  chrt: (e) => /^\d+$/.test(e),
-  taskset: (e) => /^(0x[\da-f]+|\d+)$/i.test(e),
+  chrt: (value) => /^\d+$/.test(value),
+  taskset: (value) => /^(0x[\da-f]+|\d+)$/i.test(value),
   flock: () => true,
   script: () => true,
 };
