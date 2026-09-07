@@ -24,6 +24,8 @@ C13b replaces the pinned engine’s Bash command classification and per-subcomma
 - Observation: snapping the scout’s coarse offsets to complete top-level statements yields 254 declared entries over bytes 890027–1015199 in `chunk-fy12d89p.js`, and 106 over bytes 108537–162610 in `chunk-9e2ns8ty.js`. The classifier scout endpoint 162000 is inside a multi-declarator statement, so treating it as an excision boundary would silently split declarations.
   Evidence: `research/tools/extract-bash-safety.ts --check` and `research/fixtures/bash-safety-2.1.251.json`.
 - Observation: the baseline log exists at `reforge/build/gate-20260906-1939.log`, but the prepared `build/graph` and `build/strangled` CLI entrypoints are absent. Focused replay work must prepare once under the sandbox lock rather than assuming old artifacts survived.
+- Observation: the existing `bash-compound-safety` recording reaches neither W6 `findSafetyCheckReason` caller it was expected to close. Replacing each exact call site with a unique throwing probe still left the replay green; the subshell in the recorded command is rejected by `mrn` before the `drn` multi-`cd` aggregate, and the command has no duplicate normalized subcommand for `jrn`’s merge tie-break.
+  Evidence: `reforge/build/c13b-fy-multicd-reachability.log` and `reforge/build/c13b-fy-tiebreak-reachability.log`, both `EXIT_STATUS=0`; the faithful build was restored afterward.
 
 ## Decision Log
 
@@ -42,7 +44,7 @@ C13b replaces the pinned engine’s Bash command classification and per-subcomma
 
 ## Outcomes & Retrospective
 
-Work is in progress. Closure is parent-owned: this plan will report focused implementation evidence but will not claim C13b finally closed before independent review and the parent’s full gate.
+Work is in progress. The existing compound cassette cannot close the two W6 caller edges; direct contract parity will still land, and the final record will name the minimal additional observation instead of taking it live. Closure is parent-owned: this plan will report focused implementation evidence but will not claim C13b finally closed before independent review and the parent’s full gate.
 
 ## Context and Orientation
 
@@ -94,3 +96,5 @@ Owned classifier code imports parser behavior only from `strangle/modules/shell-
 Revision note (2026-09-07): initial plan written after byte-level inventory and before implementation; it makes declaration accounting a first milestone because the scout’s regions are deliberately coarse.
 
 Revision note (2026-09-07 22:42Z): the population milestone is complete. The fixture records AST-complete spans rather than pretending the scout’s mid-statement endpoint is an ownership boundary.
+
+Revision note (2026-09-07 22:50Z): targeted throwing probes proved the registered compound cassette does not execute either W6 `findSafetyCheckReason` call site. The plan preserves direct parity acceptance and records the missing end-to-end observation separately.
