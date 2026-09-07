@@ -60,7 +60,7 @@ function uniqueAnchor(modules: ModuleFile[], anchor: string): { module: ModuleFi
 }
 
 function topLevelStatementAt(module: ModuleFile, offset: number): ts.Statement {
-  const hit = module.sf.statements.find((statement) => statement.getStart(module.sf) <= offset && statement.end >= offset);
+  const hit = module.sf.statements.find((statement) => statement.getStart(module.sf) <= offset && offset < statement.end);
   if (!hit) throw new Error(`${module.file}: no top-level statement contains offset ${offset}`);
   return hit;
 }

@@ -10,9 +10,9 @@
         "end": 1015200
       },
       "exactStatementRange": {
-        "start": 890027,
-        "end": 1015199,
-        "bytes": 125172
+        "start": 890302,
+        "end": 1015363,
+        "bytes": 125061
       },
       "counts": {
         "statements": 220,
@@ -25,15 +25,6 @@
         "declarations": 254
       },
       "declarations": [
-        {
-          "name": "Eee",
-          "kind": "function",
-          "start": 890027,
-          "end": 890302,
-          "byteStart": 890027,
-          "byteEnd": 890302,
-          "sha256": "0ca27aeadaa41f080e0f7d822ab20c883007293b4835b4b93bfd19e26d1921c5"
-        },
         {
           "name": "<import:890302>",
           "kind": "import",
@@ -2310,6 +2301,15 @@
           "byteStart": 1015146,
           "byteEnd": 1015198,
           "sha256": "47eedb2cbd5f7e88ff0b47a81c29e5edfc9a5571637bc52c950a6fd120a4c0fd"
+        },
+        {
+          "name": "Y8",
+          "kind": "function",
+          "start": 1015199,
+          "end": 1015363,
+          "byteStart": 1015199,
+          "byteEnd": 1015363,
+          "sha256": "0642a80ead4f95f244738dc5d0498fb3f29cf26ad233800b6b510063b25261f8"
         }
       ]
     },
@@ -2321,30 +2321,21 @@
         "end": 162000
       },
       "exactStatementRange": {
-        "start": 108537,
+        "start": 108945,
         "end": 162610,
-        "bytes": 54073
+        "bytes": 53665
       },
       "counts": {
-        "statements": 63,
-        "functions": 50,
+        "statements": 62,
+        "functions": 49,
         "classes": 0,
         "variableStatements": 12,
         "variableDeclarators": 55,
         "imports": 1,
         "expressions": 0,
-        "declarations": 106
+        "declarations": 105
       },
       "declarations": [
-        {
-          "name": "_a",
-          "kind": "function",
-          "start": 108537,
-          "end": 108945,
-          "byteStart": 108537,
-          "byteEnd": 108945,
-          "sha256": "bef5301cf4337713680d9a1a268bc794494eba2fd5424c306e2404093bb1a575"
-        },
         {
           "name": "<import:108945>",
           "kind": "import",
