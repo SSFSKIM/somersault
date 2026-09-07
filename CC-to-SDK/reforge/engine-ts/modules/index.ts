@@ -42,6 +42,7 @@ import * as sessionMaterialize from "../../strangle/modules/session-materialize/
 import * as globDescription from "../../strangle/modules/glob-description/reference.js";
 import * as processLifecycle from "../../strangle/modules/process-lifecycle/reference.js";
 import * as shellParser from "../../strangle/modules/shell-parser/reference.js";
+import * as commandClassifier from "../../strangle/modules/command-classifier/reference.js";
 import * as twnIsShuttingDown from "../../strangle/modules/twn-is-shutting-down/reference.js";
 import * as twnClaimShutdown from "../../strangle/modules/twn-claim-shutdown/reference.js";
 import * as twnReleaseShutdownClaim from "../../strangle/modules/twn-release-shutdown-claim/reference.js";
@@ -340,6 +341,7 @@ const OWNED: [string, string, unknown][] = [
   // The row does not close on it: the executor, the spawn, the sandbox wrap and
   // the backgrounding are all still upstream's, and are C13b through C13e's.
   ["shell-parser", "subsystem/bash-executor", shellParser.parseOrAbort],
+  ["command-classifier", "subsystem/bash-executor", commandClassifier.createCommandClassifier],
 ];
 
 for (const [name, subsystem, entry] of OWNED) {

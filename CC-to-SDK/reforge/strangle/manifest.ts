@@ -316,6 +316,35 @@ const ID = "[A-Za-z_$][\\w$]*";
 const SIBLING_METHOD: TargetSignature = { params: 2, ancestry: ["ObjectLiteralExpression", "SourceFile"] };
 
 export const SPLICES: Splice[] = [
+  // ---- C13b / W10b: Bash command admission --------------------------------
+  // KTe is the shared parse-tree classifier. Its 86-declaration pure closure
+  // is owned inside command-classifier/reference.js; the one identity-bearing
+  // value still forwarded is C13a's PARSE_ABORTED symbol, asserted at the
+  // adapter. The subprocess-env scrub gate is pinned false by X6 in graph runs
+  // and both values remain contract-graded by classifier-parity.test.ts.
+  {
+    name: "command-classifier",
+    target: "free-function",
+    signature: { params: 2, ancestry: ["SourceFile"] },
+    anchor: "Parser aborted (timeout, resource limit, or over-length)",
+    fn: "classifyBashCommand",
+    captures: [
+      { as: "loneSurrogatePattern", kind: "primitive", owned: true, derive: pick("command-classifier", "loneSurrogatePattern", new RegExp(`if\\((${ID})\\.test\\(${ID}\\)\\)return\\{kind:"too-complex",reason:"Contains lone surrogate"`)) },
+      { as: "controlCharacterPattern", kind: "primitive", owned: true, derive: pick("command-classifier", "controlCharacterPattern", new RegExp(`if\\((${ID})\\.test\\(${ID}\\)\\)return\\{kind:"too-complex",reason:"Contains control characters"`)) },
+      { as: "unicodeWhitespacePattern", kind: "primitive", owned: true, derive: pick("command-classifier", "unicodeWhitespacePattern", new RegExp(`if\\((${ID})\\.test\\(${ID}\\)\\)return\\{kind:"too-complex",reason:"Contains Unicode whitespace"`)) },
+      { as: "escapedWhitespacePattern", kind: "primitive", owned: true, derive: pick("command-classifier", "escapedWhitespacePattern", new RegExp(`if\\((${ID})\\.test\\(${ID}\\)\\)return\\{kind:"too-complex",reason:"Contains backslash-escaped whitespace"`)) },
+      { as: "zshDynamicDirectoryPattern", kind: "primitive", owned: true, derive: pick("command-classifier", "zshDynamicDirectoryPattern", new RegExp(`if\\((${ID})\\.test\\(${ID}\\)\\)return\\{kind:"too-complex",reason:"Contains zsh ~\\[ dynamic directory syntax"`)) },
+      { as: "zshEqualsExpansionPattern", kind: "primitive", owned: true, derive: pick("command-classifier", "zshEqualsExpansionPattern", new RegExp(`if\\((${ID})\\.test\\(${ID}\\)\\)return\\{kind:"too-complex",reason:"Contains zsh =cmd equals expansion"`)) },
+      { as: "zshNumericRangePattern", kind: "primitive", owned: true, derive: pick("command-classifier", "zshNumericRangePattern", new RegExp(`if\\((${ID})\\.test\\(${ID}\\)\\)return\\{kind:"too-complex",reason:"Contains zsh <N-M> numeric-range glob"`)) },
+      { as: "braceWithQuotePattern", kind: "primitive", owned: true, derive: pick("command-classifier", "braceWithQuotePattern", new RegExp(`if\\((${ID})\\.test\\(${ID}\\(${ID}\\)\\)\\)return\\{kind:"too-complex",reason:"Contains brace with quote character`)) },
+      { as: "stripEscapedSegments", kind: "pure-helper", owned: true, derive: pick("command-classifier", "stripEscapedSegments", new RegExp(`if\\(${ID}\\.test\\((${ID})\\(${ID}\\)\\)\\)return\\{kind:"too-complex",reason:"Contains brace with quote character`)) },
+      { as: "parseAborted", kind: "primitive", derive: pick("command-classifier", "parseAborted", new RegExp(`if\\(${ID}===(${ID})\\)return\\{kind:"too-complex",reason:"Parser aborted`)) },
+      { as: "redirectError", kind: "pure-helper", owned: true, derive: pick("command-classifier", "redirectError", new RegExp(`\\{let ${ID}=(${ID})\\(${ID}\\);if\\(${ID}\\)return ${ID}\\}`)) },
+      { as: "analyzeTree", kind: "pure-helper", owned: true, derive: pick("command-classifier", "analyzeTree", new RegExp(`let ${ID}=(${ID})\\(${ID}\\);if\\(${ID}\\.kind==="too-complex"`)) },
+      { as: "containsExpansionError", kind: "pure-helper", owned: true, derive: pick("command-classifier", "containsExpansionError", new RegExp(`&&(${ID})\\(${ID}\\)\\)return\\{\\.\\.\\.${ID},nodeType:"ERROR"`)) },
+    ],
+    coverage: ["perm-rule-deny"],
+  },
   // ---- tool-result formatters (subsystem/tool-result-formatters) -----------
   // Ten of the graph's 44 `mapToolResultToToolResultBlockParam` methods. All
   // share one shape and one signature; each is anchored on prose only it emits.
