@@ -26,6 +26,21 @@ function replaceObjectPath(root, path, replacement) {
   return copy;
 }
 
+function replaceObjectPathAfterReads(root, path, replacement, healthyReads) {
+  const copy = cloneStructured(root);
+  let cursor = copy;
+  for (const segment of path.slice(0, -1)) cursor = cursor[segment];
+  const key = path.at(-1);
+  const original = cursor[key];
+  let reads = 0;
+  Object.defineProperty(cursor, key, {
+    configurable: true,
+    enumerable: true,
+    get: () => reads++ < healthyReads ? original : replacement,
+  });
+  return copy;
+}
+
 function replaceSetMember(root, path, index, replacement) {
   const copy = cloneStructured(root);
   let cursor = copy;
@@ -81,14 +96,20 @@ export const TABLE_ADAPTER_SPECS = [
     fn: "assertFdFlags",
     changedPath: 'u8e["--help"]',
     perturbGraph: (value) => replaceObjectPath(value, ["--help"], "string"),
-    sabotageOwned: (value) => replaceObjectPath(value, ["--help"], "string"),
+    // Bnn spreads this table twice during later module initialization. Let
+    // both copies see the healthy value; subsequent reads expose the twin.
+    sabotageOwned: (value) =>
+      replaceObjectPathAfterReads(value, ["--help"], "string", 2),
   },
   {
     binding: "l_e",
     fn: "assertGrepFlags",
     changedPath: 'l_e["--help"]',
     perturbGraph: (value) => replaceObjectPath(value, ["--help"], "string"),
-    sabotageOwned: (value) => replaceObjectPath(value, ["--help"], "string"),
+    // Bnn retains this table under grep, egrep and fgrep, and its assertion
+    // traverses each reference once. Change behavior only after those reads.
+    sabotageOwned: (value) =>
+      replaceObjectPathAfterReads(value, ["--help"], "string", 3),
   },
   {
     binding: "Bnn",

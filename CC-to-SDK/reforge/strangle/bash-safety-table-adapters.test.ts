@@ -35,8 +35,13 @@ const OBSERVE_NAMED_BEHAVIOR: Record<string, (value: any) => unknown> = {
   Pnn: (value) => value.cd,
   DP: (value) => value.cd,
   xnn: (value) => value.mv(["-f"]),
-  u8e: (value) => value["--help"],
-  l_e: (value) => value["--help"],
+  u8e: (value) => [value["--help"], value["--help"], value["--help"]],
+  l_e: (value) => [
+    value["--help"],
+    value["--help"],
+    value["--help"],
+    value["--help"],
+  ],
   Bnn: (value) => value.xargs.safeFlags["-I"],
   oro: (value) => value.aki.safeFlags["--help"],
   Ern: (value) => [...value.env],
@@ -76,6 +81,37 @@ for (const spec of TABLE_ADAPTER_SPECS) {
     `${spec.binding}: sabotage changes named behavior at ${spec.changedPath}`,
     JSON.stringify(observe(sabotaged)) !== JSON.stringify(observe(ownedValue)),
   );
+}
+
+// u8e and l_e are dependencies of the later Bnn initializer. Their semantic
+// twins must survive Bnn's healthy assertion rather than turning a named table
+// sabotage into an unrelated module-startup crash before any scenario runs.
+{
+  const sabotagedFdFlags = sabotage.assertFdFlags(graph.u8e);
+  const dependent = independentCopy(graph.Bnn) as any;
+  dependent.fd.safeFlags = { ...sabotagedFdFlags };
+  dependent.fdfind.safeFlags = { ...sabotagedFdFlags };
+  let accepted = true;
+  try {
+    healthy.assertCommandAllowlist(dependent);
+  } catch {
+    accepted = false;
+  }
+  check("u8e sabotage survives both downstream Bnn spreads", accepted);
+}
+{
+  const sabotagedGrepFlags = sabotage.assertGrepFlags(graph.l_e);
+  const dependent = independentCopy(graph.Bnn) as any;
+  dependent.grep.safeFlags = sabotagedGrepFlags;
+  dependent.egrep.safeFlags = sabotagedGrepFlags;
+  dependent.fgrep.safeFlags = sabotagedGrepFlags;
+  let accepted = true;
+  try {
+    healthy.assertCommandAllowlist(dependent);
+  } catch {
+    accepted = false;
+  }
+  check("l_e sabotage survives all three downstream Bnn references", accepted);
 }
 
 console.log(`=== Bash safety table adapters: ${checks} check(s) ===`);
