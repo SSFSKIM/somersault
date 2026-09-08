@@ -7,6 +7,12 @@
 import { assertGraphValue } from "./shared/assert.js";
 import { assertStructuredEqual } from "./shared/assert-structured.js";
 import {
+  basename as pathBasename,
+  isAbsolute as isAbsolutePath,
+  normalize as normalizePath,
+  resolve as resolvePath,
+} from "node:path";
+import {
   BASH_TOOL_NAME,
   CLAMP_FAILURE_REASON,
   CLAMP_REJECTION_REASON,
@@ -55,7 +61,11 @@ import {
   checkPathCommand,
   analyzeAstRedirections,
   analyzeOutputRedirections,
+  bashPermissionMessage,
   basenameCommand,
+  countMatching,
+  directoryRuleSuggestion,
+  formatAllowedDirectories,
   classifierPrefixSuggestion,
   classifyCommandText,
   commandArgv,
@@ -63,23 +73,31 @@ import {
   dangerousRemovalDecision,
   findDangerousRemovalExpansion,
   hasNormalizedCdCommand,
+  hasBlockedPathShape,
+  hasUnsafeGlobRoot,
   hasUnsafeEnvironmentAssignment,
   hasUnknownTrackedValue,
+  isClassifierRoutedSafetyCheck,
+  isCriticalPath,
   isDangerousEnvironmentVariable,
   isNormalizedCdCommand,
   isPathLike,
   isSafeEnvironmentVariable,
   isSafeWindowsPath,
+  isWindowsUncPath,
   isSandboxExcludedCommand,
   isSedReadOnly,
   normalizeCommandPrefix,
+  pathContains,
   pathArgumentsFromCommand,
   pathCommands,
   peelCommandPrefixes,
   permissionSuggestions,
+  shellExpansionIndex,
   splitClampCommands,
   splitSubcommands,
   stripEnvironmentAssignments,
+  uniqueValues,
   checkBashPermission,
   checkBashPermissionCore,
   permissionCheckFailureDecision,
@@ -254,6 +272,7 @@ export const OWNED_DECISION_PRIMITIVES = {
   findValueOptionPattern: FIND_VALUE_OPTIONS,
   gitRiskExcludedCommands: GIT_RISK_EXCLUDED_COMMANDS,
   parseAborted: PARSE_ABORTED,
+  pathSeparator: PATH_SEPARATOR,
   readOnlyAllowReason: READ_ONLY_ALLOW_REASON,
   readRedirectOperators: READ_REDIRECT_OPERATORS,
   safeSetLongOptions: SAFE_SET_O_OPTIONS,
@@ -267,18 +286,27 @@ export const OWNED_DECISION_PRIMITIVES = {
 export const OWNED_DECISION_HELPERS = {
   analyzeAstRedirections,
   analyzeOutputRedirections,
+  basename: pathBasename,
   basenameCommand,
   checkModeCommands,
   checkSedSafety,
   classifierPrefixSuggestion,
   classifyCommandText,
   commandArgv,
+  countMatching,
   createsGitInternalPath,
   dangerousRemovalDecision,
+  directoryRuleSuggestion,
   findDangerousRemovalExpansion,
+  formatAllowedDirectories,
+  hasBlockedPathShape,
   hasNormalizedCdCommand,
   hasUnsafeEnvironmentAssignment,
+  hasUnsafeGlobRoot,
   hasUnknownTrackedValue,
+  isAbsolutePath,
+  isClassifierRoutedSafetyCheck,
+  isCriticalPath,
   isDangerousEnvironmentVariable,
   isNormalizedCdCommand,
   isPathLike,
@@ -286,14 +314,21 @@ export const OWNED_DECISION_HELPERS = {
   isSafeWindowsPath,
   isSandboxExcludedCommand,
   isSedReadOnly,
+  isUncPath: isWindowsUncPath,
   normalizeCommandPrefix,
+  normalizePath,
   pathArgumentsFromCommand,
   pathCommands: pathCommands(),
+  pathContains,
   peelCommandPrefixes,
+  permissionMessage: bashPermissionMessage,
   permissionSuggestions,
+  resolvePath,
+  shellExpansionIndex,
   splitClampCommands,
   splitSubcommands,
   stripEnvironmentAssignments,
+  uniqueValues,
 };
 const OWNED_DECISION_HELPER_NAMES = new Set(
   Object.keys(OWNED_DECISION_HELPERS),
@@ -309,6 +344,14 @@ for (const spec of Object.values(DECISION_ROOT_SPECS)) {
   spec.ownedCaptures = allCaptures.filter((capture) =>
     OWNED_DECISION_HELPER_NAMES.has(capture),
   );
+}
+
+function ownedDecisionHelper(capture, graphPorts) {
+  if (capture === "isUncPath") {
+    return (value, scanEmbedded = false) =>
+      isWindowsUncPath(value, scanEmbedded, graphPorts.platform());
+  }
+  return OWNED_DECISION_HELPERS[capture];
 }
 
 function createDecisionRootAdapters(roots) {
@@ -341,7 +384,7 @@ function createDecisionRootAdapters(roots) {
           ...Object.fromEntries(
             (spec.ownedCaptures ?? []).map((capture) => [
               capture,
-              OWNED_DECISION_HELPERS[capture],
+              ownedDecisionHelper(capture, graphPorts),
             ]),
           ),
         };

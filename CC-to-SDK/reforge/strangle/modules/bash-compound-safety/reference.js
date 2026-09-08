@@ -1,8 +1,10 @@
 // PARITY LAYER — C13b's anchored Bash pipe/compound/mode safety unit
 // (Claude Code 2.1.251, chunk-fy12d89p.js).
 //
-// C13b's five runtime splice roots are KTe (owned by command-classifier), _8e
-// (owned by bash-read-only), and this module's three roots:
+// C13b's five foundational/aggregate runtime splice roots are KTe (owned by
+// command-classifier), _8e (owned by bash-read-only), and this module's three
+// aggregate roots. Twenty-five child command-decision declarations are separate
+// same-module splices beneath them:
 //
 //   $ct  checkBashPermission                         1003463–1004739
 //   jrn  checkBashPermissionCore                     1004739–1011392
@@ -56,9 +58,12 @@ import {
   FILE_EFFECT_PHRASES,
   createFileArgumentExtractors,
 } from "../bash-safety-tables/reference.js";
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-export { PARSE_ABORTED, isSedReadOnly };
+import * as nodePath from "node:path";
+export { PARSE_ABORTED, isSedReadOnly, permissionMessage };
 export const BASH_TOOL_NAME = "Bash";
+const READ_TOOL_NAME = "Read";
 import {
   basename as pathBasename,
   dirname as pathDirname,
@@ -77,10 +82,21 @@ const MAX_COMMAND_LENGTH = 10_000;
 const SPLIT_CONTAINER_TYPES = new Set(["program", "list", "pipeline"]);
 const SPLIT_OPERATOR_TYPES = new Set(["&&", "||", "|", ";", "&", "|&", "\n"]);
 const ACCEPT_EDITS_COMMANDS = ["mkdir", "touch", "rm", "rmdir", "mv", "cp", "sed"];
-const BYPASS_IMMUNE_CIRCUIT_BREAKERS = new Set([
-  "dangerousRemoval",
-  "isolatePeerMachines",
-]);
+const CIRCUIT_BREAKERS = {
+  dangerousRemoval: { bypassImmune: true, classifierRouted: true },
+  backgroundOperator: { bypassImmune: false, classifierRouted: true },
+  suspiciousWindowsPath: { bypassImmune: false, classifierRouted: true },
+  isolatePeerMachines: { bypassImmune: true, classifierRouted: false },
+  restrictedMode: { bypassImmune: true, classifierRouted: false },
+};
+
+/** Pinned _Tt over the owned circuit-breaker metadata. */
+export function isClassifierRoutedSafetyCheck(reason) {
+  return (
+    reason.circuitBreaker !== undefined &&
+    CIRCUIT_BREAKERS[reason.circuitBreaker]?.classifierRouted === true
+  );
+}
 
 // The environment prefixes Ah may remove. This is upstream's exact local
 // allowlist at the pin; an unknown assignment is a command name, not a prefix.
@@ -368,24 +384,62 @@ export function splitOutputRedirections(command) {
   };
 }
 
-function shellPermissionMessage(reason) {
-  const unreachable = () => {
-    throw new Error("unreachable permission-message dependency");
-  };
+function escapePermissionRuleContent(content) {
+  return content
+    .replaceAll("\\", "\\\\")
+    .replaceAll("(", "\\(")
+    .replaceAll(")", "\\)");
+}
+
+function renderPermissionRuleValue(ruleValue) {
+  if (!ruleValue.ruleContent) return ruleValue.toolName;
+  return `${ruleValue.toolName}(${escapePermissionRuleContent(ruleValue.ruleContent)})`;
+}
+
+function renderPermissionRuleSource(source) {
+  switch (source) {
+    case "userSettings": return "user settings";
+    case "projectSettings": return "shared project settings";
+    case "localSettings": return "project local settings";
+    case "flagSettings": return "command line arguments";
+    case "policySettings": return "enterprise managed settings";
+    case "cliArg": return "CLI argument";
+    case "command": return "command configuration";
+    case "session": return "current session";
+    case "toolsNarrowing": return "CLI tool narrowing";
+    case "mcpServerPolicy": return "MCP server policy";
+    default: return undefined;
+  }
+}
+
+const PERMISSION_MODE_TITLES = {
+  default: "Manual",
+  plan: "Plan",
+  acceptEdits: "Accept edits",
+  bypassPermissions: "Bypass Permissions",
+  dontAsk: "Don't Ask",
+  auto: "Auto",
+};
+
+export function bashPermissionMessage(toolName, reason) {
   return permissionMessage(
-    BASH_TOOL_NAME,
+    toolName,
     reason,
-    unreachable,
-    unreachable,
+    renderPermissionRuleValue,
+    renderPermissionRuleSource,
     splitOutputRedirections,
-    unreachable,
+    (mode) => PERMISSION_MODE_TITLES[mode] ?? PERMISSION_MODE_TITLES.default,
   );
+}
+
+function shellPermissionMessage(reason) {
+  return bashPermissionMessage(BASH_TOOL_NAME, reason);
 }
 
 function isBypassImmuneSafetyCheck(reason) {
   return (
     reason.circuitBreaker !== undefined &&
-    BYPASS_IMMUNE_CIRCUIT_BREAKERS.has(reason.circuitBreaker)
+    CIRCUIT_BREAKERS[reason.circuitBreaker]?.bypassImmune === true
   );
 }
 
@@ -2559,7 +2613,113 @@ function decodeRedirectNode(node) {
   }
 }
 
-export function analyzeAstRedirections(redirects) {
+const WINDOWS_OPTION_ASSIGNMENT = /^--?[A-Za-z0-9][\w-]*=/;
+const WINDOWS_QUESTION_NAMESPACE_ANYWHERE =
+  /(?:^|[^A-Za-z0-9_])[\\/]\?\?(?:[\\/]|$)/;
+const WINDOWS_QUESTION_NAMESPACE_PREFIX = /^[\\/]\?\?[\\/]/;
+
+function hostPlatformName() {
+  if (process.platform === "win32") return "windows";
+  if (process.platform === "darwin") return "macos";
+  return process.platform;
+}
+
+function hasWindowsQuestionNamespace(value) {
+  return (
+    WINDOWS_QUESTION_NAMESPACE_PREFIX.test(value) ||
+    (value.includes("??") &&
+      WINDOWS_QUESTION_NAMESPACE_PREFIX.test(nodePath.win32.normalize(value)))
+  );
+}
+
+function hasWindowsNetworkPrefix(value) {
+  return /^[\\/]{2}/.test(value) || hasWindowsQuestionNamespace(value);
+}
+
+/** Pinned Bn: network/device namespace shape, independent of host platform. */
+export function hasBlockedPathShape(value) {
+  return hasWindowsNetworkPrefix(value);
+}
+
+/** Pinned S_: the complete platform-gated Windows UNC-path grammar. */
+export function isWindowsUncPath(
+  value,
+  scanEmbedded = false,
+  platform = hostPlatformName(),
+) {
+  if (platform !== "windows") return false;
+  if (scanEmbedded && hasBlockedPathShape(value)) return true;
+  if (scanEmbedded && /^-[A-Za-z0-9]/.test(value)) {
+    const remainder = value.replace(/^(?:-[A-Za-z0-9]+)+/, "");
+    if (remainder.length > 0 && isWindowsUncPath(remainder, true, platform)) {
+      return true;
+    }
+  }
+  if (scanEmbedded && WINDOWS_OPTION_ASSIGNMENT.test(value)) {
+    let remainder = value;
+    while (WINDOWS_OPTION_ASSIGNMENT.test(remainder)) {
+      remainder = remainder.slice(remainder.indexOf("=") + 1);
+    }
+    if (remainder.length > 0 && isWindowsUncPath(remainder, true, platform)) {
+      return true;
+    }
+  }
+  if (/\\\\[^ \t\r\n\f\v\\/]+(?:@(?:\d+|ssl))?(?:[\\/]|$|\s)/i.test(value)) {
+    return true;
+  }
+  if (WINDOWS_QUESTION_NAMESPACE_ANYWHERE.test(value)) return true;
+  if (/(?<!:)\/\/[^ \t\r\n\f\v\\/]+(?:@(?:\d+|ssl))?(?:[\\/]|$|\s)/i.test(value)) {
+    return true;
+  }
+  if (
+    (scanEmbedded
+      ? /(?<![:\w])\/\\{1,}[^ \t\r\n\f\v\\/]+[\\/]/
+      : /\/\\{2,}[^ \t\r\n\f\v\\/]/
+    ).test(value)
+  ) {
+    return true;
+  }
+  if (
+    (scanEmbedded
+      ? /(?<![:\w])\\{1,}\/[^ \t\r\n\f\v\\/]+[\\/]/
+      : /\\{2,}\/[^ \t\r\n\f\v\\/]/
+    ).test(value)
+  ) {
+    return true;
+  }
+  if (/@SSL@\d+/i.test(value) || /@\d+@SSL/i.test(value)) return true;
+  if (/DavWWWRoot/i.test(value)) return true;
+  if (
+    /^\\\\(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})[\\/]/.test(value) ||
+    /^\/\/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})[\\/]/.test(value)
+  ) {
+    return true;
+  }
+  if (
+    /^\\\\(\[[\da-fA-F:]+\])[\\/]/.test(value) ||
+    /^\/\/(\[[\da-fA-F:]+\])[\\/]/.test(value)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** Pinned DU: return the first shell-glob byte, or -1 for static text. */
+export function shellExpansionIndex(value) {
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index];
+    if (character === "*" || character === "?") return index;
+    if (character === "[" && value.indexOf("]", index + 1) !== -1) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+export function analyzeAstRedirections(
+  redirects,
+  platform = hostPlatformName(),
+) {
   const redirections = [];
   const denyCheckOutputRedirections = [];
   let hasDangerousRedirection = false;
@@ -2570,7 +2730,13 @@ export function analyzeAstRedirections(redirects) {
       dangerousRedirectionReason = "network_device";
       continue;
     }
-    if (/^(?:\\\\|\/\/)/.test(redirect.target.replace(/\\/g, "/"))) {
+    if (
+      isWindowsUncPath(
+        redirect.target.replace(/\\/g, "/"),
+        true,
+        platform,
+      )
+    ) {
       hasDangerousRedirection = true;
       if (dangerousRedirectionReason !== "network_device") {
         dangerousRedirectionReason = "unc_path";
@@ -2579,7 +2745,8 @@ export function analyzeAstRedirections(redirects) {
     }
     if (
       [">", ">|", "&>", ">>", "&>>", ">&"].includes(redirect.op) &&
-      (redirect.target.startsWith("~") || /[$`]/.test(redirect.target))
+      (redirect.target.startsWith("~") ||
+        shellExpansionIndex(redirect.target) !== -1)
     ) {
       hasDangerousRedirection = true;
       if (
@@ -2725,7 +2892,7 @@ export function analyzeOutputRedirections(command) {
         return;
       }
       const text = decodeRedirectNode(target);
-      if (/^~|[*?[\]]/.test(text) || text.startsWith("!") || text.startsWith("=")) {
+      if (/^~|[*?[]/.test(text) || text.startsWith("!") || text.startsWith("=")) {
         hasDangerousRedirection = true;
         if (dangerousRedirectionReason !== "network_device") {
           dangerousRedirectionReason = "shell_expansion";
@@ -2807,7 +2974,7 @@ export function basenameCommand(command) {
 }
 
 export function classifierPrefixSuggestion(prefix) {
-  return suggestion(prefix);
+  return suggestion(prefix, true);
 }
 
 export async function classifyCommandText(command) {
@@ -3483,12 +3650,186 @@ function normalizeWindowsPath(path) {
   return path.replaceAll("\\", "/");
 }
 
-function uniqueValues(values) {
+export function countMatching(values, predicate) {
+  let count = 0;
+  for (const value of values) {
+    count += +!!predicate(value);
+  }
+  return count;
+}
+
+export function uniqueValues(values) {
   return [...new Set(values)];
 }
 
 function caseFoldPath(path) {
   return path.toLowerCase().replaceAll("ı", "i").replaceAll("ſ", "s");
+}
+
+function normalizePolicyPath(value, platform = hostPlatformName()) {
+  if (typeof value !== "string") {
+    throw new TypeError(`Path must be a string, received ${typeof value}`);
+  }
+  if (value.includes("\0")) throw new Error("Path contains null bytes");
+  const trimmed = value.trim();
+  let path = trimmed;
+  if (trimmed === "") path = process.cwd();
+  else if (trimmed === "~") path = homedir();
+  else if (trimmed.startsWith("~/")) path = nodePath.join(homedir(), trimmed.slice(2));
+  else if (platform === "windows" && /^\/[a-z]\//i.test(trimmed)) {
+    path = trimmed.replace(/^\/([a-z])\//i, (_match, drive) => `${drive.toUpperCase()}:\\`);
+  }
+  const normalized = nodePath.isAbsolute(path)
+    ? nodePath.normalize(path)
+    : nodePath.resolve(process.cwd(), path);
+  return normalized.normalize("NFC");
+}
+
+function hasParentTraversal(path) {
+  return /(?:^|[\\/])\.\.(?:[\\/]|$)/.test(path);
+}
+
+/** Pinned nf, with node:path/homedir as direct external dependencies. */
+export function pathContains(
+  candidate,
+  boundary,
+  { caseFold, skipPrivateAlias = false, uncShapeParity = false } = {
+    caseFold: true,
+  },
+) {
+  const normalizedCandidate = normalizePolicyPath(candidate);
+  const normalizedBoundary = normalizePolicyPath(boundary);
+  if (
+    uncShapeParity &&
+    (hasBlockedPathShape(normalizedCandidate) !==
+      hasBlockedPathShape(normalizedBoundary) ||
+      hasBlockedPathShape(candidate) !== hasBlockedPathShape(boundary))
+  ) {
+    return false;
+  }
+  const privateVar = caseFold ? /^\/private\/var\//i : /^\/private\/var\//;
+  const privateTmp = caseFold
+    ? /^\/private\/tmp(\/|$)/i
+    : /^\/private\/tmp(\/|$)/;
+  const alias = (path) =>
+    skipPrivateAlias
+      ? path
+      : path.replace(privateVar, "/var/").replace(privateTmp, "/tmp$1");
+  const inner = alias(normalizedCandidate);
+  const outer = alias(normalizedBoundary);
+  const relative = nodePath.relative(
+    caseFold ? caseFoldPath(outer) : outer,
+    caseFold ? caseFoldPath(inner) : inner,
+  );
+  if (relative === "") return true;
+  if (hasParentTraversal(relative)) return false;
+  return !nodePath.isAbsolute(relative);
+}
+
+/** Pinned kze: a glob root becomes unsafe after a concrete path segment. */
+export function hasUnsafeGlobRoot(path, platform = hostPlatformName()) {
+  const parts = path.split(platform === "windows" ? /[\\/]/ : "/");
+  let sawConcrete = false;
+  for (const part of parts) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      if (sawConcrete) return true;
+    } else {
+      sawConcrete = true;
+    }
+  }
+  return false;
+}
+
+const canonicalHomeDirectoryByHome = new Map();
+
+function canonicalHomeDirectory(homeDirectory) {
+  const cached = canonicalHomeDirectoryByHome.get(homeDirectory);
+  if (cached !== undefined) return cached;
+  let canonical;
+  try {
+    canonical = realpathSync(homeDirectory)
+      .replace(/[\\/]+/g, "/")
+      .replace(/\/$/, "");
+  } catch {
+    canonical = homeDirectory.replace(/[\\/]+/g, "/").replace(/\/$/, "");
+  }
+  canonicalHomeDirectoryByHome.set(homeDirectory, canonical);
+  return canonical;
+}
+
+/** Pinned pwe over direct host/platform/filesystem dependencies. */
+export function isCriticalPath(path, options = {}) {
+  const slashed = path.replace(/[\\/]+/g, "/");
+  if (slashed === "*" || slashed.endsWith("/*")) return true;
+  const platform = options.platform ?? hostPlatformName();
+  const alias = (value) =>
+    platform === "macos"
+      ? value.replace(/^\/private\/(etc|var|tmp|home)(\/|$)/i, "/$1$2")
+      : value;
+  const aliased = alias(slashed);
+  const normalized = aliased === "/" ? aliased : aliased.replace(/\/$/, "");
+  if (normalized === "/") return true;
+  if (/^[A-Za-z]:\/?$/.test(normalized)) return true;
+  const homeDirectory = options.homeDirectory ?? homedir();
+  const home = alias(homeDirectory.replace(/[\\/]+/g, "/")).replace(/\/$/, "");
+  if (caseFoldPath(normalized) === caseFoldPath(home)) return true;
+  const canonical =
+    options.canonicalHomeDirectory ?? canonicalHomeDirectory(homeDirectory);
+  if (canonical !== home && caseFoldPath(normalized) === caseFoldPath(canonical)) {
+    return true;
+  }
+  if (pathDirname(normalized) === "/") return true;
+  if (/^[A-Za-z]:\/[^/]+$/.test(normalized)) return true;
+  return false;
+}
+
+/** Pinned Rpn: bounded rendering of allowed directories. */
+export function formatAllowedDirectories(directories) {
+  const limit = 5;
+  if (directories.length <= limit) {
+    return directories.map((directory) => `'${directory}'`).join(", ");
+  }
+  return `${directories
+    .slice(0, limit)
+    .map((directory) => `'${directory}'`)
+    .join(", ")}, and ${directories.length - limit} more`;
+}
+
+function escapeRulePattern(value, { escapeGlobs = false } = {}) {
+  let escaped = value
+    .replaceAll("\\", "\\\\")
+    .replace(/[[\]()|+^$]/g, (character) => `\\${character}`);
+  if (escapeGlobs) escaped = escaped.replaceAll("*", "\\*");
+  if (escaped.startsWith("!") || escaped.startsWith("#")) {
+    escaped = `\\${escaped}`;
+  }
+  return escaped.replace(/\s+$/, (spaces) =>
+    Array.from(spaces, (space) => `\\${space}`).join(""),
+  );
+}
+
+/** Pinned YTe: one allow-rule suggestion rooted at a directory. */
+export function directoryRuleSuggestion(
+  directory,
+  destination = "session",
+  platform = hostPlatformName(),
+) {
+  const normalized =
+    platform === "windows" ? normalizeWindowsPath(directory) : directory;
+  if (normalized === "/") return undefined;
+  const escaped = escapeRulePattern(normalized, { escapeGlobs: true });
+  const ruleContent = nodePath.isAbsolute(normalized)
+    ? `/${escaped}/**`
+    : escaped.startsWith("\\")
+      ? `./${escaped}/**`
+      : `${escaped}/**`;
+  return {
+    type: "addRules",
+    rules: [{ toolName: READ_TOOL_NAME, ruleContent }],
+    behavior: "allow",
+    destination,
+  };
 }
 
 function checkPathSafety(

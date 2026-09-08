@@ -492,22 +492,77 @@ for (const group of exclusions) {
   }
 }
 
-function reachableFrom(
-  module: ModuleFile,
-  seed: string,
+function importBindings(module: ModuleFile): Map<string, { file: string; name: string }> {
+  const bindings = new Map<string, { file: string; name: string }>();
+  for (const statement of module.sf.statements) {
+    if (!ts.isImportDeclaration(statement) ||
+        !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    const targetFile = basename(statement.moduleSpecifier.text);
+    const named = statement.importClause?.namedBindings;
+    if (!named || !ts.isNamedImports(named)) continue;
+    for (const element of named.elements) {
+      bindings.set(element.name.text, {
+        file: targetFile,
+        name: element.propertyName?.text ?? element.name.text,
+      });
+    }
+  }
+  return bindings;
+}
+
+const moduleByFile = new Map(modules.map((module) => [module.file, module]));
+const declarationsByFile = new Map(
+  modules.map((module) => [module.file, namedTopLevelDeclarations(module)]),
+);
+const importsByFile = new Map(
+  modules.map((module) => [module.file, importBindings(module)]),
+);
+const promisedRegionKeys = new Set(
+  regions.flatMap((entry) =>
+    entry.declarations.map((declaration) => keyOf(entry.file, declaration.name)),
+  ),
+);
+
+function reachableFromGraph(
+  seedFile: string,
+  seedName: string,
   stops: ReadonlySet<string>,
 ): Set<string> {
-  const declarations = namedTopLevelDeclarations(module);
   const reached = new Set<string>();
-  const queue = [seed];
+  const queue = [keyOf(seedFile, seedName)];
+  const walked = new Set<string>();
   while (queue.length > 0) {
-    const name = queue.shift()!;
-    const declaration = declarations.get(name);
+    const currentKey = queue.shift()!;
+    if (walked.has(currentKey)) continue;
+    walked.add(currentKey);
+    const separator = currentKey.indexOf("\0");
+    const file = currentKey.slice(0, separator);
+    const name = currentKey.slice(separator + 1);
+    const declaration = declarationsByFile.get(file)?.get(name);
     if (!declaration) continue;
     for (const dependency of freeIdentifiers(declaration)) {
-      if (!declarations.has(dependency) || reached.has(dependency)) continue;
-      reached.add(dependency);
-      if (!stops.has(keyOf(module.file, dependency))) queue.push(dependency);
+      let dependencyKey: string | undefined;
+      let descend = true;
+      if (declarationsByFile.get(file)?.has(dependency)) {
+        dependencyKey = keyOf(file, dependency);
+      } else {
+        const imported = importsByFile.get(file)?.get(dependency);
+        if (imported &&
+            moduleByFile.has(imported.file) &&
+            declarationsByFile.get(imported.file)?.has(imported.name)) {
+          const importedKey = keyOf(imported.file, imported.name);
+          // Cross-chunk declarations are ownership leaves for the importing
+          // population. Record an approved imported helper, but leave its
+          // source-module internals to that module's own root/fold accounting.
+          if (promisedRegionKeys.has(importedKey)) {
+            dependencyKey = importedKey;
+            descend = false;
+          }
+        }
+      }
+      if (!dependencyKey || reached.has(dependencyKey)) continue;
+      reached.add(dependencyKey);
+      if (descend && !stops.has(dependencyKey)) queue.push(dependencyKey);
     }
   }
   return reached;
@@ -522,29 +577,33 @@ const structuralStops = new Set([
   ...exclusionByKey.keys(),
 ]);
 const closureOwners = new Map<string, Set<string>>();
-for (const root of allRoots) {
-  const reached = reachableFrom(
-    root.file === engine.file ? engine : classifier,
-    root.binding,
-    structuralStops,
-  );
-  for (const name of reached) {
-    const key = keyOf(root.file, name);
-    if (structuralStops.has(key)) continue;
-    const owners = closureOwners.get(key) ?? new Set<string>();
-    owners.add(root.role);
-    closureOwners.set(key, owners);
+function recordClosureOwners(reached: ReadonlySet<string>, owners: readonly string[]): void {
+  for (const key of reached) {
+    if (structuralStops.has(key) || !promisedRegionKeys.has(key)) continue;
+    const current = closureOwners.get(key) ?? new Set<string>();
+    for (const owner of owners) current.add(owner);
+    closureOwners.set(key, current);
   }
 }
-
-for (const [name, owners] of [
-  ["SQn", ["bash-too-complex-sandbox"]],
-  ["dde", ["bash-nested-dangerous-removal"]],
-] as const) {
-  const key = keyOf(classifier.file, name);
-  const current = closureOwners.get(key) ?? new Set<string>();
-  for (const owner of owners) current.add(owner);
-  closureOwners.set(key, current);
+for (const root of allRoots) {
+  recordClosureOwners(
+    reachableFromGraph(root.file, root.binding, structuralStops),
+    [root.role],
+  );
+}
+// Roots intentionally stop at production folds. Walk every fold body as its
+// own owned closure so helper declarations below that boundary are accounted
+// to the same production owners rather than falling through to exclusion.
+for (const [foldKey, owners] of explicitFoldOwners) {
+  const separator = foldKey.indexOf("\0");
+  recordClosureOwners(
+    reachableFromGraph(
+      foldKey.slice(0, separator),
+      foldKey.slice(separator + 1),
+      structuralStops,
+    ),
+    owners,
+  );
 }
 
 // A pure helper inside the promised regions must be folded into owned code.

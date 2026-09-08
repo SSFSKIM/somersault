@@ -434,7 +434,9 @@ for (const root of decisionRoots) {
     `${root.name}: owned helpers replace graph decision closure`,
     expectedOwned.every((name) => {
       ownedHelperSites.push(name);
-      return ports[name] === decisionHelperValues[name];
+      return name === "isUncPath"
+        ? typeof ports[name] === "function"
+        : ports[name] === decisionHelperValues[name];
     }),
   );
 
@@ -495,7 +497,7 @@ for (const root of decisionRoots) {
 }
 check(
   "every decision primitive capture site has a perturbation control",
-  primitiveSites.length === 22 &&
+  primitiveSites.length === 23 &&
     primitiveSites.every((name) => declaredPrimitiveNames.has(name)),
   `${primitiveSites.length} controlled site(s)`,
 );
@@ -505,6 +507,105 @@ check(
     declaredPrimitiveNames.has(name),
   ) && declaredPrimitiveNames.has("bashTool"),
 );
+{
+  const root = decisionRoots.find(
+    (candidate) => candidate.name === "bash-same-directory-cd",
+  )!;
+  const forwarded = root.captures.filter((capture) => capture.owned !== true);
+  let platformReads = 0;
+  const graphValues = forwarded.map((capture) => {
+    if (capture.as === "platform") {
+      return () => {
+        platformReads++;
+        return "windows";
+      };
+    }
+    if (Object.hasOwn(decisionPrimitiveValues, capture.as)) {
+      return graphCopy(decisionPrimitiveValues[capture.as]);
+    }
+    return unique(`unc-binding.${capture.as}`);
+  });
+  decisionAdapters[root.adapter](
+    ...Array.from({ length: root.params }, (_, index) => ({ index })),
+    ...graphValues,
+  );
+  const bound = seenDecisionPorts.get(root.adapter)!.isUncPath as (
+    value: string,
+    scanEmbedded?: boolean,
+  ) => boolean;
+  check(
+    "owned UNC helper reads the root platform port at call time",
+    bound("//server/share", true) === true && platformReads === 1,
+    `${platformReads} platform read(s)`,
+  );
+}
+
+const helperSites = decisionRoots.flatMap((root) =>
+  root.captures.map((capture) => ({ root: root.name, ...capture })),
+);
+const forwardedPureHelperSites = helperSites.filter(
+  (capture) => capture.kind === "pure-helper" && capture.owned !== true,
+);
+check(
+  "no child decision calls a graph-side pure helper",
+  forwardedPureHelperSites.length === 0,
+  forwardedPureHelperSites
+    .map((capture) => `${capture.root}.${capture.as}`)
+    .join(", "),
+);
+const requiredEnginePureHelperSites: Record<string, number> = {
+  isClassifierRoutedSafetyCheck: 1,
+  permissionMessage: 5,
+  countMatching: 3,
+  uniqueValues: 1,
+  hasUnsafeGlobRoot: 1,
+  hasBlockedPathShape: 1,
+  isCriticalPath: 1,
+  pathContains: 1,
+  isUncPath: 1,
+  formatAllowedDirectories: 2,
+  directoryRuleSuggestion: 1,
+  shellExpansionIndex: 1,
+};
+check(
+  "all 19 pinned engine-helper sites bind to owned production helpers",
+  Object.entries(requiredEnginePureHelperSites).every(([name, count]) =>
+    helperSites.filter(
+      (capture) => capture.as === name && capture.owned === true,
+    ).length === count && Object.hasOwn(decisionHelperValues, name),
+  ),
+);
+const directPathHelperSites: Record<string, number> = {
+  isAbsolutePath: 4,
+  resolvePath: 4,
+  normalizePath: 1,
+  basename: 1,
+};
+check(
+  "all 10 node:path function sites bind to owned direct library imports",
+  Object.entries(directPathHelperSites).every(([name, count]) =>
+    helperSites.filter(
+      (capture) => capture.as === name && capture.owned === true,
+    ).length === count && Object.hasOwn(decisionHelperValues, name),
+  ),
+);
+check(
+  "the node:path separator crosses as one asserted primitive",
+  helperSites.filter(
+    (capture) =>
+      capture.as === "pathSeparator" && capture.kind === "primitive" &&
+      capture.owned !== true,
+  ).length === 1 && Object.hasOwn(OWNED_DECISION_PRIMITIVES, "pathSeparator"),
+);
+check(
+  "both statSync-bearing dirname sites remain effectful ports",
+  helperSites.filter(
+    (capture) =>
+      capture.as === "dirname" && capture.kind === "effectful-port" &&
+      capture.owned !== true,
+  ).length === 2,
+);
+
 check(
   "every owned decision helper replacement has a pinned owned capture site",
   Object.keys(OWNED_DECISION_HELPERS).every((name) =>

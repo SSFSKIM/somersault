@@ -6547,8 +6547,8 @@ Every declaration in the three approved regions receives exactly one disposition
 covers **370 declarations and 191,360 bytes**:
 
 ```text
-root 30 | fold 11 | ownedClosure 210 | port 16 |
-table 11 | tableDependency 36 | exclude 56
+root 30 | fold 11 | ownedClosure 213 | port 16 |
+table 11 | tableDependency 36 | exclude 53
 ```
 
 `jrn` remains separate from `$ct` even though `$ct` is its sole caller. `$ct` has 13 direct free
@@ -6558,6 +6558,21 @@ The 25 child roots have the same constraint. An `owned-binding` capture forwards
 so the child's own direct captures still cross its adapter, but the build accepts it only when that
 identifier resolves to another registered splice in the **same graph module**. Three mechanism
 controls cover a healthy match, a missing child, and a misleading same-named child in another chunk.
+
+A second bounded correction round closed four production transcription defects without changing the
+recording set: AST redirects now use pinned `DU` shell-expansion semantics, classifier suggestions
+append the wildcard prefix required to authorize additional arguments, UNC recognition is gated by
+Windows, and a literal closing bracket no longer counts as shell expansion. An expanded pinned-byte
+oracle also caught and corrected two helper-table transcriptions: `isolatePeerMachines` is not
+classifier-routed, and directory allow suggestions target `Read`, not `Bash`.
+
+The child decision boundary now owns all twelve pinned pure helpers used at nineteen capture sites.
+Their behavior is compared against the exact pinned declarations, including every permission-message
+reason arm, Windows directory normalization, critical-path and absolute containment domains, and the
+full UNC grammar. The eight graph aliases resolve directly to `node:path` rather than reimplemented engine logic:
+seven function aliases occupy ten capture sites, while `path.sep` crosses only as an asserted
+primitive. The two `qN` sites remain explicit effectful ports because pinned `qN` calls `statSync`. Adapter controls reject any
+child decision that still forwards a graph-side `pure-helper`.
 
 The eleven table declarators occupy **22,674 pinned bytes**; their initializer expressions occupy
 **22,632**. Their complete dependency closure contains 59 declarations, plus two explicitly external
@@ -6577,32 +6592,33 @@ regenerates instrumented module state.
 | command classifier | 6,613 differential checks | `build/c13b-final-classifier.log` |
 | read-only classifier | 2,522 differentials: 220 focused commands, 2,191 parser-domain strings, and 90 sed commands | `build/c13b-final-read-only.log` |
 | asserted tables | 1,286 checks / 95 controls; 1,263 callback comparisons / 83 callable slots; 46 adapter checks | `build/c13b-final-tables.log` |
-| aggregate and child-root parity | **822 checks / 57 named controls** | `build/c13b-fix-final-parity.log` |
-| root capture derivation | **329 perturbation checks** over the three aggregate and 25 child inventories | `build/c13b-fix-final-captures-after-perturb-fix.log` |
-| aggregate and child adapters | **255 checks**, including every child primitive site, exact port ordering, owned-helper substitution, namespace partitioning, and sabotage result shapes | `build/c13b-fix-decision-adapter-controls.log` |
-| aggregate contract coverage | **1,103 / 3,087 outcomes across 1,592 generated branch sites** | `build/c13b-fix-final-aggregate-coverage.log` |
+| aggregate, child-root, and owned-helper parity | **1,007 checks / 62 named controls** | `build/c13b-fix-round2-helper-oracle-final.log` |
+| root capture derivation | **329 perturbation checks** over the three aggregate and 25 child inventories | `build/c13b-fix-round2-captures-final.log` |
+| aggregate and child adapters | **262 checks**, including all nineteen pinned pure-helper sites, ten direct `node:path` function sites, the asserted separator, both effectful `qN` sites, exact port ordering, namespace partitioning, and sabotage result shapes | `build/c13b-fix-round2-adapters-final.log` |
+| qualified aggregate contract coverage | **1,083 / 3,276 outcomes across 1,693 generated branch sites** | `build/c13b-fix-round2-qualified-coverage-final.log` |
 | splice mechanism | **138 checks**, including same-module `owned-binding` enforcement | `build/c13b-fix-owned-binding-mechanism.log` |
-| manifest derivation | **1,532 checks / 140 capture inventories / 18 chunk fixtures** | `build/c13b-fix-final-manifest-perturbation.log` |
-| exact population | 35 roots, eleven tables, and all 370 declarations partitioned once | `build/c13b-fix-final-population-check.log` |
+| manifest derivation | **1,532 checks / 140 capture inventories / 18 chunk fixtures** | `build/c13b-fix-round2-manifest-perturbation.log` |
+| exact population | 35 roots, eleven tables, and all 370 declarations partitioned once; `Nnn`, `$nn`, and `yQn` are owned closure | `build/c13b-fix-round2-population-check.log` |
 | engine-ts seam | skeleton, static reachability, and reachability negative controls green | `build/c13b-fix-final-skeleton.log`, `build/c13b-fix-final-reachability.log`, `build/c13b-fix-final-reachability-controls.log` |
-| closure ledger | **42 Bash footprints / 315 captures**; checker, controls, and backfill idempotence green | `build/c13b-fix-ledger-check.log`, `build/c13b-fix-ledger-controls.log`, `build/c13b-fix-ledger-idempotence.log` |
-| focused replay | existing compound and permission scenarios green; new dangerous-removal cassette green on the faithful strangled graph | `build/c13b-fix-faithful-prerecord-replay-bash-compound-safety.log`, `build/c13b-fix-dangerous-removal-faithful-replay.log` |
-| child-root liveness | **16 live / 9 reviewed dark**, each measured with a clean-start result-shape-preserving twin over its named cassette population | `build/c13b-fix-liveness-live-batch*.json`, `build/c13b-fix-liveness-dark-batch*.json` |
-| coverage attestation | **92 modules / 6,189 sites / 12,042 outcomes**: **2,075 corpus**, **6,393 contract**, **3,574 reviewed exclusions**, zero unadjudicated | `build/c13b-fix-dangerous-removal-attestation-second.log` |
+| closure ledger | **42 Bash footprints / 315 captures**; checker, controls, and backfill idempotence green after capture-kind regeneration | `build/c13b-fix-round2-ledger-check.log`, `build/c13b-fix-round2-ledger-controls.log`, `build/c13b-fix-round2-ledger-idempotence.log` |
+| focused replay | the unchanged compound cassette and existing dangerous-removal cassette are green on the faithful strangled graph | `build/c13b-fix-round2-faithful-replay-compound.log`, `build/c13b-fix-round2-faithful-replay-dangerous-removal.log` |
+| child-root liveness | **16 live / 9 reviewed dark**, each measured with a clean-start result-shape-preserving twin over its named cassette population; the consolidated manifest explicitly supersedes the stale leading-directory batch rows | `build/c13b-fix-round2-liveness-supersession.json` |
+| coverage attestation | **92 modules / 6,290 sites / 12,231 outcomes**: **2,079 corpus**, **6,376 contract**, **3,776 reviewed exclusions**, zero unadjudicated | `build/c13b-fix-round2-attestation-check.log` |
 
-The shared aggregate corpus adds **103 newly covered non-validator outcomes plus one validator
-outcome**. It does not claim that every reachable helper outcome is closed. Its partitions are 71
-helper cases, 15 semantic records, 29 pipe cases, two pre-validator aggregates, four mode cases,
-30 security regressions, and 2,191 parser cases. Twelve special residual outcomes are identified
-separately as **four producer invariants, three control-flow impossibilities, three caller-outside-
-domain cases, and two resource-sensitive cases**. Open valid inputs and effect states remain explicit
-gaps rather than borrowing execution from another driver's dependencies.
+The aggregate driver uses only invocations whose complete target, input, effect schedule, and
+configuration are independently compared by parity. Private aggregate cases and schedule-mismatched
+calls were removed rather than preserved for a larger number. Its shared partitions remain 71 helper
+cases, 15 semantic records, 29 pipe cases, two pre-validator aggregates, four mode cases, 30 security
+regressions, and 2,191 parser cases. Of the unobserved outcomes, twelve are identified separately as
+**four producer invariants, three control-flow impossibilities, three caller-outside-domain cases, and
+two resource-sensitive cases**; the remaining 1,902 open-input, 276 validator-domain, and three port-
+state outcomes are explicit gaps rather than borrowed execution.
 
 Contract attribution is driver-specific. An outcome earns contract credit only when it is newly
 recorded while that driver's suite runs, belongs to the driver's declared module, and exists in the
 current branch inventory. The final run accepted 2,957 parser, 1,064 classifier, 471 Bash-table,
-1,108 read-only, and 793 aggregate outcomes. It ignored 4,042 read-only-driver dependency outcomes
-and 3,964 aggregate-driver dependency outcomes instead of relabeling them as sibling-module proof.
+1,108 read-only, and 776 aggregate outcomes. It ignored 4,042 read-only-driver dependency outcomes
+and 3,962 aggregate-driver dependency outcomes instead of relabeling them as sibling-module proof.
 Every accepted report row names the actual producing driver.
 
 ### The new `drn` / `Fy` recording
@@ -6637,7 +6653,8 @@ recorded. Direct pinned-byte cases continue to grade duplicate overwrite order, 
 
 ### Status left for the parent
 
-The expanded implementation, focused replay, generated coverage report, ledger, and report freshness
-are complete. `strangle/attest.ts --check` reproduces the generated report after a faithful restore.
+The expanded implementation, bounded correction round, focused replay, generated coverage report,
+ledger, and report freshness are complete. `strangle/attest.ts --check` reproduces the generated
+report, and a faithful build was restored afterward.
 The parent independent review and full strangler gate remain pending by request; nothing in this wave
 record claims final C13b or campaign closure.

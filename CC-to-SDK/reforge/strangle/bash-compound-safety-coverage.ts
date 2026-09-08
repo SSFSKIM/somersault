@@ -2,9 +2,10 @@
 //
 //   npx tsx strangle/bash-compound-safety-coverage.ts
 //
-// It instruments a generated copy of the owned module, then executes only data
-// imported from bash-compound-safety-corpus.ts and parser-corpus.ts. It owns no
-// private command, decision, permission-mode, or configuration case.
+// It instruments a generated copy of the owned module, then executes only
+// complete target/input/port schedules that the pinned-byte parity suite drives
+// from bash-compound-safety-corpus.ts and parser-corpus.ts. Shared strings alone
+// do not qualify a driver call as contract evidence.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -133,13 +134,13 @@ for (const fixture of PIPE_CASES) {
         ? parser.PARSE_ABORTED
         : undefined;
   await mod.checkPipeSafety(
-    { command: fixture.command, description: `coverage:${fixture.tag}` },
+    { command: fixture.command, description: `case:shared pipe corpus/${fixture.tag}` },
     {
       checkPermission: async () =>
         structuredClone(
           fixture.decisions[call++] ?? {
             behavior: "deny",
-            message: "shared fixture marks this permission effect unreachable",
+            message: `shared case ${fixture.tag}: permission effect should be unreachable`,
           },
         ),
       classifiers: pureClassifiers(),
@@ -150,20 +151,19 @@ for (const fixture of PIPE_CASES) {
 }
 
 const multiCd = AGGREGATE_CASES.multiCd;
-let multiCdCall = 0;
 await mod.aggregateSubcommandPermissions(
   multiCd.input,
   multiCd.normalized,
   multiCd.original,
   {
-    checkPermission: async () =>
-      multiCdCall++ === 0
+    checkPermission: async ({ command }: { command: string }) =>
+      command === multiCd.normalized[0]
         ? {
             behavior: "ask",
             message: "inner safety",
             decisionReason: DANGEROUS_SAFETY_REASON,
           }
-        : { behavior: "allow" },
+        : { behavior: "allow", updatedInput: { command } },
     classifiers: pureClassifiers(),
     effects: harmlessEffects,
   },
@@ -196,7 +196,7 @@ for (const fixture of AGGREGATE_CASES.preValidator) {
         structuredClone(
           fixture.decisions[call++] ?? {
             behavior: "deny",
-            message: "shared fixture marks this permission effect unreachable",
+            message: `shared aggregate ${fixture.tag}: permission effect should be unreachable`,
           },
         ),
       classifiers: pureClassifiers(),
@@ -251,7 +251,6 @@ function coreEffects(
       behavior: "passthrough",
       message: "final",
     }),
-    checkDangerousRemoval: () => ({ behavior: "passthrough" }),
     allowedDirectories: () => [],
     resolvePathPolicy: (_filesystem: unknown, path: string) => ({
       resolvedPath: path,
@@ -280,8 +279,7 @@ await mod.checkBashPermissionCore(
     effects: coreEffects(
       EFFECT_STATE.permissionContext,
       {
-        checkDangerousRemoval: () =>
-          DUPLICATE_REMOVAL_SCHEDULE[removalAt++],
+        checkDangerousRemoval: () => ({ behavior: "passthrough" }),
         checkDirectCommand: () =>
           DUPLICATE_REMOVAL_SCHEDULE[removalAt++],
         checkSubcommandPermission: async () =>
@@ -294,50 +292,13 @@ await mod.checkBashPermissionCore(
       bareAssignmentNames: [],
     }),
     classifyReadOnly: () => ({ behavior: "passthrough" }),
-  },
-);
-
-const emptyCd = AGGREGATE_CASES.emptyCd;
-await mod.checkBashPermissionCore(
-  emptyCd.input,
-  contextFor(EFFECT_STATE.permissionContext),
-  undefined,
-  {
-    effects: coreEffects(
-      EFFECT_STATE.permissionContext,
-      { homeDirectory: () => emptyCd.homeDirectory },
-    ),
-    classifyCommand: () => ({
-      kind: "simple",
-      commands: [
-        {
-          text: emptyCd.input.command,
-          argv: ["cd"],
-          envVars: [],
-          redirects: [],
-          hasUnquotedGlob: false,
-        },
-      ],
-      bareAssignmentNames: [],
-    }),
-    classifyReadOnly: () => ({ behavior: "passthrough" }),
+    isNormalizedCdCommand: () => false,
+    isNormalizedGitCommand: () => false,
+    permissionSuggestions: () => [],
   },
 );
 
 const reviewed = SAFETY_REGRESSION_CASES;
-for (const fixture of Object.values(reviewed)) {
-  await mod.checkBashPermissionCore(
-    fixture.input,
-    contextFor(fixture.permissionContext),
-    undefined,
-    {
-      effects: coreEffects(fixture.permissionContext),
-      checkPermission: async (input: unknown) => ({ behavior: "allow", updatedInput: input }),
-      classifyReadOnly: () => ({ behavior: "passthrough" }),
-    },
-  );
-}
-
 for (const fixture of [
   reviewed.sedRedirectRisk,
   reviewed.sedRedirectSafe,
@@ -376,26 +337,6 @@ for (const fixture of [
   );
 }
 
-await mod.checkBashPermissionCore(
-  reviewed.sandboxSubcommandDeny.input,
-  contextFor(reviewed.sandboxSubcommandDeny.permissionContext),
-  undefined,
-  {
-    effects: coreEffects(reviewed.sandboxSubcommandDeny.permissionContext, {
-      isSandboxingEnabled: () => true,
-      isAutoAllowBashIfSandboxedEnabled: () => true,
-      isSandboxEligible: () => true,
-      matchRules: ({ command }: { command: string }) => ({
-        deny: command === reviewed.sandboxSubcommandDeny.deniedSubcommand
-          ? [{ toolName: "Bash", ruleContent: command }]
-          : [],
-        ask: [],
-        allow: [],
-      }),
-    }),
-  },
-);
-
 for (const fixture of [
   reviewed.sandboxTooComplexJq,
   reviewed.remoteTooComplex,
@@ -412,8 +353,10 @@ for (const fixture of [
       effects: coreEffects(fixture.permissionContext, {
         checkTooComplexSafety: async () => null,
         isSandboxingEnabled: () => fixture !== reviewed.asyncTooComplexSafety,
-        isAutoAllowBashIfSandboxedEnabled: () => true,
-        isSandboxEligible: () => true,
+        isAutoAllowBashIfSandboxedEnabled: () =>
+          fixture !== reviewed.asyncTooComplexSafety,
+        isSandboxEligible: () =>
+          fixture !== reviewed.asyncTooComplexSafety,
       }),
       classifyCommand: () => ({
         kind: "too-complex",
@@ -443,14 +386,19 @@ for (const fixture of [
 ]) {
   await mod.checkBashPermission(
     fixture.input,
-    contextFor(fixture.permissionContext),
+    {},
     undefined,
     {
-      effects: coreEffects(fixture.permissionContext),
+      effects: {
+        readPermissionContext: () => fixture.permissionContext,
+        emitTelemetry: () => undefined,
+        isSubprocessEnvironmentScrubbingEnabled: () => false,
+        decorateDecision: (decision: unknown) => decision,
+      },
       checkCore: async (input: unknown) => ({
         behavior: "allow",
         updatedInput: input,
-        decisionReason: { type: "other", reason: "coverage allow" },
+        decisionReason: { type: "other", reason: "pinned core allow" },
       }),
     },
   );
@@ -465,11 +413,14 @@ await mod.checkBashPermissionCore(
   undefined,
   {
     effects: coreEffects(reviewed.multiCdDangerousRemoval.permissionContext, {
-      checkDangerousRemoval: () => ({
-        behavior: "ask",
-        message: "dangerous removal",
-        decisionReason: DANGEROUS_SAFETY_REASON,
-      }),
+      checkDangerousRemoval: (command: string) =>
+        command === "rm"
+          ? {
+              behavior: "ask",
+              message: "dangerous removal",
+              decisionReason: DANGEROUS_SAFETY_REASON,
+            }
+          : { behavior: "passthrough" },
     }),
     classifyCommand: () => ({
       kind: "simple",
@@ -480,6 +431,33 @@ await mod.checkBashPermissionCore(
   },
 );
 
+for (const fixture of [
+  reviewed.multiCdCandidateSafe,
+  reviewed.multiCdCandidateUnsafe,
+]) {
+  const analyses = fixture.subcommands.map((text) => ({
+    text,
+    argv: text.split(" "),
+    envVars: [],
+    redirects: [],
+  }));
+  await mod.checkBashPermissionCore(
+    fixture.input,
+    contextFor(fixture.permissionContext),
+    undefined,
+    {
+      effects: coreEffects(fixture.permissionContext, {
+        checkDangerousRemoval: () => ({ behavior: "passthrough" }),
+      }),
+      classifyCommand: () => ({
+        kind: "simple",
+        commands: analyses,
+        bareAssignmentNames: [],
+      }),
+    },
+  );
+}
+
 const reviewedSuggestionAnalyses = reviewed.nestedRuleSuggestions.subcommands.map(
   (text) => ({ text, argv: text.split(" "), envVars: [], redirects: [] }),
 );
@@ -489,10 +467,11 @@ await mod.checkBashPermissionCore(
   undefined,
   {
     effects: coreEffects(reviewed.nestedRuleSuggestions.permissionContext, {
-      checkDirectCommand: () => ({ behavior: "passthrough" }),
-      checkPathSafety: () => ({ behavior: "passthrough" }),
+      checkDirectCommand: () => ({ behavior: "passthrough", message: "preliminary" }),
+      checkPathSafety: () => ({ behavior: "passthrough", message: "path" }),
       checkSubcommandPermission: ({ command }: { command: string }) => ({
         behavior: "passthrough",
+        message: `${command} asks`,
         suggestions: [{
           type: "addRules",
           rules: [{ toolName: "Bash", ruleContent: command }],
@@ -523,37 +502,14 @@ await mod.checkBashPermissionCore(
       resolveLeadingDirectoryChange: () => reviewed.resolvedLeadingCd.resolvedCwd,
       checkDirectCommand: () => ({ behavior: "passthrough" }),
       checkPathSafety: () => ({ behavior: "passthrough" }),
-      checkSubcommandPermission: ({ command }: { command: string }) => ({
+      checkSubcommandPermission: (input: Record<string, unknown>) => ({
         behavior: "allow",
-        updatedInput: { command },
+        updatedInput: input,
       }),
     }),
     classifyCommand: () => ({
       kind: "simple",
       commands: reviewedCdAnalyses,
-      bareAssignmentNames: [],
-    }),
-    classifyReadOnly: () => ({ behavior: "passthrough" }),
-  },
-);
-
-await mod.checkBashPermissionCore(
-  reviewed.classifierPrefix.input,
-  contextFor(reviewed.classifierPrefix.permissionContext),
-  async () => ({ commandPrefix: reviewed.classifierPrefix.prefix }),
-  {
-    effects: coreEffects(reviewed.classifierPrefix.permissionContext, {
-      checkDirectCommand: () => ({ behavior: "passthrough" }),
-      checkPathSafety: () => ({ behavior: "passthrough" }),
-    }),
-    classifyCommand: () => ({
-      kind: "simple",
-      commands: [{
-        text: reviewed.classifierPrefix.input.command,
-        argv: reviewed.classifierPrefix.input.command.split(" "),
-        envVars: [],
-        redirects: [],
-      }],
       bareAssignmentNames: [],
     }),
     classifyReadOnly: () => ({ behavior: "passthrough" }),
@@ -693,9 +649,14 @@ for (const behavior of reviewed.emptyRuleSuggestions.decisionBehaviors) {
 const clamped = ROOT_CASES.clampedOverLength;
 await mod.checkBashPermission(
   clamped.input,
-  contextFor(clamped.permissionContext),
+  {},
   undefined,
-  { effects: coreEffects(clamped.permissionContext) },
+  {
+    effects: {
+      readPermissionContext: () => clamped.permissionContext,
+      emitTelemetry: () => undefined,
+    },
+  },
 );
 const background = ROOT_CASES.background;
 await mod.checkBashPermission(
@@ -707,7 +668,7 @@ await mod.checkBashPermission(
     checkCore: async (input: unknown) => ({
       behavior: "allow",
       updatedInput: input,
-      decisionReason: { type: "other", reason: "coverage allow" },
+      decisionReason: { type: "subcommandResults", reasons: new Map() },
     }),
   },
 );
@@ -807,17 +768,17 @@ for (const outcome of missing) {
 }
 
 const expected = {
-  sites: 1_592,
-  outcomes: 3_087,
-  observed: 1_103,
+  sites: 1_693,
+  outcomes: 3_276,
+  observed: 1_083,
   missingByReason: {
     "INVARIANT: pinned and owned parser child-array producers cannot emit falsy entries": 4,
     "IMPOSSIBLE: the pinned and owned control-flow contracts cannot select this outcome": 3,
     "CALLER-OUTSIDE-DOMAIN: only a foreign or mismatched analysis shape can select this outcome": 3,
     "RESOURCE-SENSITIVE: only a fresh segment reparse deadline race can select this outcome": 2,
-    "OPEN-INPUT: no input in the shared differential corpus selects this pure outcome; no exclusion is claimed": 1_701,
-    "PORT-STATE: the shared contract does not select this adapter/settings/filesystem outcome": 2,
-    "VALIDATOR-DOMAIN: no simple KTe result in the shared parser partition selects this outcome": 269,
+    "OPEN-INPUT: no input in the shared differential corpus selects this pure outcome; no exclusion is claimed": 1_902,
+    "PORT-STATE: the shared contract does not select this adapter/settings/filesystem outcome": 3,
+    "VALIDATOR-DOMAIN: no simple KTe result in the shared parser partition selects this outcome": 276,
   },
 };
 if (
@@ -826,7 +787,7 @@ if (
   observed.size !== expected.observed
 ) {
   throw new Error(
-    `coverage claim drifted: sites ${sites.length}/${expected.sites}, outcomes ${allOutcomes.length}/${expected.outcomes}, observed ${observed.size}/${expected.observed}`,
+    `coverage claim drifted: sites ${sites.length}/${expected.sites}, outcomes ${allOutcomes.length}/${expected.outcomes}, observed ${observed.size}/${expected.observed}; missing ${JSON.stringify(Object.fromEntries([...groups].map(([reason, values]) => [reason, values.length])))}`,
   );
 }
 for (const [reason, count] of Object.entries(expected.missingByReason)) {

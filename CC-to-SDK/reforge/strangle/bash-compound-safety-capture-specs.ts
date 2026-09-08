@@ -564,6 +564,7 @@ export const BASH_DECISION_ROOTS = {
       {
         as: "isClassifierRoutedSafetyCheck",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("decorateBashAskDecision", "free-function", 2, "_Tt"),
       },
       {
@@ -753,6 +754,7 @@ export const BASH_DECISION_ROOTS = {
       {
         as: "permissionMessage",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("checkBashTooComplexSandbox", "free-function", 19, "ql"),
       },
       {
@@ -865,6 +867,7 @@ export const BASH_DECISION_ROOTS = {
       {
         as: "permissionMessage",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("checkBashExactPermission", "arrow-initializer", 2, "ql"),
       },
       {
@@ -891,6 +894,7 @@ export const BASH_DECISION_ROOTS = {
       {
         as: "countMatching",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("checkBashCdGitSequence", "free-function", 1, "Q"),
       },
       {
@@ -939,11 +943,13 @@ export const BASH_DECISION_ROOTS = {
       {
         as: "resolvePath",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("checkBashPathSafety", "free-function", 3, "r8e"),
       },
       {
         as: "isAbsolutePath",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("checkBashPathSafety", "free-function", 4, "uL"),
       },
       {
@@ -1010,6 +1016,7 @@ export const BASH_DECISION_ROOTS = {
       {
         as: "uniqueValues",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("checkBashDangerousRemoval", "free-function", 3, "te"),
       },
       {
@@ -1025,16 +1032,19 @@ export const BASH_DECISION_ROOTS = {
       {
         as: "isAbsolutePath",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("checkBashDangerousRemoval", "free-function", 6, "uL"),
       },
       {
         as: "resolvePath",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("checkBashDangerousRemoval", "free-function", 7, "r8e"),
       },
       {
         as: "normalizePath",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("checkBashDangerousRemoval", "free-function", 8, "Enn"),
       },
       {
@@ -1045,12 +1055,13 @@ export const BASH_DECISION_ROOTS = {
       },
       {
         as: "pathSeparator",
-        kind: "pure-helper",
+        kind: "primitive",
         derive: deriveDecisionCapture("checkBashDangerousRemoval", "free-function", 10, "Cnn"),
       },
       {
         as: "hasUnsafeGlobRoot",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("checkBashDangerousRemoval", "free-function", 11, "kze"),
       },
       {
@@ -1062,21 +1073,25 @@ export const BASH_DECISION_ROOTS = {
       {
         as: "hasBlockedPathShape",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("checkBashDangerousRemoval", "free-function", 13, "Bn"),
       },
       {
         as: "isCriticalPath",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("checkBashDangerousRemoval", "free-function", 14, "pwe"),
       },
       {
         as: "pathContains",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("checkBashDangerousRemoval", "free-function", 15, "nf"),
       },
       {
         as: "countMatching",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("checkBashDangerousRemoval", "free-function", 16, "Q"),
       },
     ],
@@ -1104,6 +1119,7 @@ export const BASH_DECISION_ROOTS = {
       {
         as: "isAbsolutePath",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("resolveBashLeadingDirectoryChange", "free-function", 2, "lW"),
       },
       {
@@ -1145,6 +1161,7 @@ export const BASH_DECISION_ROOTS = {
       {
         as: "countMatching",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("checkBashCdGitAstSequence", "free-function", 1, "Q"),
       },
       {
@@ -1244,6 +1261,7 @@ export const BASH_DECISION_ROOTS = {
       {
         as: "resolvePath",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("hasUnsafeBashGitStructureFromAnalysis", "free-function", 11, "u_e"),
       },
       {
@@ -1259,11 +1277,13 @@ export const BASH_DECISION_ROOTS = {
       {
         as: "shellExpansionIndex",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("hasUnsafeBashGitStructureFromAnalysis", "free-function", 14, "DU"),
       },
       {
         as: "basename",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("hasUnsafeBashGitStructureFromAnalysis", "free-function", 15, "a8e"),
       },
       {
@@ -1350,6 +1370,7 @@ export const BASH_DECISION_ROOTS = {
       {
         as: "permissionMessage",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("checkBashDirectCommand", "arrow-initializer", 4, "ql"),
       },
       {
@@ -1457,6 +1478,7 @@ export const BASH_DECISION_ROOTS = {
       {
         as: "permissionMessage",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("checkBashPrefixAndExactRules", "free-function", 3, "ql"),
       },
     ],
@@ -1539,6 +1561,7 @@ export const BASH_DECISION_ROOTS = {
       {
         as: "permissionMessage",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("checkSandboxRules", "free-function", 2, "ql"),
       },
       {
@@ -1585,6 +1608,7 @@ export const BASH_DECISION_ROOTS = {
       {
         as: "isUncPath",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("checkSameDirectoryCd", "free-function", 2, "S_"),
       },
       {
@@ -1596,11 +1620,13 @@ export const BASH_DECISION_ROOTS = {
       {
         as: "isAbsolutePath",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("checkSameDirectoryCd", "free-function", 4, "lW"),
       },
       {
         as: "resolvePath",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("checkSameDirectoryCd", "free-function", 5, "F8e"),
       },
       {
@@ -1631,11 +1657,12 @@ export const BASH_DECISION_ROOTS = {
       {
         as: "formatAllowedDirectories",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("checkOutputRedirections", "free-function", 2, "Rpn"),
       },
       {
         as: "dirname",
-        kind: "pure-helper",
+        kind: "effectful-port",
         derive: deriveDecisionCapture("checkOutputRedirections", "free-function", 3, "qN"),
       },
     ],
@@ -1755,12 +1782,13 @@ export const BASH_DECISION_ROOTS = {
       },
       {
         as: "dirname",
-        kind: "pure-helper",
+        kind: "effectful-port",
         derive: deriveDecisionCapture("createPathCommandChecker", "free-function", 3, "qN"),
       },
       {
         as: "directoryRuleSuggestion",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("createPathCommandChecker", "free-function", 4, "YTe"),
       },
     ],
@@ -1807,6 +1835,7 @@ export const BASH_DECISION_ROOTS = {
       {
         as: "formatAllowedDirectories",
         kind: "pure-helper",
+        owned: true,
         derive: deriveDecisionCapture("checkPathCommand", "free-function", 6, "Rpn"),
       },
       {

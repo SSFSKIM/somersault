@@ -5302,9 +5302,9 @@
   ],
   "dispositions": {
     "counts": {
-      "exclude": 56,
+      "exclude": 53,
       "fold": 11,
-      "ownedClosure": 210,
+      "ownedClosure": 213,
       "port": 16,
       "root": 30,
       "table": 11,
@@ -5795,6 +5795,8 @@
           "bash-git-structure-command",
           "bash-invalid-semantics-rules",
           "bash-path-safety",
+          "bash-permission-core",
+          "bash-permission-entry",
           "bash-prefix-exact-rules",
           "bash-sandbox-rules",
           "bash-subcommand-permission",
@@ -5820,7 +5822,10 @@
           "aggregateSubcommands",
           "bash-direct-command",
           "bash-exact-permission",
+          "bash-git-structure-command",
           "bash-invalid-semantics-rules",
+          "bash-permission-core",
+          "bash-permission-entry",
           "bash-prefix-exact-rules",
           "bash-sandbox-rules",
           "bash-subcommand-permission",
@@ -5879,6 +5884,7 @@
           "bash-direct-command",
           "bash-exact-permission",
           "bash-invalid-semantics-rules",
+          "bash-permission-core",
           "bash-prefix-exact-rules",
           "bash-sandbox-rules",
           "bash-subcommand-permission",
@@ -6021,6 +6027,7 @@
         "sha256": "2dd731b310d52bd24e9a28789b27dfe2fbddc6065efded8f4b9d32b2ec73e6ad",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-direct-command",
           "decideBashPermissions"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -6147,6 +6154,7 @@
           "bash-git-structure-command",
           "bash-invalid-semantics-rules",
           "bash-path-safety",
+          "bash-permission-core",
           "bash-prefix-exact-rules",
           "bash-sandbox-rules",
           "bash-subcommand-permission",
@@ -6319,6 +6327,7 @@
         "sha256": "7fbca43a391caaccd988dced9c49ff7a7c08f5de20ad178f1813c6f56db3e7f2",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "parsePipeCommand",
           "rejectCompoundOperators"
         ],
@@ -6335,6 +6344,7 @@
         "sha256": "253497930c1661f9bd535b6db882cd8456fd36221bce93c76419fc2e5a95982b",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "parsePipeCommand",
           "rejectCompoundOperators"
         ],
@@ -6351,6 +6361,7 @@
         "sha256": "d744911523809a892e3995ed30d6d652d0025ed17ce5b6e553f016ccba9457c9",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "parsePipeCommand",
           "rejectCompoundOperators"
         ],
@@ -6367,6 +6378,7 @@
         "sha256": "e8c9a228d4c59d7400acb217f0082c1fe3bdb88c44569dc49de03035c7d0d673",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "parsePipeCommand",
           "rejectCompoundOperators"
         ],
@@ -6383,6 +6395,7 @@
         "sha256": "6208f42ee8700567de5d0ce92e3d7aff2e5a7426f9fac43f77e02e55dc00a0ac",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "parsePipeCommand",
           "rejectCompoundOperators"
         ],
@@ -6399,6 +6412,7 @@
         "sha256": "78e9360e552e6677143e04f4d2b0ef820e73452e816b6d684e4fb13615390df5",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "parsePipeCommand",
           "rejectCompoundOperators"
         ],
@@ -6415,6 +6429,7 @@
         "sha256": "adb404308c2e73c0e7b5dfbfbc153cd5726810c3cd0c836d69416cac72f4c231",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "parsePipeCommand",
           "rejectCompoundOperators"
         ],
@@ -6431,6 +6446,7 @@
         "sha256": "87dc70fcfa5b2d8d907c25ca84a6a05e8ed91e94005cb679c374c4c675ae64a2",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "parsePipeCommand",
           "rejectCompoundOperators"
         ],
@@ -6447,6 +6463,7 @@
         "sha256": "34d5c983e02725826406fd86e1d8163e97850527d987886da681dd4e10919a68",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "parsePipeCommand",
           "rejectCompoundOperators"
         ],
@@ -6463,6 +6480,7 @@
         "sha256": "2f9be2761158ae6f6017bcd3f8d1d2b4933dc004986b53517646d8850ca52582",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "parsePipeCommand",
           "rejectCompoundOperators"
         ],
@@ -6479,6 +6497,7 @@
         "sha256": "1b0c10a0ed7c3609d09e919ad88bf217664add96b29b35c6cb5d6db8e9efba90",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "parsePipeCommand",
           "rejectCompoundOperators"
         ],
@@ -6495,6 +6514,7 @@
         "sha256": "d1af59095ffa62f4b2c51610dd571f26f32a323f0724a35dbf5e0ecbb5fa606d",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "parsePipeCommand",
           "rejectCompoundOperators"
         ],
@@ -6511,6 +6531,7 @@
         "sha256": "7353a2f539590af73dfbc68238631e8295774ca225152e9397bb3261fb01f198",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "parsePipeCommand",
           "rejectCompoundOperators"
         ],
@@ -6527,6 +6548,7 @@
         "sha256": "eb315f3fb3c1bd672def0b9ffcc9c28d8b988381a000a90154c2877fc611fc93",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "parsePipeCommand",
           "rejectCompoundOperators"
         ],
@@ -6543,6 +6565,7 @@
         "sha256": "f7f863aebf5446ba0af56d9270ac82cd6af0636042ea7fa05091f4f5dabf900d",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "parsePipeCommand",
           "rejectCompoundOperators"
         ],
@@ -6559,6 +6582,7 @@
         "sha256": "e6bae59d3dd06b2323f7130d88961f2e2b5dbbf2f11fc8b7021d39ac85c9dc48",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "parsePipeCommand",
           "rejectCompoundOperators"
         ],
@@ -6575,6 +6599,7 @@
         "sha256": "2a06aa491b13831a708920564bbd0f98c49018c0fd60b0343bd4975b585aadec",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "parsePipeCommand",
           "rejectCompoundOperators"
         ],
@@ -6591,6 +6616,7 @@
         "sha256": "5f901740260461c6f0de6cd9a6a99995c84e895ce592afb90acea0c75a87c744",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "parsePipeCommand",
           "rejectCompoundOperators"
         ],
@@ -6817,6 +6843,7 @@
         "sha256": "295d71771e52a6313e4f4f577db304b4f83a265949b15f5b512c367dfdeb1646",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-direct-command",
           "decideBashPermissions"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -6832,6 +6859,7 @@
         "sha256": "ab0167aa49a05199007bf7da3d36e33514e9942395c14ddbba55878a0413c91b",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-direct-command",
           "decideBashPermissions"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -6847,6 +6875,7 @@
         "sha256": "3df96208bd8af6151237ad322c26c1c6dee1949248a689c5a5d30a84732f2bc0",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-direct-command",
           "decideBashPermissions"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -6862,6 +6891,7 @@
         "sha256": "c6e0ab041303f5b6a73f062db6354db6939cae59cdf9fc305af99b7408f3bd79",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-direct-command",
           "decideBashPermissions"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -6877,6 +6907,7 @@
         "sha256": "e521f729dfaa42b0d716355086d39fa530b93da6984953044fb75d2390b185c7",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-direct-command",
           "decideBashPermissions"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -6892,6 +6923,7 @@
         "sha256": "1aa716c845afc5dfcdeaad3f42fa9e7f46d0617856710b812324a90b7b762c52",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-direct-command",
           "decideBashPermissions"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -6907,6 +6939,7 @@
         "sha256": "8852f65b31129270f29657fbc4cc3423a5b7f9d03d6017f1a1e79546e534f42e",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-direct-command",
           "decideBashPermissions"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -7273,11 +7306,12 @@
         "byteStart": 942169,
         "byteEnd": 942409,
         "sha256": "0eeff982a5761b3cdc115909425c28f8e03d7d0bae8b52a97b4103f04790166c",
-        "disposition": "exclude",
+        "disposition": "ownedClosure",
         "owners": [
-          "outside-admission-call-closure"
+          "bash-direct-command",
+          "bash-permission-core"
         ],
-        "reason": "no AST call/dependency path from an admitted root or table reaches this declaration before an explicit port or exclusion boundary"
+        "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
       },
       {
         "file": "chunk-fy12d89p.js",
@@ -7288,11 +7322,12 @@
         "byteStart": 942409,
         "byteEnd": 942645,
         "sha256": "e9c74fa79f26ca69d22ef209670a8bf82df00bd8fc20f2a743687357b6e5700f",
-        "disposition": "exclude",
+        "disposition": "ownedClosure",
         "owners": [
-          "outside-admission-call-closure"
+          "bash-direct-command",
+          "bash-permission-core"
         ],
-        "reason": "no AST call/dependency path from an admitted root or table reaches this declaration before an explicit port or exclusion boundary"
+        "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
       },
       {
         "file": "chunk-fy12d89p.js",
@@ -7982,6 +8017,7 @@
         "sha256": "236678b9bcc37c5d861118da4d91e53c79ceae217bb148cde9acffe233c94448",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "rejectCompoundOperators"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -8027,6 +8063,7 @@
         "sha256": "6424d18094bae31e0cfa8e1f41aaf0c71e9952716137a2b1cecf4bc9e39396e4",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-direct-command",
           "decideModeSpecificCommand"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -8042,6 +8079,7 @@
         "sha256": "bf4ac1ca68c5e55daab3e6308a7db19db89ae5ce9c35e888d8135e9642aa8b5d",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-direct-command",
           "decideModeSpecificCommand"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -8256,6 +8294,7 @@
           "bash-direct-command",
           "bash-exact-permission",
           "bash-invalid-semantics-rules",
+          "bash-permission-core",
           "bash-prefix-exact-rules",
           "bash-sandbox-rules",
           "bash-subcommand-permission",
@@ -8293,10 +8332,12 @@
         "sha256": "f9d6988851c9cafee6465d8598a0a6477ae64b22b7c320bed80ee174ea6a59fd",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-ast-path-command",
           "bash-direct-command",
           "bash-exact-permission",
           "bash-sandbox-auto-allow",
           "bash-subcommand-permission",
+          "bash-text-path-command",
           "classifyReadOnly",
           "decideBashPermissions"
         ],
@@ -8330,6 +8371,8 @@
         "sha256": "4b1b6e4ab86d3930e45d9ec5c0f92b301286c144db1836dd1911d69017c0f30e",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-ast-path-command",
+          "bash-text-path-command",
           "checkBashPermissions"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -8361,6 +8404,8 @@
         "sha256": "b83e250e94f73ea187519d7f4d6e134450193b43ecd6072a178e97d711f4601e",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-direct-command",
+          "bash-permission-core",
           "checkBashPermissions"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -8376,6 +8421,8 @@
         "sha256": "8954de42957e31dd5714ee6df7d3216dd79b18aeb82aa32a2b51863075612fec",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-direct-command",
+          "bash-permission-core",
           "checkBashPermissions"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -9012,6 +9059,7 @@
           "bash-direct-command",
           "bash-exact-permission",
           "bash-invalid-semantics-rules",
+          "bash-permission-core",
           "bash-prefix-exact-rules",
           "bash-sandbox-rules",
           "bash-subcommand-permission",
@@ -9042,6 +9090,7 @@
           "bash-exact-permission",
           "bash-invalid-semantics-rules",
           "bash-nested-dangerous-removal",
+          "bash-permission-core",
           "bash-prefix-exact-rules",
           "bash-sandbox-rules",
           "bash-subcommand-permission",
@@ -9070,6 +9119,7 @@
           "bash-exact-permission",
           "bash-invalid-semantics-rules",
           "bash-nested-dangerous-removal",
+          "bash-permission-core",
           "bash-prefix-exact-rules",
           "bash-sandbox-rules",
           "bash-subcommand-permission",
@@ -9410,6 +9460,7 @@
         "sha256": "ea0b73350d0ae56e9528425a0cb9e719bc5ed218749737f2eb729bf4601f5b2e",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "validateCommandSemantics"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -9455,6 +9506,7 @@
         "sha256": "83125f1f513a7eeafc2ecb9f7f6fa410027295b7ec049c50c66eed702681c2be",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "validateCommandSemantics"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -9470,6 +9522,7 @@
         "sha256": "9b1347da91343cc854bd261a62f2f33b0be17f9cfcc3fba9c58e2068f2ff8d63",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "validateCommandSemantics"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -9485,6 +9538,7 @@
         "sha256": "72a4dd9a4c3d0f21c324fd824345b9ccbd1f56c9d5af1b8b1469093dfc8b0540",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "validateCommandSemantics"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -9558,11 +9612,11 @@
         "byteStart": 110120,
         "byteEnd": 110213,
         "sha256": "c079040c0c34c195fb6b82e2d60ca1bdf2e9c666ca5893fdedfc757a62cda880",
-        "disposition": "exclude",
+        "disposition": "ownedClosure",
         "owners": [
-          "outside-admission-call-closure"
+          "decideBashPermissions"
         ],
-        "reason": "no AST call/dependency path from an admitted root or table reaches this declaration before an explicit port or exclusion boundary"
+        "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
       },
       {
         "file": "chunk-9e2ns8ty.js",
@@ -9830,7 +9884,20 @@
         "sha256": "69805e37d0d22d7a7d505183c2b1ef9a509fa73ee8ec3864fc9785f74ec6da68",
         "disposition": "ownedClosure",
         "owners": [
-          "bash-nested-dangerous-removal"
+          "aggregateSubcommands",
+          "bash-direct-command",
+          "bash-exact-permission",
+          "bash-invalid-semantics-rules",
+          "bash-nested-dangerous-removal",
+          "bash-permission-core",
+          "bash-prefix-exact-rules",
+          "bash-sandbox-rules",
+          "bash-subcommand-permission",
+          "bash-too-complex-rules",
+          "bash-too-complex-sandbox",
+          "checkBashPermissions",
+          "decideBashPermissions",
+          "rejectCompoundOperators"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
       },
@@ -10565,6 +10632,19 @@
         "sha256": "62e757bf4ccb6de82891e4294511741d4c28fad6b14713e990c34a6b9e4830fe",
         "disposition": "ownedClosure",
         "owners": [
+          "aggregateSubcommands",
+          "bash-direct-command",
+          "bash-exact-permission",
+          "bash-invalid-semantics-rules",
+          "bash-permission-core",
+          "bash-prefix-exact-rules",
+          "bash-sandbox-rules",
+          "bash-subcommand-permission",
+          "bash-too-complex-rules",
+          "bash-too-complex-sandbox",
+          "checkBashPermissions",
+          "decideBashPermissions",
+          "rejectCompoundOperators",
           "validateCommandSemantics"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -10580,6 +10660,8 @@
         "sha256": "1e0b7efc480f14971e6f238201f4974fe70cb206e474d28bcd05e87ed3a08504",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
+          "bash-too-complex-sandbox",
           "validateCommandSemantics"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -10595,6 +10677,9 @@
         "sha256": "df8d85771b5ce541ae954f1be1f5b6a18b190a740a7e2a14ca32e1e2cd3d77c1",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
+          "bash-too-complex-sandbox",
+          "classifyReadOnly",
           "validateCommandSemantics"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -10610,6 +10695,9 @@
         "sha256": "6b7940189164d99d23e3f0d460ebd7e06a29e3b16288b20e4f25b4ef678d3cc9",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
+          "bash-too-complex-sandbox",
+          "classifyReadOnly",
           "validateCommandSemantics"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -10625,6 +10713,19 @@
         "sha256": "b6e0dfa78a540f85e97a3d74f1421164243438724e0249527e674d86311f21f5",
         "disposition": "ownedClosure",
         "owners": [
+          "aggregateSubcommands",
+          "bash-direct-command",
+          "bash-exact-permission",
+          "bash-invalid-semantics-rules",
+          "bash-permission-core",
+          "bash-prefix-exact-rules",
+          "bash-sandbox-rules",
+          "bash-subcommand-permission",
+          "bash-too-complex-rules",
+          "bash-too-complex-sandbox",
+          "checkBashPermissions",
+          "decideBashPermissions",
+          "rejectCompoundOperators",
           "validateCommandSemantics"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -10640,6 +10741,8 @@
         "sha256": "916f5bfef019c46cf237789a69b193de15e438a5d0fbc96b238fe3683c421629",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
+          "bash-too-complex-sandbox",
           "validateCommandSemantics"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -10655,6 +10758,7 @@
         "sha256": "2bf8eea3be74bb4982da4a3a2483b3d140956c49b81dfedc5b3f2eeff1212852",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "validateCommandSemantics"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -10670,6 +10774,7 @@
         "sha256": "b85199ee50315c688da1ac482c09c65eb87070995318418a58603fcd16c3d341",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "classifyCommand",
           "validateCommandSemantics"
         ],
@@ -10686,6 +10791,19 @@
         "sha256": "82e9209014371abf6d8a54d73647230768ea09ced03379929f98abf9ca56b97a",
         "disposition": "ownedClosure",
         "owners": [
+          "aggregateSubcommands",
+          "bash-direct-command",
+          "bash-exact-permission",
+          "bash-invalid-semantics-rules",
+          "bash-permission-core",
+          "bash-prefix-exact-rules",
+          "bash-sandbox-rules",
+          "bash-subcommand-permission",
+          "bash-too-complex-rules",
+          "bash-too-complex-sandbox",
+          "checkBashPermissions",
+          "decideBashPermissions",
+          "rejectCompoundOperators",
           "validateCommandSemantics"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -10716,6 +10834,19 @@
         "sha256": "73b676d0ff09f9b2dc193a01fb1fea245b0422b6aa54151b6e6f984632e96a91",
         "disposition": "ownedClosure",
         "owners": [
+          "aggregateSubcommands",
+          "bash-direct-command",
+          "bash-exact-permission",
+          "bash-invalid-semantics-rules",
+          "bash-permission-core",
+          "bash-prefix-exact-rules",
+          "bash-sandbox-rules",
+          "bash-subcommand-permission",
+          "bash-too-complex-rules",
+          "bash-too-complex-sandbox",
+          "checkBashPermissions",
+          "decideBashPermissions",
+          "rejectCompoundOperators",
           "validateCommandSemantics"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -10761,6 +10892,19 @@
         "sha256": "8e94a1afd658d234dcb2b98069df11c2e7c107a6e53c599962877c6bd878a61a",
         "disposition": "ownedClosure",
         "owners": [
+          "aggregateSubcommands",
+          "bash-direct-command",
+          "bash-exact-permission",
+          "bash-invalid-semantics-rules",
+          "bash-permission-core",
+          "bash-prefix-exact-rules",
+          "bash-sandbox-rules",
+          "bash-subcommand-permission",
+          "bash-too-complex-rules",
+          "bash-too-complex-sandbox",
+          "checkBashPermissions",
+          "decideBashPermissions",
+          "rejectCompoundOperators",
           "validateCommandSemantics"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -10776,6 +10920,7 @@
         "sha256": "93b317dfaf66788f6dc0bb244e68ecfe7328a684ab94f9a37adb3c73fec1edd9",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "validateCommandSemantics"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -10791,6 +10936,19 @@
         "sha256": "d5cf078f80d54469a836fd37693096663faee1055567ef53834bb02b3309f670",
         "disposition": "ownedClosure",
         "owners": [
+          "aggregateSubcommands",
+          "bash-direct-command",
+          "bash-exact-permission",
+          "bash-invalid-semantics-rules",
+          "bash-permission-core",
+          "bash-prefix-exact-rules",
+          "bash-sandbox-rules",
+          "bash-subcommand-permission",
+          "bash-too-complex-rules",
+          "bash-too-complex-sandbox",
+          "checkBashPermissions",
+          "decideBashPermissions",
+          "rejectCompoundOperators",
           "validateCommandSemantics"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -10806,6 +10964,8 @@
         "sha256": "b02ada940bb84e74e875c0019c9819db8936b9a63a270aca9b321a68d3733d57",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
+          "bash-too-complex-sandbox",
           "validateCommandSemantics"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -10821,6 +10981,8 @@
         "sha256": "d55bb1936e7a7b60828ddf2ee5f268b129778f3010482e6b6991c7c5c2bf1f01",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
+          "bash-too-complex-sandbox",
           "validateCommandSemantics"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -10896,6 +11058,7 @@
         "sha256": "dea7c4580e17a9c9ac27629f3136d3357f0a9b3be1035740603cdb85e9c1ddc0",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-too-complex-sandbox",
           "classifyCommand"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -10911,6 +11074,7 @@
         "sha256": "c8d18f112cbda85000a6357104bcb838a63e10d9723e7be43e5438f59167a324",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "classifyCommand",
           "validateCommandSemantics"
         ],
@@ -10927,6 +11091,7 @@
         "sha256": "1da381653cc6b69c995731ca3b2d4901d8e14ad46794c322915353a0ca2962db",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "validateCommandSemantics"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -10942,6 +11107,7 @@
         "sha256": "0634403b159b0d44625360824993ac85c57c33d196fa5083e3264b600110a659",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "validateCommandSemantics"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -10957,6 +11123,7 @@
         "sha256": "cbe62732b9e6a30075d47c91ec0f8b02e021b77b41d93c3b047efa1ca166e88c",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "validateCommandSemantics"
         ],
         "reason": "pure or data dependency folded into a listed production owner; its graph declaration is not a decision port"
@@ -10987,6 +11154,7 @@
         "sha256": "fe228ed20003478e2fc8e9c53f52556888473c47cb46504e71efcb0d7e2e165a",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "classifyCommand",
           "validateCommandSemantics"
         ],
@@ -11003,6 +11171,7 @@
         "sha256": "fb36f0d137ac0c30ba7afdf69a7c5c6ae9bbaf6d65b39ea419636ef30508d158",
         "disposition": "ownedClosure",
         "owners": [
+          "bash-permission-core",
           "classifyCommand",
           "validateCommandSemantics"
         ],

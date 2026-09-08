@@ -18,6 +18,7 @@ import {
   sep,
 } from "node:path";
 import ts from "typescript";
+import * as nodePath from "node:path";
 import { BUNDLE_MODULES, ENGINE_VERSION } from "../src/pin.js";
 import { PARTITIONS } from "./parser-corpus.js";
 import {
@@ -34,7 +35,10 @@ import {
 } from "./bash-compound-safety-corpus.js";
 import { createCommandClassifier } from "./modules/command-classifier/reference.js";
 import { resolveAnchor } from "./anchor.js";
-import { BASH_DECISION_ROOTS } from "./bash-compound-safety-capture-specs.js";
+import {
+  BASH_DECISION_ROOTS,
+  expectedDecisionCaptureIdentifier,
+} from "./bash-compound-safety-capture-specs.js";
 import { assertSignature, chunkAst, selectExcision, type Excision } from "./ast.js";
 import {
   PARSE_ABORTED,
@@ -45,11 +49,26 @@ import {
 } from "./modules/shell-parser/reference.js";
 import { permissionMessage } from "./modules/shared/permission-message.js";
 import { findSafetyCheckReason } from "./modules/shared/safety-check-reason.js";
+import { pluralize } from "./modules/shared/pluralize.js";
 import {
   aggregateSubcommandPermissions,
+  analyzeAstRedirections,
+  analyzeOutputRedirections,
+  bashPermissionMessage,
+  countMatching,
+  directoryRuleSuggestion,
+  formatAllowedDirectories,
+  hasBlockedPathShape,
+  hasUnsafeGlobRoot,
   checkBashDangerousRemoval,
   checkBashPermission,
   checkBashPermissionCore,
+  checkBashPathSafety,
+  hasUnsafeBashGitStructureFromCommand,
+  isClassifierRoutedSafetyCheck,
+  isCriticalPath,
+  isWindowsUncPath,
+  classifierPrefixSuggestion,
   permissionCheckFailureDecision,
   checkModeCommand,
   checkParsedPipeSafety,
@@ -57,9 +76,12 @@ import {
   commandArgv,
   createCommandAnalysis,
   normalizeCommandPrefix,
+  pathContains,
   peelCommandPrefixes,
+  shellExpansionIndex,
   splitOutputRedirections,
   splitSubcommands,
+  uniqueValues,
   validateCommandSemantics,
 } from "./modules/bash-compound-safety/reference.js";
 
@@ -199,6 +221,40 @@ function initializerSource(name: string): string {
     }
   }
   throw new Error(`derived helper constant '${name}' has no initializer`);
+}
+
+function pinnedChunk(name: string): { path: string; source: string; ast: ts.SourceFile } {
+  const entry = [...MODULES.entries()].find(([path]) => basename(path) === name);
+  if (!entry) throw new Error(`pinned chunk '${name}' is missing`);
+  const [path, source] = entry;
+  return { path, source, ast: chunkAst(path, source) };
+}
+
+function pinnedFunctionSource(chunk: string, name: string): string {
+  const { ast } = pinnedChunk(chunk);
+  for (const statement of ast.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name?.text === name) {
+      return statement.getText(ast);
+    }
+  }
+  throw new Error(`pinned ${chunk} function '${name}' is missing`);
+}
+
+function pinnedInitializerSource(chunk: string, name: string): string {
+  const { ast } = pinnedChunk(chunk);
+  for (const statement of ast.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (
+        ts.isIdentifier(declaration.name) &&
+        declaration.name.text === name &&
+        declaration.initializer
+      ) {
+        return declaration.initializer.getText(ast);
+      }
+    }
+  }
+  throw new Error(`pinned ${chunk} initializer '${name}' is missing`);
 }
 
 function functionBody(node: ts.Node): ts.Block {
@@ -609,6 +665,265 @@ const upstreamSplit = buildUpstreamSplit();
 const upstreamArgv = buildUpstreamArgv();
 const upstreamNormalize = buildUpstreamNormalize();
 const upstreamPeel = buildUpstreamPeel();
+
+const PINNED_PATH_CHUNK = "chunk-snzr790g.js";
+const PINNED_CLASSIFIER_CHUNK = "chunk-9e2ns8ty.js";
+const pinnedShellExpansionIndex = evaluateFunction(
+  pinnedFunctionSource(PINNED_PATH_CHUNK, "DU"),
+  "DU",
+  {},
+);
+const pinnedNormalizeWindowsNamespace = evaluateFunction(
+  pinnedFunctionSource(PINNED_PATH_CHUNK, "kt"),
+  "kt",
+  { J: nodePath },
+);
+const pinnedQuestionNamespacePattern = evaluateValue(
+  pinnedInitializerSource(PINNED_PATH_CHUNK, "Nt"),
+);
+const pinnedQuestionNamespacePath = evaluateFunction(
+  pinnedFunctionSource(PINNED_PATH_CHUNK, "Pj"),
+  "Pj",
+  {
+    Nt: pinnedQuestionNamespacePattern,
+    kt: pinnedNormalizeWindowsNamespace,
+  },
+);
+const pinnedNetworkPathPrefix = evaluateFunction(
+  pinnedFunctionSource(PINNED_PATH_CHUNK, "Bn"),
+  "Bn",
+  { Pj: pinnedQuestionNamespacePath },
+);
+const pinnedUncOptionPattern = evaluateValue(
+  pinnedInitializerSource(PINNED_CLASSIFIER_CHUNK, "oi"),
+);
+const pinnedQuestionNamespaceAnywhere = evaluateValue(
+  pinnedInitializerSource(PINNED_CLASSIFIER_CHUNK, "nl"),
+);
+function pinnedUncPath(platform: string): AnyFn {
+  return evaluateFunction(
+    pinnedFunctionSource(PINNED_CLASSIFIER_CHUNK, "S_"),
+    "S_",
+    {
+      D: () => platform,
+      Bn: pinnedNetworkPathPrefix,
+      oi: pinnedUncOptionPattern,
+      nl: pinnedQuestionNamespaceAnywhere,
+    },
+  );
+}
+function pinnedAnalyzeAstRedirections(platform: string): AnyFn {
+  return evaluateFunction(functionSource("Fnn"), "Fnn", {
+    S_: pinnedUncPath(platform),
+    DU: pinnedShellExpansionIndex,
+  });
+}
+const pinnedDecodeRedirectNode = evaluateFunction(
+  functionSource("eW"),
+  "eW",
+  {},
+);
+const pinnedAnalyzeOutputRedirections = evaluateFunction(
+  functionSource("See"),
+  "See",
+  {
+    SS: evaluateValue(initializerSource("SS")),
+    ZE: getParser,
+    eW: pinnedDecodeRedirectNode,
+    Jhe: evaluateValue(initializerSource("Jhe")),
+  },
+);
+
+const pinnedPrefixRuleFactory = evaluateFunction(
+  pinnedFunctionSource(PINNED_CLASSIFIER_CHUNK, "lyt"),
+  "lyt",
+  {},
+);
+const pinnedClassifierPrefixSuggestion = evaluateFunction(
+  functionSource("wrn"),
+  "wrn",
+  { lyt: pinnedPrefixRuleFactory, yi: { name: "Bash" } },
+);
+const pinnedBashRuleMatcher = evaluateFunction(
+  pinnedFunctionSource(PINNED_CLASSIFIER_CHUNK, "o6"),
+  "o6",
+  Object.fromEntries(
+    ["bl", "_l", "yl", "wl"].map((name) => [
+      name,
+      evaluateValue(pinnedInitializerSource(PINNED_CLASSIFIER_CHUNK, name)),
+    ]),
+  ),
+);
+
+function pinnedDecisionRoot(
+  root: (typeof BASH_DECISION_ROOTS)[keyof typeof BASH_DECISION_ROOTS],
+  semanticPorts: Record<string, unknown>,
+): AnyFn {
+  const bindings = Object.fromEntries(
+    root.captures.map((capture) => [
+      expectedDecisionCaptureIdentifier(capture),
+      semanticPorts[capture.as],
+    ]),
+  );
+  return evaluateScoped(functionSource(root.binding), root.binding, bindings);
+}
+
+const PINNED_CIRCUIT_CHUNK = "chunk-af80z9sa.js";
+const PINNED_SMALL_HELPER_CHUNK = "chunk-4vdmpx05.js";
+const PINNED_PATH_POLICY_CHUNK = "chunk-2q90zhqs.js";
+const PINNED_PATH_UTIL_CHUNK = "chunk-vvj94wew.js";
+const PINNED_RULE_CHUNK = "chunk-fk13r7sg.js";
+const pinnedClassifierRoutedSafetyCheck = evaluateFunction(
+  pinnedFunctionSource(PINNED_CIRCUIT_CHUNK, "_Tt"),
+  "_Tt",
+  {
+    cir: evaluateValue(
+      pinnedInitializerSource(PINNED_CIRCUIT_CHUNK, "cir"),
+      { wTt: "manual", sCe: "other" },
+    ),
+  },
+);
+const pinnedCountMatching = evaluateFunction(
+  pinnedFunctionSource(PINNED_SMALL_HELPER_CHUNK, "Q"),
+  "Q",
+  {},
+);
+const pinnedUniqueValues = evaluateFunction(
+  pinnedFunctionSource(PINNED_SMALL_HELPER_CHUNK, "te"),
+  "te",
+  {},
+);
+const pinnedFormatAllowedDirectories = evaluateFunction(
+  pinnedFunctionSource(PINNED_PATH_POLICY_CHUNK, "Rpn"),
+  "Rpn",
+  { y: evaluateValue(pinnedInitializerSource(PINNED_PATH_POLICY_CHUNK, "y")) },
+);
+const pinnedCaseFoldPath = evaluateFunction(
+  pinnedFunctionSource(PINNED_CLASSIFIER_CHUNK, "yr"),
+  "yr",
+  {},
+);
+const pinnedWindowsPathNormalizer = evaluateValue(
+  pinnedInitializerSource(PINNED_PATH_UTIL_CHUNK, "LC"),
+  { _0: (fn: AnyFn) => fn },
+);
+const pinnedHasUnsafeGlobRoot = (platform: string) => evaluateFunction(
+  pinnedFunctionSource(PINNED_PATH_POLICY_CHUNK, "kze"),
+  "kze",
+  { D: () => platform },
+);
+const pinnedCriticalPath = (
+  platform: string,
+  homeDirectory: string,
+  canonicalHomeDirectory: string,
+) => evaluateFunction(
+  pinnedFunctionSource(PINNED_PATH_POLICY_CHUNK, "pwe"),
+  "pwe",
+  {
+    D: () => platform,
+    P: () => homeDirectory,
+    yr: pinnedCaseFoldPath,
+    j: () => canonicalHomeDirectory,
+    I: nodePath.dirname,
+    B: evaluateValue(pinnedInitializerSource(PINNED_PATH_POLICY_CHUNK, "B")),
+    W: evaluateValue(pinnedInitializerSource(PINNED_PATH_POLICY_CHUNK, "W")),
+  },
+);
+const pinnedRelativeForPlatform = (platform: string) => evaluateFunction(
+  pinnedFunctionSource(PINNED_CLASSIFIER_CHUNK, "QTe"),
+  "QTe",
+  {
+    D: () => platform,
+    LC: pinnedWindowsPathNormalizer,
+    Ee: nodePath,
+  },
+);
+const pinnedHasParentTraversal = evaluateFunction(
+  pinnedFunctionSource("chunk-vvj94wew.js", "m4"),
+  "m4",
+  {},
+);
+const pinnedPathContains = (platform: string) => evaluateFunction(
+  pinnedFunctionSource(PINNED_CLASSIFIER_CHUNK, "nf"),
+  "nf",
+  {
+    gt: (path: string) => nodePath.resolve(path).normalize("NFC"),
+    Bn: pinnedNetworkPathPrefix,
+    yr: pinnedCaseFoldPath,
+    QTe: pinnedRelativeForPlatform(platform),
+    m4: pinnedHasParentTraversal,
+    Ee: nodePath,
+  },
+);
+const pinnedNormalizeDirectoryRulePath = (platform: string) => evaluateFunction(
+  pinnedFunctionSource(PINNED_CLASSIFIER_CHUNK, "TKe"),
+  "TKe",
+  {
+    D: () => platform,
+    LC: pinnedWindowsPathNormalizer,
+  },
+);
+const pinnedEscapeRulePattern = evaluateFunction(
+  pinnedFunctionSource(PINNED_RULE_CHUNK, "FTt"),
+  "FTt",
+  {},
+);
+const pinnedDirectoryRuleSuggestion = (platform: string) => evaluateFunction(
+  pinnedFunctionSource(PINNED_CLASSIFIER_CHUNK, "YTe"),
+  "YTe",
+  {
+    TKe: pinnedNormalizeDirectoryRulePath(platform),
+    FTt: pinnedEscapeRulePattern,
+    cl: nodePath,
+    _t: "Read",
+  },
+);
+const pinnedEscapePermissionRule = evaluateFunction(
+  pinnedFunctionSource(PINNED_RULE_CHUNK, "c"),
+  "c",
+  {},
+);
+const pinnedRenderPermissionRule = evaluateFunction(
+  pinnedFunctionSource(PINNED_RULE_CHUNK, "eo"),
+  "eo",
+  { c: pinnedEscapePermissionRule },
+);
+const pinnedRuleSourceTitle = evaluateFunction(
+  functionSource("Cee"),
+  "Cee",
+  {
+    SXe: evaluateFunction(
+      pinnedFunctionSource("chunk-8c6qx8qp.js", "SXe"),
+      "SXe",
+      {},
+    ),
+  },
+);
+const pinnedModeDescriptors = evaluateValue(
+  pinnedInitializerSource(PINNED_CIRCUIT_CHUNK, "r"),
+  { wTt: "manual-symbol", sCe: "automatic-symbol" },
+);
+const pinnedModeDescriptor = evaluateFunction(
+  pinnedFunctionSource(PINNED_CIRCUIT_CHUNK, "s"),
+  "s",
+  { r: pinnedModeDescriptors },
+);
+const pinnedModeTitle = evaluateFunction(
+  pinnedFunctionSource(PINNED_CIRCUIT_CHUNK, "K$"),
+  "K$",
+  { s: pinnedModeDescriptor },
+);
+const pinnedPermissionMessage = evaluateFunction(
+  functionSource("ql"),
+  "ql",
+  {
+    eo: pinnedRenderPermissionRule,
+    Cee: pinnedRuleSourceTitle,
+    See: pinnedAnalyzeOutputRedirections,
+    k: pluralize,
+    K$: pinnedModeTitle,
+  },
+);
 
 interface SidePlan {
   decide(command: string, call: number): Decision;
@@ -2997,6 +3312,370 @@ function pinnedTooComplexDecision(
   ]);
 }
 
+// Every child-root pure helper is compared with the exact pinned declaration
+// over the production call shape before the adapter is allowed to substitute it.
+{
+  for (const reason of [
+    { circuitBreaker: "dangerousRemoval" },
+    { circuitBreaker: "backgroundOperator" },
+    { circuitBreaker: "suspiciousWindowsPath" },
+    { circuitBreaker: "isolatePeerMachines" },
+    { circuitBreaker: "restrictedMode" },
+    { circuitBreaker: "unknown" },
+    {},
+  ]) {
+    eq(
+      `classifier-routed safety metadata ${JSON.stringify(reason)}`,
+      isClassifierRoutedSafetyCheck(reason),
+      pinnedClassifierRoutedSafetyCheck(reason),
+    );
+  }
+  const permissionReasons = [
+    undefined,
+    { type: "classifier", classifier: "command_safety", reason: "model ask" },
+    { type: "hook", hookName: "PreToolUse", reason: "hook refusal" },
+    { type: "hook", hookName: "PreToolUse" },
+    { type: "other", reason: "ordinary ask" },
+    { type: "safetyCheck", reason: "safety ask" },
+    { type: "workingDir", reason: "working-directory ask" },
+    { type: "asyncAgent", reason: "agent ask" },
+    { type: "permissionPromptTool", permissionPromptToolName: "Policy" },
+    { type: "sandboxOverride" },
+    ...["default", "plan", "acceptEdits", "bypassPermissions", "dontAsk", "auto", "unknown"].map(
+      (mode) => ({ type: "mode", mode }),
+    ),
+    ...[
+      "userSettings",
+      "projectSettings",
+      "localSettings",
+      "flagSettings",
+      "policySettings",
+      "cliArg",
+      "command",
+      "session",
+      "toolsNarrowing",
+      "mcpServerPolicy",
+      "unknown",
+    ].flatMap((source) => [
+      {
+        type: "rule",
+        rule: {
+          ruleValue: { toolName: "Bash", ruleContent: "npm (test)\\path" },
+          source,
+        },
+      },
+      {
+        type: "rule",
+        rule: { ruleValue: { toolName: "Bash" }, source },
+      },
+    ]),
+    {
+      type: "subcommandResults",
+      reasons: new Map([
+        ["echo ok > out", { behavior: "ask" }],
+        ["pwd", { behavior: "allow" }],
+      ]),
+    },
+    { type: "unrecognized" },
+  ];
+  for (const reason of permissionReasons) {
+    eq(
+      `owned two-argument ql ${stable(reason)}`,
+      bashPermissionMessage("Bash", reason),
+      pinnedPermissionMessage("Bash", reason),
+    );
+  }
+  eq(
+    "countMatching preserves iterable coercion",
+    countMatching(new Set([0, 1, 2, 3]), (value: number) => value % 2),
+    pinnedCountMatching(new Set([0, 1, 2, 3]), (value: number) => value % 2),
+  );
+  eq(
+    "uniqueValues preserves first-occurrence order",
+    uniqueValues(["b", "a", "b", "c", "a"]),
+    pinnedUniqueValues(["b", "a", "b", "c", "a"]),
+  );
+  for (const path of ["//server/share", "\\\\server\\share", "/??/device", "/local"] ) {
+    eq(
+      `blocked path shape ${JSON.stringify(path)}`,
+      hasBlockedPathShape(path),
+      pinnedNetworkPathPrefix(path),
+    );
+  }
+  for (const platform of ["macos", "linux", "windows"]) {
+    for (const path of ["../root", "root/../child", "root/child", "./../root"]) {
+      eq(
+        `unsafe glob root ${platform} ${path}`,
+        hasUnsafeGlobRoot(path, platform),
+        pinnedHasUnsafeGlobRoot(platform)(path),
+      );
+    }
+  }
+  const criticalOptions = {
+    platform: "macos",
+    homeDirectory: "/Users/pinned",
+    canonicalHomeDirectory: "/System/Volumes/Data/Users/pinned",
+  };
+  const pinnedCritical = pinnedCriticalPath(
+    criticalOptions.platform,
+    criticalOptions.homeDirectory,
+    criticalOptions.canonicalHomeDirectory,
+  );
+  for (const path of [
+    "/",
+    "/etc",
+    "/private/etc",
+    "/Users/pinned",
+    "/System/Volumes/Data/Users/pinned",
+    "/workspace/cache",
+  ]) {
+    eq(
+      `critical path ${path}`,
+      isCriticalPath(path, criticalOptions),
+      pinnedCritical(path),
+    );
+  }
+  for (const scenario of [
+    {
+      platform: "macos",
+      homeDirectory: "/Users/pinned",
+      canonicalHomeDirectory: "/System/Volumes/Data/Users/pinned",
+      paths: ["*", "cache/*", "/", "/etc", "/private/etc", "/Users/pinned/", "/System/Volumes/Data/Users/pinned", "/workspace/cache"],
+    },
+    {
+      platform: "linux",
+      homeDirectory: "/home/pinned",
+      canonicalHomeDirectory: "/home/pinned",
+      paths: ["*", "cache/*", "/", "/etc", "/private/etc", "/home/pinned", "/workspace/cache"],
+    },
+    {
+      platform: "windows",
+      homeDirectory: "C:/Users/Pinned",
+      canonicalHomeDirectory: "C:/Users/Pinned",
+      paths: ["*", "cache/*", "C:", "C:/", "C:/Windows", "C:/Users/Pinned", "C:\\Users\\Pinned", "C:/workspace/cache"],
+    },
+  ]) {
+    const oracle = pinnedCriticalPath(
+      scenario.platform,
+      scenario.homeDirectory,
+      scenario.canonicalHomeDirectory,
+    );
+    for (const path of scenario.paths) {
+      eq(
+        `critical path partition ${scenario.platform} ${JSON.stringify(path)}`,
+        isCriticalPath(path, scenario),
+        oracle(path),
+      );
+    }
+  }
+  const pinnedContains = pinnedPathContains("macos");
+  for (const [candidate, boundary] of [
+    ["/repo/sub", "/repo"],
+    ["/repo", "/repo/sub"],
+    ["/private/tmp/project", "/tmp"],
+    ["/repo", "/repo"],
+  ]) {
+    eq(
+      `path containment ${candidate} within ${boundary}`,
+      pathContains(candidate, boundary),
+      pinnedContains(candidate, boundary),
+    );
+  }
+  for (const directories of [
+    ["/a"],
+    ["/a", "/b", "/c", "/d", "/e"],
+    ["/a", "/b", "/c", "/d", "/e", "/f"],
+  ]) {
+    eq(
+      `allowed-directory rendering ${directories.length}`,
+      formatAllowedDirectories(directories),
+      pinnedFormatAllowedDirectories(directories),
+    );
+  }
+  for (const directory of ["/", "/workspace/path", "relative/*", "space "]) {
+    eq(
+      `directory rule suggestion ${JSON.stringify(directory)}`,
+      directoryRuleSuggestion(directory, "session", "macos"),
+      pinnedDirectoryRuleSuggestion("macos")(directory, "session"),
+    );
+  }
+  for (const directory of ["C:\\Users\\Pinned", "\\\\server\\share", "/c/Users/pinned", "/"]) {
+    eq(
+      `Windows directory rule suggestion ${JSON.stringify(directory)}`,
+      directoryRuleSuggestion(directory, "projectSettings", "windows"),
+      pinnedDirectoryRuleSuggestion("windows")(directory, "projectSettings"),
+    );
+  }
+  for (const value of ["plain", "a*b", "a?b", "a[bc]", "a[b"]) {
+    eq(
+      `shell expansion index ${value}`,
+      shellExpansionIndex(value),
+      pinnedShellExpansionIndex(value),
+    );
+  }
+  for (const platform of ["macos", "linux", "windows"]) {
+    for (const value of [
+      "//server/share",
+      "\\\\server\\share",
+      "\\server@ssl\\share",
+      "//server@443/share",
+      "\\\\?\\UNC\\server\\share",
+      "\\\\.\\pipe\\name",
+      "/\\server/share",
+      "\\/server/share",
+      "@SSL@443",
+      "@443@SSL",
+      "DavWWWRoot/path",
+      "\\\\192.168.1.2\\share",
+      "//[fe80::1]/share",
+      "--target=//server/share",
+      "-abc//server/share",
+      "x=--target=//server/share",
+      "http://server/share",
+      "plain/path",
+    ]) {
+      eq(
+        `full UNC grammar ${platform} ${JSON.stringify(value)}`,
+        isWindowsUncPath(value, true, platform),
+        pinnedUncPath(platform)(value, true),
+      );
+    }
+  }
+  mustDiffer(
+    "directory rule helper catches a wrong tool-name transcription",
+    pinnedDirectoryRuleSuggestion("macos")("relative", "session"),
+    {
+      ...pinnedDirectoryRuleSuggestion("macos")("relative", "session"),
+      rules: [{ toolName: "Bash", ruleContent: "relative/**" }],
+    },
+  );
+}
+
+// Fnn must preserve S_'s platform gate and complete UNC grammar. The oracle
+// below is the real pinned S_ closure with only D() controlled per partition.
+{
+  const redirects = [{ target: "//tmp/reforge.out", op: ">" }];
+  for (const platform of ["macos", "linux", "windows"]) {
+    eq(
+      `AST UNC classification matches pinned S_ on ${platform}`,
+      analyzeAstRedirections(redirects, platform),
+      pinnedAnalyzeAstRedirections(platform)(redirects),
+    );
+  }
+  const input = { command: "echo ok > //tmp/reforge.out" };
+  const pass = { behavior: "passthrough", message: "path accepted" };
+  const basePorts = {
+    expandHomePath: (path: string) => path,
+    resolvePath: (cwd: string, path: string) => `${cwd}/${path}`,
+    isAbsolutePath: () => true,
+    resolvePathVariants: (path: string) => [path],
+    matchPathRule: () => null,
+    checkSuspiciousPath: () => ({ safe: true }),
+    checkOutputRedirections: () => pass,
+    checkAstPathCommand: () => pass,
+    splitSubcommands: () => [input.command],
+    checkTextPathCommand: () => pass,
+  };
+  const pinned = pinnedDecisionRoot(
+    BASH_DECISION_ROOTS.checkBashPathSafety,
+    {
+      ...basePorts,
+      analyzeAstRedirections: pinnedAnalyzeAstRedirections("macos"),
+      analyzeOutputRedirections: unreachable("AST redirect fallback"),
+    },
+  )(input, "/cwd", { restricted: false }, false, redirects, []);
+  const owned = checkBashPathSafety(
+    input,
+    "/cwd",
+    { restricted: false },
+    false,
+    redirects,
+    [],
+    {
+      ...basePorts,
+      analyzeAstRedirections: (values: unknown[]) =>
+        analyzeAstRedirections(values, "macos"),
+      analyzeOutputRedirections: unreachable("AST redirect fallback"),
+    },
+  );
+  eq("macOS // redirect does not emit a Windows SMB warning", owned, pinned);
+  eq("pinned macOS // redirect remains passthrough", pinned.behavior, "passthrough");
+  mustDiffer(
+    "pinned S_ platform gate distinguishes macOS from Windows",
+    pinnedAnalyzeAstRedirections("macos")(redirects),
+    pinnedAnalyzeAstRedirections("windows")(redirects),
+  );
+}
+
+// Fnn must use the pinned DU glob predicate so edit-deny rules run before
+// downstream path-policy asks for AST redirect targets.
+{
+  const input = { command: "echo ok > *.txt" };
+  const redirects = [{ target: "*.txt", op: ">" }];
+  const denyRule = { toolName: "Bash", ruleContent: "*.txt" };
+  const basePorts = {
+    expandHomePath: (path: string) => path,
+    resolvePath: (cwd: string, path: string) => `${cwd}/${path}`,
+    isAbsolutePath: () => false,
+    resolvePathVariants: (path: string) => [path],
+    matchPathRule: (
+      _path: string,
+      _context: unknown,
+      effect: string,
+      behavior: string,
+    ) => effect === "edit" && behavior === "deny" ? denyRule : null,
+    checkSuspiciousPath: () => ({
+      safe: false,
+      message: "glob path requires approval",
+      classifierApprovable: false,
+      circuitBreaker: "path",
+    }),
+    checkOutputRedirections: () => ({
+      behavior: "ask",
+      message: "downstream glob policy asks",
+      decisionReason: { type: "other", reason: "downstream glob ask" },
+    }),
+    checkAstPathCommand: () => ({ behavior: "passthrough", message: "ast path" }),
+    splitSubcommands: () => [input.command],
+    checkTextPathCommand: () => ({ behavior: "passthrough", message: "text path" }),
+  };
+  const pinnedAnalyzer = pinnedAnalyzeAstRedirections("macos");
+  const pinnedAnalysis = pinnedAnalyzer(redirects);
+  const ownedAnalysis = analyzeAstRedirections(redirects);
+  eq(
+    "pinned DU identifies an AST redirect glob",
+    pinnedShellExpansionIndex(redirects[0].target),
+    0,
+  );
+  eq(
+    "owned AST redirect glob analysis matches pinned Fnn",
+    ownedAnalysis,
+    pinnedAnalysis,
+  );
+  const pinnedPorts = { ...basePorts, analyzeAstRedirections: pinnedAnalyzer };
+  const ownedPorts = { ...basePorts, analyzeAstRedirections, analyzeOutputRedirections: unreachable("AST redirect fallback") };
+  const pinned = pinnedDecisionRoot(
+    BASH_DECISION_ROOTS.checkBashPathSafety,
+    pinnedPorts,
+  )(input, "/cwd", { restricted: false }, false, redirects, []);
+  const owned = checkBashPathSafety(
+    input,
+    "/cwd",
+    { restricted: false },
+    false,
+    redirects,
+    [],
+    ownedPorts,
+  );
+  eq("AST redirect glob preserves edit-deny precedence", owned, pinned);
+  eq("pinned AST redirect glob decision is deny", pinned.behavior, "deny");
+  mustDiffer(
+    "AST redirect glob deny differs from downstream ask",
+    pinned,
+    basePorts.checkOutputRedirections(),
+  );
+}
+
 // A proven leading cd is omitted from path validation at the resolved cwd.
 {
   const fixture = SAFETY_REGRESSION_CASES.resolvedLeadingCd;
@@ -3045,19 +3724,98 @@ function pinnedTooComplexDecision(
   eq("review resolved-cd excludes leading analysis", ownedPaths, [[analyses[1]]]);
 }
 
-// C8e uses wrn for classifier prefixes, producing a wildcard rule.
+// See must keep a quoted literal closing bracket. The pinned parser output
+// then flows through the text Git-safety root, where the retained target is the
+// only signal that the command writes beneath Git's hooks path.
+{
+  const command = 'echo ok > "hooks/file]"; git status';
+  const pinnedOutput = pinnedAnalyzeOutputRedirections(command);
+  const ownedOutput = analyzeOutputRedirections(command);
+  eq(
+    "quoted closing-bracket redirect matches pinned See",
+    ownedOutput,
+    pinnedOutput,
+  );
+  eq(
+    "pinned See retains the literal hooks redirect",
+    pinnedOutput.redirections,
+    [{ target: "hooks/file]", operator: ">" }],
+  );
+  const createsHooksPath = (path: string) => path === "hooks/file]";
+  const commonPorts = {
+    pathArgumentsFromCommand: () => [],
+    createsGitInternalPath: createsHooksPath,
+  };
+  const pinned = pinnedDecisionRoot(
+    BASH_DECISION_ROOTS.hasUnsafeBashGitStructureFromCommand,
+    {
+      ...commonPorts,
+      splitSubcommands: upstreamSplit,
+      peelCommandPrefixes: upstreamPeel,
+      commandArgv: upstreamArgv,
+      analyzeOutputRedirections: pinnedAnalyzeOutputRedirections,
+    },
+  )(command);
+  const owned = hasUnsafeBashGitStructureFromCommand(command, {
+    ...commonPorts,
+    splitSubcommands,
+    peelCommandPrefixes,
+    commandArgv,
+    analyzeOutputRedirections,
+  });
+  eq("quoted hooks redirect remains text-Git unsafe", owned, pinned);
+  eq("pinned text-Git safety sees the retained redirect", pinned, true);
+  mustDiffer(
+    "text-Git safety depends on retaining the closing-bracket redirect",
+    pinned,
+    false,
+  );
+}
+
+// C8e uses the actual pinned wrn -> lyt formatter for classifier prefixes.
 {
   const fixture = SAFETY_REGRESSION_CASES.classifierPrefix;
-  const prefixSuggestion = [{
-    type: "addRules",
-    rules: [{ toolName: "Bash", ruleContent: `${fixture.prefix} *` }],
-    behavior: "allow",
-    destination: "localSettings",
-  }];
+  const prefixSuggestion = pinnedClassifierPrefixSuggestion(fixture.prefix);
+  const ownedPrefixSuggestion = classifierPrefixSuggestion(fixture.prefix);
+  eq(
+    "classifier prefix suggestion matches pinned wrn and lyt",
+    ownedPrefixSuggestion,
+    prefixSuggestion,
+  );
+  eq(
+    "npm test classifier prefix emits a wildcard rule",
+    ownedPrefixSuggestion[0]?.rules[0]?.ruleContent,
+    "npm test *",
+  );
+  eq(
+    "classifier prefix rule authorizes additional arguments under pinned matcher",
+    pinnedBashRuleMatcher(
+      ownedPrefixSuggestion[0]?.rules[0]?.ruleContent,
+      fixture.additionalCommand,
+      false,
+      true,
+    ),
+    true,
+  );
+  mustDiffer(
+    "classifier prefix wildcard changes additional-argument authorization",
+    pinnedBashRuleMatcher(
+      `${fixture.prefix} *`,
+      fixture.additionalCommand,
+      false,
+      true,
+    ),
+    pinnedBashRuleMatcher(
+      fixture.prefix,
+      fixture.additionalCommand,
+      false,
+      true,
+    ),
+  );
   const pinnedFinal = evaluateScoped(functionSource("C8e"), "C8e", {
     aQ: () => ({ behavior: "passthrough", message: "base" }),
     j8e: () => ({ behavior: "passthrough", message: "direct" }),
-    wrn: () => prefixSuggestion,
+    wrn: pinnedClassifierPrefixSuggestion,
     w3e: unreachable("whole-command suggestion after classifier prefix"),
   });
   const expected = await pinnedFinal(
@@ -3081,7 +3839,7 @@ function pinnedTooComplexDecision(
       }),
       classifyCommand: () => ({
         kind: "simple",
-        commands: [{ text: fixture.input.command, argv: ["custom", "something"], envVars: [], redirects: [] }],
+        commands: [{ text: fixture.input.command, argv: fixture.input.command.split(" "), envVars: [], redirects: [] }],
         bareAssignmentNames: [],
       }),
       classifyReadOnly: () => ({ behavior: "passthrough" }),
@@ -3601,8 +4359,8 @@ function pinnedTooComplexDecision(
 if (checks < 64) {
   failures.push(`NON-VACUOUS FLOOR: expected at least 64 checks, ran ${checks}`);
 }
-if (controls !== 57) {
-  failures.push(`CONTROL FLOOR: expected 57 named controls, ran ${controls}`);
+if (controls !== 62) {
+  failures.push(`CONTROL FLOOR: expected 62 named controls, ran ${controls}`);
 }
 
 if (failures.length > 0) {

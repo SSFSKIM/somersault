@@ -338,10 +338,6 @@ export const AGGREGATE_CASES = {
     input: { command: "rm x; rm x" },
     subcommand: "rm x",
   },
-  emptyCd: {
-    input: { command: "cd" },
-    homeDirectory: "/pinned/home",
-  },
   direct: {
     input: { command: "alpha | beta", description: "direct aggregate" },
     normalized: ["alpha", "beta"],
@@ -589,8 +585,9 @@ export const SAFETY_REGRESSION_CASES = {
     permissionContext: { mode: "default" },
   },
   classifierPrefix: {
-    input: { command: "custom something" },
-    prefix: "custom",
+    input: { command: "npm test -- --watch" },
+    prefix: "npm test",
+    additionalCommand: "npm test -- --watch",
     permissionContext: { mode: "default" },
   },
 } as const;
