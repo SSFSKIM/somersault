@@ -4392,7 +4392,6 @@ export const EXCLUSIONS: Exclusion[] = [
     "validateRedirectShape@5:T",
     "validateRedirectShape@5:F",
     "validateRedirectShape@7:T",
-    "validateRedirectShape@13:T",
     "validateRedirectShape@17:T",
     "findInvalidRedirect@3:F",
     "quoteShellArgument@2:T",
@@ -4463,7 +4462,6 @@ export const EXCLUSIONS: Exclusion[] = [
     "analyzeNode@82:F",
     "analyzeNode@84:T",
     "analyzeNode@86:T",
-    "analyzeNode@95:T",
     "analyzeNode@96:T",
     "analyzeNode@97:T",
     "analyzeNode@98:F",
@@ -4579,7 +4577,6 @@ export const EXCLUSIONS: Exclusion[] = [
     "analyzeRedirectedStatement@17:F",
     "analyzeRedirectedStatement@18:T",
     "analyzeRedirectedStatement@19:T",
-    "analyzeRedirectedStatement@20:T",
     "analyzeRedirectedStatement@21:T",
     "analyzeRedirectedStatement@21:F",
     "analyzeRedirectedStatement@23:T",
@@ -4601,9 +4598,7 @@ export const EXCLUSIONS: Exclusion[] = [
     "analyzeFileRedirect@21:T",
     "analyzeFileRedirect@22:T",
     "analyzeFileRedirect@23:T",
-    "analyzeFileRedirect@25:T",
     "analyzeFileRedirect@26:T",
-    "analyzeFileRedirect@26:F",
     "analyzeFileRedirect@31:T",
     "analyzeFileRedirect@32:T",
     "analyzeFileRedirect@33:T",
@@ -4777,25 +4772,15 @@ export const EXCLUSIONS: Exclusion[] = [
     "These outcomes belong to builtin/wrapper option grammars, awk danger forms, sensitive-variable mutations, or branch-state invalidation combinations not selected by the shared command population. The pinned-byte oracle grades every side-effect path that population reaches, including both scrub states, but does not execute these outcomes; keeping them listed as exclusions records that boundary without widening only the measurement driver.",
     "recordVariableWrite@0:F",
     "recordVariableWrite@1:F",
-    "trackCommandSideEffects@2:T",
     "trackCommandSideEffects@3:T",
-    "trackCommandSideEffects@3:F",
     "trackCommandSideEffects@4:T",
-    "trackCommandSideEffects@4:F",
     "trackCommandSideEffects@5:T",
-    "trackCommandSideEffects@5:F",
     "trackCommandSideEffects@6:T",
-    "trackCommandSideEffects@6:F",
     "trackCommandSideEffects@7:T",
     "trackCommandSideEffects@7:F",
     "trackCommandSideEffects@8:T",
     "trackCommandSideEffects@8:F",
-    "trackCommandSideEffects@9:T",
-    "trackCommandSideEffects@9:F",
-    "trackCommandSideEffects@10:T",
-    "trackCommandSideEffects@10:F",
     "trackCommandSideEffects@11:T",
-    "trackCommandSideEffects@11:F",
     "trackCommandSideEffects@13:T",
     "trackCommandSideEffects@14:T",
     "trackCommandSideEffects@19:T",
@@ -4834,12 +4819,7 @@ export const EXCLUSIONS: Exclusion[] = [
     "trackCommandSideEffects@40:T",
     "trackCommandSideEffects@40:F",
     "trackCommandSideEffects@41:T",
-    "trackCommandSideEffects@43:F",
-    "trackCommandSideEffects@44:F",
-    "trackCommandSideEffects@45:T",
-    "trackCommandSideEffects@46:T",
     "trackCommandSideEffects@46:F",
-    "trackCommandSideEffects@47:T",
     "trackCommandSideEffects@47:F",
     "trackCommandSideEffects@48:T",
     "trackCommandSideEffects@48:F",
@@ -5153,9 +5133,6 @@ export const EXCLUSIONS: Exclusion[] = [
     "assignmentRequiresArithmeticEvaluation@4:F",
     "assignmentRequiresArithmeticEvaluation@5:T",
     "assignmentRequiresArithmeticEvaluation@5:F",
-    "affectsCommandExecution@0:T",
-    "affectsCommandExecution@1:T",
-    "affectsCommandExecution@2:T",
     "isSensitiveShellVariable@0:T",
     "isSensitiveShellVariable@1:T",
     "isSensitiveShellVariable@2:T",
@@ -5167,7 +5144,7 @@ export const EXCLUSIONS: Exclusion[] = [
   // 1,286-check pinned-byte input population is listed below; the first two
   // families are caller-impossible, and the remaining families name the exact
   // command forms a future parity-corpus expansion would need.
-  // Structurally unreachable with real argv arrays (4).
+  // Structurally unreachable with real argv arrays.
   ...bashSafetyTables(
     "These four outcomes cannot occur for the real array/string inputs. The git tag and git branch combined-short-option tests run only inside `arg.startsWith(\"-\")`, so their nested `arg[0] === \"-\"` left side cannot be false. The GitHub slash match runs only after URL and `@` values returned and a no-slash value continued, so `value.match(/\\//g)` cannot be null there. The `cd` arm requires `positional.length === 0` while the last argument is `\"-\"`, but `positionalArguments` always includes a literal `\"-\"` as a positional operand. A stateful Proxy could manufacture the last combination; the parser caller supplies ordinary arrays.",
     "bash-safety-tables@31:F",
@@ -5176,7 +5153,7 @@ export const EXCLUSIONS: Exclusion[] = [
     "createFileArgumentExtractors@1:T",
   ),
 
-  // Nullish argv slots are outside the caller contract (11).
+  // Nullish argv slots are outside the caller contract.
   ...bashSafetyTables(
     "`commandArgv` constructs `string[]` values from parsed shell nodes, and every shared parity case obeys that boundary. A real caller therefore cannot supply null or undefined as an argv member. These are defensive direct-call arms, not command-domain arms; adding malformed values only to the coverage driver would create evidence that pinned-byte parity did not grade.",
     "positionalArguments@6:T",
@@ -5192,7 +5169,7 @@ export const EXCLUSIONS: Exclusion[] = [
     "bash-safety-tables@55:T",
   ),
 
-  // Empty-string argv slots are absent from the shared parity corpus (6).
+  // Empty-string argv slots are absent from the shared parity corpus.
   ...bashSafetyTables(
     "The four shared invocation families contain no empty-string array member. Unlike nullish members, an empty string is a valid shell argument, so this is a measured corpus boundary rather than a structural-unreachability claim. Covering these outcomes requires adding the same empty-string cases to pinned-byte parity; the driver cannot add them privately.",
     "bash-safety-tables@11:T",
@@ -5203,7 +5180,7 @@ export const EXCLUSIONS: Exclusion[] = [
     "createFileArgumentExtractors@44:T",
   ),
 
-  // Git formatting value forms are absent (11).
+  // Git formatting value forms are absent.
   ...bashSafetyTables(
     "The shared path cases contain `--format=%G?`, which exits on the unsafe-format regex, and `--pretty=custom`, which takes the named-format arm. Expansion placeholders occur only as standalone arguments. No case supplies a separate `--format`/`--pretty`/`--sort` value, an empty or percent-bearing value that reaches `isNamedGitPrettyFormat`, a `format:`/`tformat:` value, a standard safe pretty name, a sort value, or expansion/signature text inside a formatting value. Those exact omissions account for these helper outcomes.",
     "isNamedGitPrettyFormat@0:T",
@@ -5215,11 +5192,10 @@ export const EXCLUSIONS: Exclusion[] = [
     "gitArgumentsAreDangerous@3:T",
     "gitArgumentsAreDangerous@4:T",
     "gitArgumentsAreDangerous@7:T",
-    "gitArgumentsAreDangerous@8:F",
     "gitArgumentsAreDangerous@9:F",
   ),
 
-  // Git subcommand-specific modes are absent (14).
+  // Git subcommand-specific modes are absent.
   ...bashSafetyTables(
     "Every Bnn callback receives the same generic path-case argv. That set has no mutating reflog word, standalone `--sort` for `git ls-remote`, `-n` for `git remote show`, `-v`/`--verbose` for `git remote`, or git tag/branch list and merge-filter forms (`--list`, `-l`, a combined short flag containing `l`, a value-taking filter flag, `--merged`, or `--no-merged`). The generic `-abc` case deliberately does not select list mode. These are reachable command forms, but not inputs in the 1,286-check parity contract.",
     "bash-safety-tables@4:T",
@@ -5238,19 +5214,19 @@ export const EXCLUSIONS: Exclusion[] = [
     "bash-safety-tables@52:F",
   ),
 
-  // GitHub empty attached value is absent (1).
+  // GitHub empty attached value is absent.
   ...bashSafetyTables(
     "No shared path case supplies an option in the form `--flag=` with an empty value. The raw empty-string case is accounted for separately; this outcome is the post-`=` empty-value guard.",
     "githubArgumentsAreDangerous@4:T",
   ),
 
-  // Docker bare connection flag is absent (1).
+  // Docker bare connection flag is absent.
   ...bashSafetyTables(
     "The Docker-specific shared case is `--host=tcp://example.test`, which reaches the equals/starts-with arm, and the generic compact case is `-abc`. No case supplies a bare connection option such as `--host`, so the exact-equality OR arm remains unexecuted.",
     "dockerArgumentsAreDangerous@2:T",
   ),
 
-  // man search modes are absent (7).
+  // man search modes are absent.
   ...bashSafetyTables(
     "The generic path cases contain neither `-k`/`-f`/`--apropos`/`--whatis` nor the value-taking `-S`/`-s` options. They therefore do not enter compact-search mode, ordinary search mode, its value skip, or the path/flag decisions that depend on those modes.",
     "createSafeCommandTable@5:T",
@@ -5262,7 +5238,7 @@ export const EXCLUSIONS: Exclusion[] = [
     "createSafeCommandTable@19:F",
   ),
 
-  // lsof alternate host forms are absent (7).
+  // lsof alternate host forms are absent.
   ...bashSafetyTables(
     "The sole lsof-shaped case is `-iTCP@host`; it covers an attached alphabetic host. There is no `+m` form, attached numeric host, or detached `-i` followed by an alphabetic host, numeric host, or no next argument. Those omitted forms account for both sides of the detached-host test and the nullish look-ahead.",
     "createSafeCommandTable@33:T",
@@ -5274,7 +5250,7 @@ export const EXCLUSIONS: Exclusion[] = [
     "createSafeCommandTable@40:F",
   ),
 
-  // tput unsafe option forms are absent (3).
+  // tput unsafe option forms are absent.
   ...bashSafetyTables(
     "The only tput-shaped shared operand is `reset`. No case supplies `-S`, a compact short-option cluster containing `S`, or the value-taking `-T` flag, so those three option arms are outside the parity population.",
     "createSafeCommandTable@45:T",
@@ -5282,7 +5258,7 @@ export const EXCLUSIONS: Exclusion[] = [
     "createSafeCommandTable@49:T",
   ),
 
-  // ss filter grammar forms are absent (6).
+  // ss filter grammar forms are absent.
   ...bashSafetyTables(
     "The shared path set has no ss value-taking option (`-f`, `--family`, `-A`, `--query`, `--socket`), no filter keyword that causes an operand skip, and no IPv4/IPv6-like token that selects the hexadecimal letter/dot/colon disambiguation. The generic operands exercise the complementary paths only.",
     "createSafeCommandTable@56:T",
@@ -5293,7 +5269,7 @@ export const EXCLUSIONS: Exclusion[] = [
     "createSafeCommandTable@63:F",
   ),
 
-  // test malformed and unsafe operand forms are absent (12).
+  // test malformed and unsafe operand forms are absent.
   ...bashSafetyTables(
     "The one test-shaped case is the valid numeric expression `1 -eq 2`. There is no unsafe unary/logical/bracket token (`-v`, `-R`, `-a`, `-o`, or `[`), no missing or non-integer operand around a numeric operator, and no `-t` descriptor in valid, invalid, or missing form. The listed outcomes are exactly those omitted modes.",
     "createSafeCommandTable@64:T",
@@ -5301,7 +5277,6 @@ export const EXCLUSIONS: Exclusion[] = [
     "createSafeCommandTable@66:T",
     "createSafeCommandTable@67:T",
     "createSafeCommandTable@68:T",
-    "createSafeCommandTable@72:T",
     "createSafeCommandTable@73:F",
     "createSafeCommandTable@74:T",
     "createSafeCommandTable@75:T",
@@ -5310,14 +5285,14 @@ export const EXCLUSIONS: Exclusion[] = [
     "createSafeCommandTable@76:F",
   ),
 
-  // Literal dash positional forms are absent (2).
+  // Literal dash positional forms are absent.
   ...bashSafetyTables(
     "The file corpus has `--` followed by `-file`, but no literal `\"-\"` in the pre-operand position. Consequently neither the generic positional helper nor the flag-value-skipping helper takes its dedicated lone-dash arm.",
     "positionalArguments@5:T",
     "extractorSkippingFlagValues@7:F",
   ),
 
-  // Attached file flags after an operand are absent (5).
+  // Attached file flags after an operand are absent.
   ...bashSafetyTables(
     "`attachedFlagValue` is reached only after an operand from `searchArguments` or the awk extractor. No shared case puts a recognized/unrecognized equals-form file option or compact `-fFILE` option there. The `-fpatterns` case is first, before any operand, and therefore never calls this helper.",
     "attachedFlagValue@1:T",
@@ -5327,7 +5302,7 @@ export const EXCLUSIONS: Exclusion[] = [
     "attachedFlagValue@5:T",
   ),
 
-  // Search equals/file forms are absent (4).
+  // Search equals/file forms are absent.
   ...bashSafetyTables(
     "The grep/rg cases use recursive mode or a first-position compact `-fpatterns`; they provide no recognized equals-form pattern/file flag, no empty or missing file value, and no attached file flag after the first operand. Those are the four unexecuted `searchArguments` outcomes.",
     "searchArguments@10:T",
@@ -5336,14 +5311,14 @@ export const EXCLUSIONS: Exclusion[] = [
     "searchArguments@20:T",
   ),
 
-  // find prefix and missing-reference forms are absent (2).
+  // find prefix and missing-reference forms are absent.
   ...bashSafetyTables(
     "The find case is `src -newer stamp -name *.ts`: it has a present reference operand and no traversal prefix. Thus it cannot take the `-H`/`-L`/`-P` prefix arm or the falsy/missing reference-path arm.",
     "createFileArgumentExtractors@8:T",
     "createFileArgumentExtractors@11:F",
   ),
 
-  // awk alternate flag forms are absent (7).
+  // awk alternate flag forms are absent.
   ...bashSafetyTables(
     "The awk cases are `-e {print} input` and `-f program.awk input`. No case uses an equals-form option, a non-program value option such as `-F`/`-v`, a missing program-file operand, or an attached program-file flag after the first operand. The seven outcomes are those alternate forms.",
     "createFileArgumentExtractors@24:T",
@@ -5355,20 +5330,20 @@ export const EXCLUSIONS: Exclusion[] = [
     "createFileArgumentExtractors@34:T",
   ),
 
-  // tr delete mode is absent (2).
+  // tr delete mode is absent.
   ...bashSafetyTables(
     "None of the shared file cases supplies `-d`, `--delete`, or a short-option cluster containing `d`; all invocations therefore take the non-delete slice count.",
     "createFileArgumentExtractors@36:T",
     "createFileArgumentExtractors@37:T",
   ),
 
-  // sed missing file operand is absent (1).
+  // sed missing file operand is absent.
   ...bashSafetyTables(
     "The sed extractor case uses a complete `-e` expression. No case supplies `-f`/`--file` with an empty or missing following file, which is the only way to make this `if (file)` outcome false.",
     "createFileArgumentExtractors@53:F",
   ),
 
-  // jq file-input option forms are absent (6).
+  // jq file-input option forms are absent.
   ...bashSafetyTables(
     "The jq case is `--arg name value . input.json`. It has no equals-form option, `-f`/`--from-file` form with present or missing input, or `--slurpfile`/`--rawfile` form with present or missing file. Those omitted file-input modes account for all six outcomes.",
     "createFileArgumentExtractors@65:T",
@@ -5379,7 +5354,7 @@ export const EXCLUSIONS: Exclusion[] = [
     "createFileArgumentExtractors@71:F",
   ),
 
-  // git diff without --no-index is absent (1).
+  // git diff without --no-index is absent.
   ...bashSafetyTables(
     "The only file-extractor case whose first token is `diff` also contains `--no-index`; every other case skips the outer `args[0] === \"diff\"` arm. The nested false outcome therefore needs a shared `git diff` case without `--no-index` and cannot be credited from a driver-only input.",
     "createFileArgumentExtractors@77:F",
