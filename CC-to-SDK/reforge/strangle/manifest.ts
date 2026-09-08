@@ -345,6 +345,43 @@ export const SPLICES: Splice[] = [
     ],
     coverage: ["perm-rule-deny"],
   },
+  // `_8e` composes the owned parser, KTe and table population. Six values
+  // remain effectful graph ports: the spawn-environment snapshot, git/cwd
+  // inspection, sandbox state, current/original cwd, and platform.
+  {
+    name: "bash-read-only",
+    target: "free-function",
+    signature: { params: 2, ancestry: ["SourceFile"] },
+    anchor: "Command too long for read-only analysis",
+    fn: "classifyReadOnlyBash",
+    captures: [
+      { as: "maxCommandLength", kind: "primitive", owned: true, derive: pick("bash-read-only", "maxCommandLength", new RegExp(`if\\(${ID}\\.length>(${ID})\\)return\\{behavior:"passthrough",message:"Command too long`)) },
+      { as: "getParser", kind: "pure-helper", owned: true, derive: pick("bash-read-only", "getParser", new RegExp(`let ${ID}=(${ID})\\(\\)\\.parse\\(${ID}\\),`)) },
+      { as: "classifyCommand", kind: "pure-helper", owned: true, derive: pick("bash-read-only", "classifyCommand", new RegExp(`=${ID}\\?(${ID})\\(${ID},${ID}\\):\\{kind:"simple"`)) },
+      { as: "containsSubshell", kind: "pure-helper", owned: true, derive: pick("bash-read-only", "containsSubshell", new RegExp(`if\\(${ID}&&(${ID})\\(${ID}\\)\\)return\\{behavior:"passthrough",message:"Not a simple read-only command: contains a subshell"`)) },
+      { as: "containsBackgroundOperator", kind: "pure-helper", owned: true, derive: pick("bash-read-only", "containsBackgroundOperator", new RegExp(`if\\(${ID}&&(${ID})\\(${ID}\\)\\)return\\{behavior:"passthrough",message:"Not a simple read-only command: [^"]*defers execution`)) },
+      { as: "getSpawnEnvironmentKeys", kind: "effectful-port", derive: pick("bash-read-only", "getSpawnEnvironmentKeys", new RegExp(`let ${ID}=(${ID})\\(\\);if\\(${ID}\\.bareAssignmentNames`)) },
+      { as: "isAllowlistedEnvironmentVariable", kind: "pure-helper", owned: true, derive: pick("bash-read-only", "isAllowlistedEnvironmentVariable", new RegExp(`bareAssignmentNames\\.some\\(\\(${ID}\\)=>!(${ID})\\(${ID}\\)&&`)) },
+      { as: "shellExpansionKind", kind: "pure-helper", owned: true, derive: pick("bash-read-only", "shellExpansionKind", new RegExp(`let ${ID}=(${ID})\\(${ID}\\);if\\(${ID}==="variable"`)) },
+      { as: "containsWindowsUncPath", kind: "pure-helper", owned: true, derive: pick("bash-read-only", "containsWindowsUncPath", new RegExp(`if\\((${ID})\\(${ID}\\)\\)return\\{behavior:"ask",message:"Command contains Windows UNC`)) },
+      { as: "isGitCommand", kind: "pure-helper", owned: true, derive: pick("bash-read-only", "isGitCommand", new RegExp(`let ${ID}=${ID}\\.commands\\.some\\(\\(${ID}\\)=>(${ID})\\(${ID}\\.text\\)\\);`)) },
+      { as: "isCdCommand", kind: "pure-helper", owned: true, derive: pick("bash-read-only", "isCdCommand", new RegExp(`if\\(\\(${ID}\\|\\|${ID}\\.commands\\.some\\(\\(${ID}\\)=>(${ID})\\(${ID}\\.text\\)\\)\\)&&`)) },
+      { as: "inspectGitWorkingDirectory", kind: "effectful-port", derive: pick("bash-read-only", "inspectGitWorkingDirectory", new RegExp(`let ${ID}=${ID}&&(${ID})\\(\\);if\\(${ID}\\)return`)) },
+      { as: "createsGitInternalPath", kind: "pure-helper", owned: true, derive: pick("bash-read-only", "createsGitInternalPath", new RegExp(`if\\(${ID}&&(${ID})\\(${ID}\\)\\)return\\{behavior:"passthrough",message:"Compound commands that create git internal files`)) },
+      { as: "sandbox", kind: "effectful-port", derive: pick("bash-read-only", "sandbox", new RegExp(`if\\(${ID}&&(${ID})\\.isSandboxingEnabled\\(\\)&&`)) },
+      { as: "currentWorkingDirectory", kind: "effectful-port", derive: pick("bash-read-only", "currentWorkingDirectory", new RegExp(`\\.isSandboxingEnabled\\(\\)&&(${ID})\\(\\)!==${ID}\\(\\)`)) },
+      { as: "originalWorkingDirectory", kind: "effectful-port", derive: pick("bash-read-only", "originalWorkingDirectory", new RegExp(`\\.isSandboxingEnabled\\(\\)&&${ID}\\(\\)!==(${ID})\\(\\)`)) },
+      { as: "readRedirectOperators", kind: "primitive", owned: true, derive: pick("bash-read-only", "readRedirectOperators", new RegExp(`redirects\\.some\\(\\(${ID}\\)=>!(${ID})\\.has\\(${ID}\\.op\\)`)) },
+      { as: "platform", kind: "effectful-port", derive: pick("bash-read-only", "platform", new RegExp(`if\\((${ID})\\(\\)==="windows"&&${ID}\\.redirects`)) },
+      { as: "peelCommandBuiltins", kind: "pure-helper", owned: true, derive: pick("bash-read-only", "peelCommandBuiltins", new RegExp(`let ${ID}=(${ID})\\(${ID}\\.argv\\);if\\(`)) },
+      { as: "globSafeCommands", kind: "primitive", owned: true, derive: pick("bash-read-only", "globSafeCommands", new RegExp(`return (${ID})\\.has\\(${ID}\\[0\\]\\?\\?""\\)`)) },
+      { as: "classifySimpleArgv", kind: "pure-helper", owned: true, derive: pick("bash-read-only", "classifySimpleArgv", new RegExp(`let ${ID}=(${ID})\\(${ID}\\);if\\(${ID}!==null\\)return`)) },
+      { as: "isReadOnlyCommandText", kind: "pure-helper", owned: true, derive: pick("bash-read-only", "isReadOnlyCommandText", new RegExp(`return (${ID})\\((${ID})\\(${ID}\\.text\\)\\)`)) },
+      { as: "stripCommandPrefix", kind: "pure-helper", owned: true, derive: pick("bash-read-only", "stripCommandPrefix", new RegExp(`return ${ID}\\((${ID})\\(${ID}\\.text\\)\\)`)) },
+    ],
+    coverage: ["perm-accept-edits"],
+  },
+
   // The eleven flag/effect tables are values rather than callables. Each
   // asserted-variable-declarator evaluates upstream's initializer once, hands
   // that independently-built graph value to its adapter, structurally asserts
