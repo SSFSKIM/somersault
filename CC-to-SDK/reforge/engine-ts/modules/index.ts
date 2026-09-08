@@ -45,6 +45,7 @@ import * as shellParser from "../../strangle/modules/shell-parser/reference.js";
 import * as commandClassifier from "../../strangle/modules/command-classifier/reference.js";
 import * as bashReadOnly from "../../strangle/modules/bash-read-only/reference.js";
 import * as bashSafetyTables from "../../strangle/modules/bash-safety-tables/reference.js";
+import * as bashCompoundSafety from "../../strangle/modules/bash-compound-safety/reference.js";
 import * as twnIsShuttingDown from "../../strangle/modules/twn-is-shutting-down/reference.js";
 import * as twnClaimShutdown from "../../strangle/modules/twn-claim-shutdown/reference.js";
 import * as twnReleaseShutdownClaim from "../../strangle/modules/twn-release-shutdown-claim/reference.js";
@@ -356,6 +357,12 @@ const OWNED: [string, string, unknown][] = [
   ["bash-table-wrapper-value-flags", "subsystem/bash-executor", () => bashSafetyTables.WRAPPER_VALUE_FLAGS],
   ["bash-table-wrapper-command-flags", "subsystem/bash-executor", () => bashSafetyTables.WRAPPER_COMMAND_FLAGS],
   ["bash-table-wrapper-validators", "subsystem/bash-executor", () => bashSafetyTables.WRAPPER_POSITIONAL_VALIDATORS],
+  // C13b / W10b — the entry, core, and fail-closed roots share one owned
+  // command-safety module but remain three graph splices because only the core
+  // directly reaches permission, sandbox, path, filesystem, cwd, and rule state.
+  ["bash-permission-entry", "subsystem/bash-executor", bashCompoundSafety.checkBashPermission],
+  ["bash-permission-core", "subsystem/bash-executor", bashCompoundSafety.checkBashPermissionCore],
+  ["bash-permission-failure", "subsystem/bash-executor", bashCompoundSafety.permissionCheckFailureDecision],
 ];
 
 for (const [name, subsystem, entry] of OWNED) {

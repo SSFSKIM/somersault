@@ -49,6 +49,8 @@ import {
 import { permissionMessage } from "../shared/permission-message.js";
 import { findSafetyCheckReason } from "../shared/safety-check-reason.js";
 import { createCommandClassifier } from "../command-classifier/reference.js";
+export { PARSE_ABORTED };
+export const BASH_TOOL_NAME = "Bash";
 import {
   isAbsolute as isAbsolutePath,
   normalize as normalizePath,
@@ -360,7 +362,7 @@ function shellPermissionMessage(reason) {
     throw new Error("unreachable permission-message dependency");
   };
   return permissionMessage(
-    "Bash",
+    BASH_TOOL_NAME,
     reason,
     unreachable,
     unreachable,
@@ -864,7 +866,7 @@ export function checkModeCommand(command, permissionContext) {
   };
 }
 
-const CLAMP_FAILURE_REASON =
+export const CLAMP_FAILURE_REASON =
   "bashCommandClamp fail-closed: permission check crashed";
 
 /**
@@ -1820,9 +1822,9 @@ export function validateCommandSemantics(commands) {
   return delayedNewlineFailure ?? { ok: true };
 }
 
-const CLAMP_REJECTION_REASON =
+export const CLAMP_REJECTION_REASON =
   "bashCommandClamp: no clamp rule matches this command";
-const SANDBOX_AUTO_ALLOW_REASON =
+export const SANDBOX_AUTO_ALLOW_REASON =
   "Auto-allowed with sandbox (autoAllowBashIfSandboxed enabled)";
 
 const ESCAPED_STAR = "\0ESCAPED_STAR\0";
@@ -2018,7 +2020,7 @@ function parseClampRule(rule) {
 function matchesClampRule(span, group) {
   return group.some((rule) => {
     const parsed = parseClampRule(rule);
-    if (parsed.toolName !== "Bash" || parsed.ruleContent === undefined) {
+    if (parsed.toolName !== BASH_TOOL_NAME || parsed.ruleContent === undefined) {
       return false;
     }
     return (
@@ -2167,7 +2169,7 @@ function suggestion(ruleContent, prefix = false) {
       type: "addRules",
       rules: [
         {
-          toolName: "Bash",
+          toolName: BASH_TOOL_NAME,
           ruleContent: prefix ? `${ruleContent} *` : ruleContent,
         },
       ],
@@ -2881,12 +2883,15 @@ function serializeRule(rule) {
   return `${rule.toolName}(${content})`;
 }
 
-class ClassifierAbortError extends Error {
+export class ClassifierAbortError extends Error {
   constructor(message) {
     super(message);
     this.name = "AbortError";
   }
 }
+
+export const PATH_SEPARATOR = pathSeparator;
+export const SUGGESTION_LIMIT = 5;
 
 function normalizePermissionSuggestions(suggestions) {
   if (!Array.isArray(suggestions)) return [];
@@ -3498,7 +3503,7 @@ export async function checkBashPermissionCore(
       }
     }
   }
-  const capped = [...suggestedRules.values()].slice(0, 5);
+  const capped = [...suggestedRules.values()].slice(0, SUGGESTION_LIMIT);
   const suggestions = capped.length > 0
     ? [
         {

@@ -34,7 +34,7 @@
 //                  not become a way to pass by existing.
 //   stale (suite)  an exclusion for a branch a suite now executes -> FAILS, and
 //                  says WHICH channel overtook it, because the fix differs.
-import { adjudicate } from "./adjudicate.js";
+import { adjudicate, coverageLinesSince } from "./adjudicate.js";
 import { branchSites, outcomesOf } from "./branches.js";
 
 let pass = 0;
@@ -132,6 +132,33 @@ const ALL = new Set(inventory);
   const byCorpus = adjudicate(sites, [{ branch: inventory[3], reason: "nothing drives the nullish arm" }], new Set([inventory[3]]), new Set());
   check("…and it is distinguishable from the corpus-executes-it case, so the fix is legible",
     byCorpus.stale[0]?.why === "the corpus now executes it", JSON.stringify(byCorpus.stale));
+}
+
+// ---- contract recorder accumulation -----------------------------------------
+{
+  const scenario = "fixture#scenario@0:T";
+  const driverOne = "fixture#driver-one@0:T";
+  const driverTwo = "fixture#driver-two@0:T";
+  const executed = new Set([scenario]);
+  let previous = new Map([["recorder.txt", `${scenario}\n`]]);
+  const contract = new Set<string>();
+
+  for (const line of coverageLinesSince(previous, new Map([["recorder.txt", `${driverOne}\n`]]), executed)) contract.add(line);
+  previous = new Map([["recorder.txt", `${driverOne}\n`]]);
+  for (const line of coverageLinesSince(previous, new Map([["recorder.txt", `${driverTwo}\n`]]), executed)) contract.add(line);
+
+  check("sequential reset-style contract snapshots RETAIN every driver's evidence",
+    contract.size === 2 && contract.has(driverOne) && contract.has(driverTwo), JSON.stringify([...contract]));
+  check("…and never relabel pre-existing scenario evidence as contract evidence",
+    !contract.has(scenario), JSON.stringify([...contract]));
+
+  const appended = coverageLinesSince(
+    new Map([["recorder.txt", `${scenario}\n`]]),
+    new Map([["recorder.txt", `${scenario}\n${driverOne}\n`]]),
+    executed,
+  );
+  check("an append-style snapshot contributes only its new suffix",
+    appended.size === 1 && appended.has(driverOne), JSON.stringify([...appended]));
 }
 
 // ---- vacuity ----------------------------------------------------------------

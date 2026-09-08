@@ -132,8 +132,7 @@ const CAPTURE_METADATA = {
     },
     {
       "as": "bashTool",
-      "kind": "primitive",
-      "owned": true
+      "kind": "primitive"
     },
     {
       "as": "displaySpan",
@@ -142,8 +141,7 @@ const CAPTURE_METADATA = {
     },
     {
       "as": "clampRejectionReason",
-      "kind": "primitive",
-      "owned": true
+      "kind": "primitive"
     },
     {
       "as": "checkCore",
@@ -155,8 +153,7 @@ const CAPTURE_METADATA = {
     },
     {
       "as": "sandboxAutoAllowReason",
-      "kind": "primitive",
-      "owned": true
+      "kind": "primitive"
     },
     {
       "as": "parseOrAbort",
@@ -165,8 +162,7 @@ const CAPTURE_METADATA = {
     },
     {
       "as": "parseAborted",
-      "kind": "primitive",
-      "owned": true
+      "kind": "primitive"
     },
     {
       "as": "hasUnsafeBackgroundOperator",
@@ -222,8 +218,7 @@ const CAPTURE_METADATA = {
     },
     {
       "as": "bashTool",
-      "kind": "primitive",
-      "owned": true
+      "kind": "primitive"
     },
     {
       "as": "validateCommandSemantics",
@@ -321,8 +316,7 @@ const CAPTURE_METADATA = {
     },
     {
       "as": "pathSeparator",
-      "kind": "primitive",
-      "owned": true
+      "kind": "primitive"
     },
     {
       "as": "peelCommandPrefixes",
@@ -390,7 +384,7 @@ const CAPTURE_METADATA = {
     },
     {
       "as": "classifierAbortError",
-      "kind": "primitive",
+      "kind": "pure-helper",
       "owned": true
     },
     {
@@ -419,8 +413,7 @@ const CAPTURE_METADATA = {
     },
     {
       "as": "suggestionLimit",
-      "kind": "primitive",
-      "owned": true
+      "kind": "primitive"
     }
   ],
   "permissionCheckFailureDecision": [
@@ -430,8 +423,7 @@ const CAPTURE_METADATA = {
     },
     {
       "as": "clampFailureReason",
-      "kind": "primitive",
-      "owned": true
+      "kind": "primitive"
     }
   ]
 } as const;

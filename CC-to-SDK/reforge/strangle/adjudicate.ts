@@ -51,6 +51,28 @@
 import type { BranchSite } from "./branches.js";
 import { outcomesOf } from "./branches.js";
 
+/**
+ * Branch outcomes added between two recorder-directory snapshots. A recorder
+ * normally appends to its PID file, but coverage drivers may rebuild the
+ * instrumented tree and replace the whole directory; a non-prefix file is
+ * therefore a fresh recording rather than an invalid snapshot.
+ */
+export function coverageLinesSince(
+  before: ReadonlyMap<string, string>,
+  after: ReadonlyMap<string, string>,
+  exclude: ReadonlySet<string> = new Set(),
+): Set<string> {
+  const added = new Set<string>();
+  for (const [file, text] of after) {
+    const previous = before.get(file) ?? "";
+    const delta = text.startsWith(previous) ? text.slice(previous.length) : text;
+    for (const line of delta.split("\n")) {
+      if (line !== "" && !exclude.has(line)) added.add(line);
+    }
+  }
+  return added;
+}
+
 export interface Adjudication {
   branch: string;
   site: BranchSite;

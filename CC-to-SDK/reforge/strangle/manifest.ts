@@ -59,6 +59,10 @@
 //                    can see it. `owned` therefore stays UNSET on a primitive.
 //   `effectful-port` is forwarded and stays a typed delegation argument.
 import type { TargetSignature } from "./ast.js";
+import {
+  BASH_SAFETY_ROOTS,
+  COPY_READY_BASH_SAFETY_CAPTURES,
+} from "./bash-compound-safety-capture-specs.js";
 
 export type TargetShape = "sibling-method" | "free-function" | "class-method" | "switch-case" | "arrow-initializer" | "variable-declarator" | "asserted-variable-declarator";
 
@@ -380,6 +384,53 @@ export const SPLICES: Splice[] = [
       { as: "stripCommandPrefix", kind: "pure-helper", owned: true, derive: pick("bash-read-only", "stripCommandPrefix", new RegExp(`return ${ID}\\((${ID})\\(${ID}\\.text\\)\\)`)) },
     ],
     coverage: ["perm-accept-edits"],
+  },
+
+  // The three runtime roots complete C13b's command-admission cut. Their
+  // semantic capture specifications live in one pure module shared with the
+  // independent pinned-AST checker, so manifest wiring cannot drift from the
+  // 13 / 53 / 2 exhaustive free-variable populations it verifies.
+  {
+    name: "bash-permission-entry",
+    target: "free-function",
+    signature: {
+      params: BASH_SAFETY_ROOTS.checkBashPermission.params,
+      ancestry: ["SourceFile"],
+    },
+    anchor: BASH_SAFETY_ROOTS.checkBashPermission.anchor,
+    fn: "checkOwnedBashPermission",
+    captures: [...COPY_READY_BASH_SAFETY_CAPTURES.checkBashPermission],
+    coverage: ["perm-accept-edits"],
+  },
+  {
+    name: "bash-permission-core",
+    target: "free-function",
+    signature: {
+      params: BASH_SAFETY_ROOTS.checkBashPermissionCore.params,
+      ancestry: ["SourceFile"],
+    },
+    anchor: BASH_SAFETY_ROOTS.checkBashPermissionCore.anchor,
+    fn: "checkOwnedBashPermissionCore",
+    captures: [...COPY_READY_BASH_SAFETY_CAPTURES.checkBashPermissionCore],
+    coverage: ["perm-accept-edits"],
+  },
+  {
+    name: "bash-permission-failure",
+    target: "free-function",
+    signature: {
+      params: BASH_SAFETY_ROOTS.permissionCheckFailureDecision.params,
+      ancestry: ["SourceFile"],
+    },
+    anchor: BASH_SAFETY_ROOTS.permissionCheckFailureDecision.anchor,
+    coLiteral: BASH_SAFETY_ROOTS.permissionCheckFailureDecision.coLiteral,
+    fn: "bashPermissionFailureDecision",
+    captures: [
+      ...COPY_READY_BASH_SAFETY_CAPTURES.permissionCheckFailureDecision,
+    ],
+    coverage: [],
+    darkReason:
+      "the fail-closed root runs only when a Bash permission check throws while the agent also carries a non-empty per-spawn bashCommandClamp. No recorded scenario creates that conjunction: bash-compound-safety exercises compound command admission without a clamp or an internal crash. The strongest decision-inverting twin is therefore measured dark there, while strangle/bash-compound-safety-parity.test.ts executes both clamp states against the pinned declaration bytes and requires the exact denial, reason, and undefined fallthrough.",
+    darkOver: ["bash-compound-safety"],
   },
 
   // The eleven flag/effect tables are values rather than callables. Each

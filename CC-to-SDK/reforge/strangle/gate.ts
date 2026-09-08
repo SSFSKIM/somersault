@@ -383,6 +383,13 @@ for (const [label, script] of [
   // tables and its sed predicate. The oracle evaluates the pinned closure and
   // drives parser, redirect, environment, git/cwd, platform and sed partitions.
   ["bash read-only classifier vs the pinned bundle", "strangle/bash-read-only-parity.test.ts"],
+  // C13b's three aggregate roots and their five folded helpers. The first
+  // phase independently re-derives all 13 / 53 / 2 captures from the pinned
+  // AST; the second executes the same shared cases as its contract driver
+  // against the exact upstream declaration bytes.
+  ["bash compound-safety capture inventory", "strangle/bash-compound-safety-captures.ts"],
+  ["bash compound-safety adapters assert graph primitives", "strangle/bash-compound-safety-adapters.test.ts"],
+  ["bash compound/pipe safety vs the pinned bundle", "strangle/bash-compound-safety-parity.test.ts"],
   // The description functions get their own contract test, and it is a
   // different KIND: rather than partitioning inputs by hand it extracts the four
   // upstream bodies out of the pinned bundle, runs them with stubbed ports, and

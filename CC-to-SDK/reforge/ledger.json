@@ -629,7 +629,7 @@
         "scenario:edit-tool",
         "scenario:task-family"
       ],
-      "note": "TEN of the graph's 44 `mapToolResultToToolResultBlockParam` methods are excised and delegated to reforge-owned modules (Write, Glob, TaskCreate from M3-B; Read, Edit, Bash, Grep, TaskGet, TaskList, TaskUpdate from C4/W1), 6,568 minified chars. Every one of the ten owned MODULES is standalone-complete and registered in engine-ts/modules/index.ts: it ships its own constants and pure helpers, and only typed ports cross the adapter (Read's WeakMap+clock staleness prefix and tab-separator gate, Bash's background output path and task-ack envelope/ending, TaskUpdate's two agent-team predicates). The SUBSYSTEM row nevertheless stays `spliced`, not `standalone-complete`: 34 formatters remain, so the family is not owned. Coverage is honest too \u2014 the corpus renders one of Read's six result arms, one of Grep's three and the plain stdout path of Bash's six, and never truncates a Glob result; the arms it cannot reach are graded by strangle/contracts.test.ts (135 checks). DEPENDENCY EDGES (\u00a72.4), one per effectful-port capture that leaves this row: `tool/Read` \u2014 the Read formatter's staleness prefix is a module WeakMap keyed by the result object and populated inside the Read tool's CALL path, then rendered through a Date.now()-derived day count, so it is a side channel owned by Read's execution, not data this wave can own; `subsystem/bash-executor` \u2014 the Bash formatter's background output path reads the live outputPathBindings registry, and its task-ack envelope/ending reach the background-task machinery \u00a71.1 files under the Bash executor; `subsystem/subagent-dispatch` \u2014 TaskUpdate's completion nudge is gated on the session's agent/team identity. Read's tab-separator capture is a feature gate, and gates are neither spliced nor excluded (\u00a73.3), so it is a port with no edge."
+      "note": "TEN of the graph's 44 `mapToolResultToToolResultBlockParam` methods are excised and delegated to reforge-owned modules (Write, Glob, TaskCreate from M3-B; Read, Edit, Bash, Grep, TaskGet, TaskList, TaskUpdate from C4/W1), 6,568 minified chars. Every one of the ten owned MODULES is standalone-complete and registered in engine-ts/modules/index.ts: it ships its own constants and pure helpers, and only typed ports cross the adapter (Read's WeakMap+clock staleness prefix and tab-separator gate, Bash's background output path and task-ack envelope/ending, TaskUpdate's two agent-team predicates). The SUBSYSTEM row nevertheless stays `spliced`, not `standalone-complete`: 34 formatters remain, so the family is not owned. Coverage is honest too — the corpus renders one of Read's six result arms, one of Grep's three and the plain stdout path of Bash's six, and never truncates a Glob result; the arms it cannot reach are graded by strangle/contracts.test.ts (135 checks). DEPENDENCY EDGES (§2.4), one per effectful-port capture that leaves this row: `tool/Read` — the Read formatter's staleness prefix is a module WeakMap keyed by the result object and populated inside the Read tool's CALL path, then rendered through a Date.now()-derived day count, so it is a side channel owned by Read's execution, not data this wave can own; `subsystem/bash-executor` — the Bash formatter's background output path reads the live outputPathBindings registry, and its task-ack envelope/ending reach the background-task machinery §1.1 files under the Bash executor; `subsystem/subagent-dispatch` — TaskUpdate's completion nudge is gated on the session's agent/team identity. Read's tab-separator capture is a feature gate, and gates are neither spliced nor excluded (§3.3), so it is a port with no edge."
     },
     {
       "id": "subsystem/tool-result-validators",
@@ -639,7 +639,7 @@
       "state": "unowned",
       "edges": [],
       "footprint": null,
-      "note": "Split out of \u00a71.1's 'formatters + validators' row by C4 with measured evidence: the Edit tool's error results (\"String to replace not found in file.\", \"File has not been read yet.\", the stale-read and match-count messages) are NOT produced by `mapToolResultToToolResultBlockParam`. They are returned by a sibling `async validateInput`, 3,317 minified chars against the formatters' 155-1,590, carrying filesystem reads, readFileState access, `tengu_edit_tool_stale_read` telemetry and gate reads \u2014 mostly `effectful-port` captures. It needs its own scenario (a deliberately missing `old_string`) and its own gate row, so C4 scoped it out rather than smuggling it in behind a formatter wave. 20 `validateInput` methods exist in chunk-fy12d89p.js. OPEN: this row is filed under C4 because that is the child that subdivided it, and C4 does not close it \u2014 the roadmap owes it a wave assignment (campaign spec Revision Notes, 2026-09-01)."
+      "note": "Split out of §1.1's 'formatters + validators' row by C4 with measured evidence: the Edit tool's error results (\"String to replace not found in file.\", \"File has not been read yet.\", the stale-read and match-count messages) are NOT produced by `mapToolResultToToolResultBlockParam`. They are returned by a sibling `async validateInput`, 3,317 minified chars against the formatters' 155-1,590, carrying filesystem reads, readFileState access, `tengu_edit_tool_stale_read` telemetry and gate reads — mostly `effectful-port` captures. It needs its own scenario (a deliberately missing `old_string`) and its own gate row, so C4 scoped it out rather than smuggling it in behind a formatter wave. 20 `validateInput` methods exist in chunk-fy12d89p.js. OPEN: this row is filed under C4 because that is the child that subdivided it, and C4 does not close it — the roadmap owes it a wave assignment (campaign spec Revision Notes, 2026-09-01)."
     },
     {
       "id": "subsystem/tool-descriptions",
@@ -889,7 +889,7 @@
               "declStart": 2171,
               "declEnd": 3430,
               "sha256": "e212d4afb1c8445114a8c3e85e43690059bbadd2267d6952db913532c86f5ec6",
-              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row \u2014 conservative staling, not a narrowed contract",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
               "closure": [
                 {
                   "name": "chunk-qe0j59w7.js",
@@ -899,7 +899,7 @@
                   "declStart": 0,
                   "declEnd": 4188,
                   "sha256": "67e46af70a6bb035bcfbe20be524f402b35b26871ab9bb6646c1af1f6f0974af",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-04aem4bh.js",
@@ -909,7 +909,7 @@
                   "declStart": 0,
                   "declEnd": 5767,
                   "sha256": "e8af93a4d91fae5ac8b9e5b62394d42fb9e5e4c802b5d6c4469370fb6cea1259",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-38213y7h.js",
@@ -919,7 +919,7 @@
                   "declStart": 0,
                   "declEnd": 94444,
                   "sha256": "210dc834a30092805d6cd139337048efe5c1e01adf214be33adc3ccc19642a6b",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-w3k8bej2.js",
@@ -929,7 +929,7 @@
                   "declStart": 0,
                   "declEnd": 57148,
                   "sha256": "2f1f54062ae10f93dff9c7771a6324067cbb78472e9452ac52c780f37cac36b1",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-nt3hxpjz.js",
@@ -939,7 +939,7 @@
                   "declStart": 0,
                   "declEnd": 1762,
                   "sha256": "bb8a594e87857dde76a57b3b22868c9aab77173166a3631f0b1133e9dda01966",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 }
               ]
             }
@@ -1691,7 +1691,7 @@
         "attestation/coverage.md",
         "research/fixtures/prompt-sections-2.1.251.json"
       ],
-      "note": "W3 (C6) owns the assembly pipeline: the identity-line selector, the ambient-context tail, the block partition and its cache scoping, the wire shaping, the CLAUDE.md/system-reminder injection, and the dispatched-agent prompt \u2014 plus W0a's env block, whose far side is now reached as a port BY subagent-prompt (an edge inside this row). The row stays `spliced` rather than standalone-complete: the SECTION BUILDERS behind the preset's 27 KB block (upstream OS() and its ~45 free variables) are still upstream's, and so is the per-tool serializer Eie, which the scout measured as not a clean seam and referred to the tool-runtime wave. The static-prompt gate is pinned false by S3.3, so two of the partition's three paths are graded by strangle/prompt-parity.test.ts rather than by the corpus; attestation/coverage.md records all 38 exclusions with that oracle named. Two typed-port edges leave the row: the message constructor that stamps uuid and timestamp onto the system-reminder message (session/transcript), and the prompt-cache-control builder plus the remaining-token attachment (query loop). The env-block port is an edge INSIDE the row, which is the campaign's first. W7.5 TAKES SIX OF THE SECTION BUILDERS THIS ROW NAMED AS ITS GAP, and corrects the count it named them with: the inventory is not '~20 prose sections' but 27 dynamic section records plus a six-element static head, assembled by a five-element return array in which exactly ONE element (kKe) follows the dynamic set - not the 'two-element tail' the wave first wrote - derived from the pin as research/fixtures/prompt-sections-2.1.251.json and re-derived by the gate (research/tools/extract-prompt-sections.ts, found by shape from the section-record constructor and confirmed twice - by the boundary sentinel the block partition looks for, and by the defaultSystemPrompt property every caller binds the result to). The six rows are the STATIC HEAD: the identity/security opener, # System, # Doing tasks, # Executing actions with care, # Using your tools and # Tone and style - about 11.2 KB of the preset's prose, every one of them rendered by sysprompt-preset and every solo sabotage measured RED against it. All six anchors are PROSE occurring once over the 1,802-file set, the strongest class the doctrine has and a deliberate contrast with C6's two structural anchors; two near-misses are recorded on the rows (the # Using your tools heading occurs twice inside its own function's two arms, which selectExcision ties because it counts candidates rather than spans, and the short form of the parallel-tools sentence also occurs twice). The bullet formatter is a pure-helper with fifteen call sites, owned in a shared file with upstream's copy left live; the hooks paragraph has one caller and folds in - and the fold-in still has to be DECLARED, because the capture inventory refuses an undeclared free variable, so it rides as an owned pure-helper that is derived but neither forwarded nor called. THE REMAINING GAP IS NAMED RATHER THAN IMPLIED, and W7.5's boundary review corrected how: the 27 dynamic records are still upstream's, the FIXTURE carries their SHAPE (name expression, conditional-spread flag, thunk kind, and each producer's chunk/bytes/declKind) and the per-record TAKEABILITY TABLE lives in the README's W7.5 record, because rendering is measured from the cassette and the fixture is pin-keyed with a gate phase that fails on any diff. THREE - not four - have nothing to excise: one inline thunk (endconv_deferred_hint) and two cross-chunk producers (memory -> pKe in chunk-9e2ns8ty, subagent_steer_delegation -> Rnr in chunk-bsdtxcdc). Nine of the 27 RENDER on the m1-sysprompt-preset cassette, so the class reason 'gated behind experiments, background jobs or remote surfaces the corpus does not enter' is right only for the eighteen that do not. THREE ARE TAKEABLE NOW and are named work for a later completions pass: session_guidance (O8t, 1,447 B), context_management (G8t, 291 B) and the env_info family (ZGe 55 B / H8t 127 B) - each already rendered by an existing scenario, so each is gradeable the day it is taken. The memory section stays deferred as a port-heavy S-module, and several remaining records are single string constants, i.e. variable-declarator or primitive shapes rather than function splices. So is the per-tool serializer Eie. The row stays spliced."
+      "note": "W3 (C6) owns the assembly pipeline: the identity-line selector, the ambient-context tail, the block partition and its cache scoping, the wire shaping, the CLAUDE.md/system-reminder injection, and the dispatched-agent prompt — plus W0a's env block, whose far side is now reached as a port BY subagent-prompt (an edge inside this row). The row stays `spliced` rather than standalone-complete: the SECTION BUILDERS behind the preset's 27 KB block (upstream OS() and its ~45 free variables) are still upstream's, and so is the per-tool serializer Eie, which the scout measured as not a clean seam and referred to the tool-runtime wave. The static-prompt gate is pinned false by S3.3, so two of the partition's three paths are graded by strangle/prompt-parity.test.ts rather than by the corpus; attestation/coverage.md records all 38 exclusions with that oracle named. Two typed-port edges leave the row: the message constructor that stamps uuid and timestamp onto the system-reminder message (session/transcript), and the prompt-cache-control builder plus the remaining-token attachment (query loop). The env-block port is an edge INSIDE the row, which is the campaign's first. W7.5 TAKES SIX OF THE SECTION BUILDERS THIS ROW NAMED AS ITS GAP, and corrects the count it named them with: the inventory is not '~20 prose sections' but 27 dynamic section records plus a six-element static head, assembled by a five-element return array in which exactly ONE element (kKe) follows the dynamic set - not the 'two-element tail' the wave first wrote - derived from the pin as research/fixtures/prompt-sections-2.1.251.json and re-derived by the gate (research/tools/extract-prompt-sections.ts, found by shape from the section-record constructor and confirmed twice - by the boundary sentinel the block partition looks for, and by the defaultSystemPrompt property every caller binds the result to). The six rows are the STATIC HEAD: the identity/security opener, # System, # Doing tasks, # Executing actions with care, # Using your tools and # Tone and style - about 11.2 KB of the preset's prose, every one of them rendered by sysprompt-preset and every solo sabotage measured RED against it. All six anchors are PROSE occurring once over the 1,802-file set, the strongest class the doctrine has and a deliberate contrast with C6's two structural anchors; two near-misses are recorded on the rows (the # Using your tools heading occurs twice inside its own function's two arms, which selectExcision ties because it counts candidates rather than spans, and the short form of the parallel-tools sentence also occurs twice). The bullet formatter is a pure-helper with fifteen call sites, owned in a shared file with upstream's copy left live; the hooks paragraph has one caller and folds in - and the fold-in still has to be DECLARED, because the capture inventory refuses an undeclared free variable, so it rides as an owned pure-helper that is derived but neither forwarded nor called. THE REMAINING GAP IS NAMED RATHER THAN IMPLIED, and W7.5's boundary review corrected how: the 27 dynamic records are still upstream's, the FIXTURE carries their SHAPE (name expression, conditional-spread flag, thunk kind, and each producer's chunk/bytes/declKind) and the per-record TAKEABILITY TABLE lives in the README's W7.5 record, because rendering is measured from the cassette and the fixture is pin-keyed with a gate phase that fails on any diff. THREE - not four - have nothing to excise: one inline thunk (endconv_deferred_hint) and two cross-chunk producers (memory -> pKe in chunk-9e2ns8ty, subagent_steer_delegation -> Rnr in chunk-bsdtxcdc). Nine of the 27 RENDER on the m1-sysprompt-preset cassette, so the class reason 'gated behind experiments, background jobs or remote surfaces the corpus does not enter' is right only for the eighteen that do not. THREE ARE TAKEABLE NOW and are named work for a later completions pass: session_guidance (O8t, 1,447 B), context_management (G8t, 291 B) and the env_info family (ZGe 55 B / H8t 127 B) - each already rendered by an existing scenario, so each is gradeable the day it is taken. The memory section stays deferred as a port-heavy S-module, and several remaining records are single string constants, i.e. variable-declarator or primitive shapes rather than function splices. So is the per-tool serializer Eie. The row stays spliced."
     },
     {
       "id": "subsystem/compaction",
@@ -1729,7 +1729,7 @@
               "declStart": 24074,
               "declEnd": 24090,
               "sha256": "a1e48f62bc230dadb386dbf8667b960613e4ae42daed051067c793faf9fc832d",
-              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
             }
           ]
         },
@@ -2332,7 +2332,7 @@
               "declStart": 2170797,
               "declEnd": 2170814,
               "sha256": "f8161e08e471529d29f435220ac614d67c6582c538536366659385c35f76571e",
-              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
             },
             {
               "name": "I_e",
@@ -2505,7 +2505,7 @@
               "declStart": 3005677,
               "declEnd": 3005694,
               "sha256": "e0a1938fa4ba991d87c6e49a0c76d07ccd34b43031e6d67ad34839f6e0ea7929",
-              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
             },
             {
               "name": "jy",
@@ -2568,7 +2568,7 @@
               "declStart": 3004197,
               "declEnd": 3004214,
               "sha256": "d918842d2a2d7872b10357d32233101801426d3cb79b267444ed13c0e2206591",
-              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
             },
             {
               "name": "jy",
@@ -2822,7 +2822,7 @@
               "declStart": 3004197,
               "declEnd": 3004214,
               "sha256": "d918842d2a2d7872b10357d32233101801426d3cb79b267444ed13c0e2206591",
-              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
             },
             {
               "name": "jy",
@@ -3291,7 +3291,7 @@
               "declStart": 3007883,
               "declEnd": 3007900,
               "sha256": "3d94bfc3d46ca35bc52b7f3274562fbb668001404c2c708dae2024419942c015",
-              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
             },
             {
               "name": "jy",
@@ -3354,7 +3354,7 @@
               "declStart": 3007883,
               "declEnd": 3007900,
               "sha256": "3d94bfc3d46ca35bc52b7f3274562fbb668001404c2c708dae2024419942c015",
-              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
             },
             {
               "name": "jy",
@@ -3495,7 +3495,7 @@
               "declStart": 3008687,
               "declEnd": 3008704,
               "sha256": "dd21e625a7aaaf1aa3399529cb6030c9c3981654012ec4f2876882d1beb7d80b",
-              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
             },
             {
               "name": "jy",
@@ -5221,7 +5221,7 @@
         "scenario:perm-broker-updates",
         "scenario:perm-mode-walk"
       ],
-      "note": "W6 owns the decision chain from the pre-check down, the mode axis end to end, and the headless broker's return leg: TEN splices here plus C5x's deny-stamping link (whose value this wave's oracle now grades, closing the C7/C9 carve-out), and TWO owned functions in shared/ that are deliberately not rows. THE ASK-RULE PREDICATE AND THE SAFETY-CHECK FINDER WERE TWO MORE OF THE NOT-ROWS AND ARE NOW ROWS OF THEIR OWN, and the adjudication they replace is worth recording because every part of it was checkable and wrong. It said their remaining callers were the mode-aware body's GATE-DEAD auto/dontAsk arms: `auto` is not gate-dead (this same wave measured it accepted through both paths), and the dontAsk half never applies because the mode-aware body returns on dontAsk before reaching either call. It said the corpus's decisions carry NO decisionReason at all: every Bash denial carries subcommandResults, which is exactly the shape both functions recurse into. And the two callers left after the pre-check and the rule checker take their copies are on the LIVE headless Bash path - the multi-cd aggregator and the subcommand merge's tie-break - kept quiet not by a gate but by needing a command SHAPE no cell wrote. What actually hid them was the pair of twins: one returned undefined and one returned false, which is what the healthy functions return on every input the corpus produces. Inverted twins plus the corpus's first `auto` cell (perm-auto-classifier-deny) redden both. A DARKNESS VERDICT IS A MEASUREMENT, and it inherits the limits of the twin and the corpus it was taken against. The message builder (ql, 45 call sites) is different: it RUNS on every tool call and its output is absorbed before it reaches any observable a headless corpus can produce \u2014 an ask's message never travels to the SDK host, and the one path on which it reaches the model takes the rule checker's annotating arm, which keeps the tool's own message. All three are graded against upstream's bytes by the parity oracle, and two control_response envelopes recorded on subsystem/control-protocol. A FIFTH was measured DARK and dropped in the same way: Uct/classifierOnlyStreakActive runs on the allow arm of every tool call in every mode, and its answer is pinned false by the disabled streak gate, so the maximal twin \u2014 return true always \u2014 leaves both covering scenarios byte-identical; the row had been carried as live on a RED the gate inferred from a non-zero exit rather than from a graded verdict. A FOURTH function was measured off the headless path and dropped outright: K0/setPermissionModeWithGuards joins the guard to the transition and reads like the set_permission_mode seam, but the headless runtime's handler calls the guard DIRECTLY and applies the mode itself, so even a twin that refused every mode change left a mode walk green. Its two ends are both owned and both live, so only the joint is unowned. Fourteen recordings now, three of them added by C9's boundary-fix round: perm-working-dir closes the workingDir decisionReason cell, perm-auto-classifier-deny closes the classifier one (a chosen 400 on the classifier's OWN API call reaches upstream's fail-closed arm), and the re-recorded perm-mode-walk finally executes the plan-with-bypass disjunct its exclusion had described. Graded by strangle/permissions-parity.test.ts (2,508 comparisons, 49 controls) over the axes research/fixtures/permission-surface-2.1.251.json derives from the bundle: six modes, three rule behaviours, eleven decisionReason kinds. THREE NAMED GAPS, all deferrals rather than omissions. (1) `von`, the 11.6 KB mode-aware decision body ABOVE the pre-check: sixty free variables, a model-classifier call, a mutable per-session denial counter \u2014 a \u00a72.3 designed port, not a transcription. (2) `createCanUseTool`, the broker's own class method: five mutable maps on its receiver plus thirty-five module imports, the same shape. (3) `Dd`, the chain's two-line entry point, carries no string literal at all and is not takeable by the anchor mechanism; both of its neighbours are owned. A fourth, `eln`/initializeToolPermissionContext (5.4 KB, sixty free variables, filesystem and settings I/O), belongs with the settings layer rather than with the decision chain. The row cannot close on any of them."
+      "note": "W6 owns the decision chain from the pre-check down, the mode axis end to end, and the headless broker's return leg: TEN splices here plus C5x's deny-stamping link (whose value this wave's oracle now grades, closing the C7/C9 carve-out), and TWO owned functions in shared/ that are deliberately not rows. THE ASK-RULE PREDICATE AND THE SAFETY-CHECK FINDER WERE TWO MORE OF THE NOT-ROWS AND ARE NOW ROWS OF THEIR OWN, and the adjudication they replace is worth recording because every part of it was checkable and wrong. It said their remaining callers were the mode-aware body's GATE-DEAD auto/dontAsk arms: `auto` is not gate-dead (this same wave measured it accepted through both paths), and the dontAsk half never applies because the mode-aware body returns on dontAsk before reaching either call. It said the corpus's decisions carry NO decisionReason at all: every Bash denial carries subcommandResults, which is exactly the shape both functions recurse into. And the two callers left after the pre-check and the rule checker take their copies are on the LIVE headless Bash path - the multi-cd aggregator and the subcommand merge's tie-break - kept quiet not by a gate but by needing a command SHAPE no cell wrote. What actually hid them was the pair of twins: one returned undefined and one returned false, which is what the healthy functions return on every input the corpus produces. Inverted twins plus the corpus's first `auto` cell (perm-auto-classifier-deny) redden both. A DARKNESS VERDICT IS A MEASUREMENT, and it inherits the limits of the twin and the corpus it was taken against. The message builder (ql, 45 call sites) is different: it RUNS on every tool call and its output is absorbed before it reaches any observable a headless corpus can produce — an ask's message never travels to the SDK host, and the one path on which it reaches the model takes the rule checker's annotating arm, which keeps the tool's own message. All three are graded against upstream's bytes by the parity oracle, and two control_response envelopes recorded on subsystem/control-protocol. A FIFTH was measured DARK and dropped in the same way: Uct/classifierOnlyStreakActive runs on the allow arm of every tool call in every mode, and its answer is pinned false by the disabled streak gate, so the maximal twin — return true always — leaves both covering scenarios byte-identical; the row had been carried as live on a RED the gate inferred from a non-zero exit rather than from a graded verdict. A FOURTH function was measured off the headless path and dropped outright: K0/setPermissionModeWithGuards joins the guard to the transition and reads like the set_permission_mode seam, but the headless runtime's handler calls the guard DIRECTLY and applies the mode itself, so even a twin that refused every mode change left a mode walk green. Its two ends are both owned and both live, so only the joint is unowned. Fourteen recordings now, three of them added by C9's boundary-fix round: perm-working-dir closes the workingDir decisionReason cell, perm-auto-classifier-deny closes the classifier one (a chosen 400 on the classifier's OWN API call reaches upstream's fail-closed arm), and the re-recorded perm-mode-walk finally executes the plan-with-bypass disjunct its exclusion had described. Graded by strangle/permissions-parity.test.ts (2,508 comparisons, 49 controls) over the axes research/fixtures/permission-surface-2.1.251.json derives from the bundle: six modes, three rule behaviours, eleven decisionReason kinds. THREE NAMED GAPS, all deferrals rather than omissions. (1) `von`, the 11.6 KB mode-aware decision body ABOVE the pre-check: sixty free variables, a model-classifier call, a mutable per-session denial counter — a §2.3 designed port, not a transcription. (2) `createCanUseTool`, the broker's own class method: five mutable maps on its receiver plus thirty-five module imports, the same shape. (3) `Dd`, the chain's two-line entry point, carries no string literal at all and is not takeable by the anchor mechanism; both of its neighbours are owned. A fourth, `eln`/initializeToolPermissionContext (5.4 KB, sixty free variables, filesystem and settings I/O), belongs with the settings layer rather than with the decision chain. The row cannot close on any of them."
     },
     {
       "id": "subsystem/control-protocol",
@@ -6391,7 +6391,7 @@
               "declStart": 145340,
               "declEnd": 145356,
               "sha256": "cd5a1f2c5ad546ad0e5eabaec50631f24a7c0b70f26151eeb9affbd16a58965f",
-              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
             },
             {
               "name": "K",
@@ -6429,7 +6429,7 @@
         "scenario:sysprompt-append",
         "scenario:plain"
       ],
-      "note": "W6 took the two response ENVELOPES ahead of W7 (the can_use_tool round trip is the only control request the permission chain itself issues). W7 owns the REQUEST leg for the four subtypes with a named handler: initialize (the handler AND the ~1 KB payload it answers with), set_permission_mode, set_model and set_max_thinking_tokens. THE LADDER ITSELF IS NOT TAKEN, and that is a shape decision rather than a deferral: research/fixtures/control-protocol-2.1.251.json derives 52 else-if arms over 54 subtypes, seventeen of which carry a loop-control jump relative to the enclosing for-await and all of which close over the frame handler\u2019s locals. An excised arm would have to hand loop control back through a return value, which is a different mechanism rather than a generalisation of an existing one. GAPS, named rather than implied. (1) The interrupt arm is INLINED \u2014 no named handler \u2014 and its five helpers are the auto-react and task-notification subsystems rather than this one (kill-auto-react-subscriptions plus four artifact/task-notification partitioners, four of them in chunk-fy12d89p). Their firing condition is an interrupt with live tasks, artifact subscriptions or a queued command, and the corpus\u2019s interrupt scenario creates none of those, so the row is OPEN with that condition named and belongs with W8\u2019s task family. Nothing here claims they are dark: no twin has been measured against a population that reaches them. (2) rewind_files (Tf, 485 B) is takeable and anchorable but has no scenario of its own; the probe FIRES the arm, and nothing grades its answer. (3) mcp_message (QKn, 58 B) is one line into the MCP transport and belongs with W11. (4) The other 48 arms are peripheral: 16 serve subtypes no installed SDK can send at all, and a dozen more reach outside the harness entirely. MEASURED: 38 of the 54 subtypes FIRE on the headless seam, none is dead, and 16 are OPEN each with a written reason (w7/probe-control-subtypes.ts)."
+      "note": "W6 took the two response ENVELOPES ahead of W7 (the can_use_tool round trip is the only control request the permission chain itself issues). W7 owns the REQUEST leg for the four subtypes with a named handler: initialize (the handler AND the ~1 KB payload it answers with), set_permission_mode, set_model and set_max_thinking_tokens. THE LADDER ITSELF IS NOT TAKEN, and that is a shape decision rather than a deferral: research/fixtures/control-protocol-2.1.251.json derives 52 else-if arms over 54 subtypes, seventeen of which carry a loop-control jump relative to the enclosing for-await and all of which close over the frame handler’s locals. An excised arm would have to hand loop control back through a return value, which is a different mechanism rather than a generalisation of an existing one. GAPS, named rather than implied. (1) The interrupt arm is INLINED — no named handler — and its five helpers are the auto-react and task-notification subsystems rather than this one (kill-auto-react-subscriptions plus four artifact/task-notification partitioners, four of them in chunk-fy12d89p). Their firing condition is an interrupt with live tasks, artifact subscriptions or a queued command, and the corpus’s interrupt scenario creates none of those, so the row is OPEN with that condition named and belongs with W8’s task family. Nothing here claims they are dark: no twin has been measured against a population that reaches them. (2) rewind_files (Tf, 485 B) is takeable and anchorable but has no scenario of its own; the probe FIRES the arm, and nothing grades its answer. (3) mcp_message (QKn, 58 B) is one line into the MCP transport and belongs with W11. (4) The other 48 arms are peripheral: 16 serve subtypes no installed SDK can send at all, and a dozen more reach outside the harness entirely. MEASURED: 38 of the 54 subtypes FIRE on the headless seam, none is dead, and 16 are OPEN each with a written reason (w7/probe-control-subtypes.ts)."
     },
     {
       "id": "subsystem/moat-tools",
@@ -6851,7 +6851,7 @@
         "scenario:perm-plan-mode",
         "scenario:task-family"
       ],
-      "note": "C11a/W8a owns the DESCRIPTION BELT and nothing else yet: sixteen tools whose prose the engine renders into every graded request body and whose `call` no scenario has ever executed. That asymmetry is measured rather than assumed \u2014 research/fixtures/moat-tools-2.1.251.json reads the 199 recorded request bodies for what the engine presented (12 catalog shapes, baseline 22 tools) and then locates each description's producing declarations by searching the graph for the rendered text, in every form its QUOTING could give it. Three descriptions have more than one carrier; each row claims the primary one and the fixture records the rest, so Workflow is owned as '120 of 128 locatable windows' rather than as a whole. (Reviewed 2026-09-03: it read five carriers over 423 bodies until the search stopped assuming one spelling per window, the walk stopped counting a builder's local const as a carrier, and the replay proxy stopped appending 59 runs of its own traffic into the corpus.) 'spliced' is the honest state and 'standalone-complete' would be an overclaim by a wide margin: no moat tool's call, validateInput, checkPermissions or input schema is owned, and the four already-owned result formatters (C4/W1's task family) plus these sixteen descriptions are the entire footprint. EDGES, measured and not inherited: session-storage (the task store writes <config>/tasks/<sessionId>/<taskId>.json and the peer registry writes <config>/sessions/<pid>.json), hook-dispatch (TaskCreate/TaskUpdate call the W5-owned TaskCreated/TaskCompleted dispatchers), subagent-dispatch (background Agent shares the task registry), bash-executor (Bash backgrounding shares it too), permissions (EnterWorktree.call relocates the permission root). The belt's two dark arms are named on their modules: CronCreate's Monitor paragraph is behind the gate-dead tengu_amber_sentinel, and SendMessage's cross-session-disabled arm is behind tengu_harbor_kite, whose default is TRUE. Both are graded by strangle/moat-parity.test.ts against upstream's own body. THREE FORMATTERS THE CUT NAMES ARE DEFERRED TO C11b WITH A MEASUREMENT, not skipped: ReportFindings', ScheduleWakeup's and TaskOutput's mapToolResultToToolResultBlockParam belong to the sixteen tools with ZERO execution coverage (measured: zero tool_use blocks for any of the sixteen across the 82 recorded cassettes), so each row would be dark over the whole corpus \u2014 three dark rows x 59 replays is roughly twelve minutes on every gate run, permanently, for rows that prove nothing until C11b records the three cheap scenarios its own budget already contains. C11b converts catalog-only tools into executed ones; C11c and C11d own the stateful core and the cross-session layer."
+      "note": "C11a/W8a owns the DESCRIPTION BELT and nothing else yet: sixteen tools whose prose the engine renders into every graded request body and whose `call` no scenario has ever executed. That asymmetry is measured rather than assumed — research/fixtures/moat-tools-2.1.251.json reads the 199 recorded request bodies for what the engine presented (12 catalog shapes, baseline 22 tools) and then locates each description's producing declarations by searching the graph for the rendered text, in every form its QUOTING could give it. Three descriptions have more than one carrier; each row claims the primary one and the fixture records the rest, so Workflow is owned as '120 of 128 locatable windows' rather than as a whole. (Reviewed 2026-09-03: it read five carriers over 423 bodies until the search stopped assuming one spelling per window, the walk stopped counting a builder's local const as a carrier, and the replay proxy stopped appending 59 runs of its own traffic into the corpus.) 'spliced' is the honest state and 'standalone-complete' would be an overclaim by a wide margin: no moat tool's call, validateInput, checkPermissions or input schema is owned, and the four already-owned result formatters (C4/W1's task family) plus these sixteen descriptions are the entire footprint. EDGES, measured and not inherited: session-storage (the task store writes <config>/tasks/<sessionId>/<taskId>.json and the peer registry writes <config>/sessions/<pid>.json), hook-dispatch (TaskCreate/TaskUpdate call the W5-owned TaskCreated/TaskCompleted dispatchers), subagent-dispatch (background Agent shares the task registry), bash-executor (Bash backgrounding shares it too), permissions (EnterWorktree.call relocates the permission root). The belt's two dark arms are named on their modules: CronCreate's Monitor paragraph is behind the gate-dead tengu_amber_sentinel, and SendMessage's cross-session-disabled arm is behind tengu_harbor_kite, whose default is TRUE. Both are graded by strangle/moat-parity.test.ts against upstream's own body. THREE FORMATTERS THE CUT NAMES ARE DEFERRED TO C11b WITH A MEASUREMENT, not skipped: ReportFindings', ScheduleWakeup's and TaskOutput's mapToolResultToToolResultBlockParam belong to the sixteen tools with ZERO execution coverage (measured: zero tool_use blocks for any of the sixteen across the 82 recorded cassettes), so each row would be dark over the whole corpus — three dark rows x 59 replays is roughly twelve minutes on every gate run, permanently, for rows that prove nothing until C11b records the three cheap scenarios its own budget already contains. C11b converts catalog-only tools into executed ones; C11c and C11d own the stateful core and the cross-session layer."
     },
     {
       "id": "subsystem/session-storage",
@@ -6975,7 +6975,7 @@
         "research/fixtures/session-storage-surface-2.1.251.json",
         "research/2026-09-02-w9-session-storage-scout.md"
       ],
-      "note": "C1's class-method mechanism spike, kept as a permanent splice: one method of the transcript store (materializeSessionFile) is owned, the store is not. `spliced` \u2014 the store instance itself crosses as the delegation's receiver, which is exactly the `SessionPort` C12 will design. C4/W1 retrofit: the three pure error predicates (errorCode/isExpected/formatError) are now owned outright, so the module is standalone-complete behind its store/log/report ports and is registered in engine-ts/modules/index.ts. The SUBSYSTEM stays `spliced` \u2014 W9 owns the SessionPort. C12a/W9a (machinery child): the row's EDGE ARRAY was empty while three spliced rows pointed edges AT it, so the list was one-directional; it now carries the four symmetric edges the W9 scout named (\u2192 compaction for the boundary's compactMetadata, which W4 writes and GVt consumes here; \u2192 moat-tools for BOTH C11c's shared `queue-operation` record, which `ssn` writes and this subsystem's transcript carries, AND the task store's session-keyed <config>/tasks/<sessionId>/ directory, plus C11d's <config>/sessions/ registry; \u2192 subagent-dispatch for the route-by-agent subagent transcripts; \u2192 query-loop for E4n's segment form). The ARTIFACT LIST is no longer one 723-byte method: research/fixtures/session-storage-surface-2.1.251.json derives the barrel's 235 public names and, for each, who imports its local out of the engine chunk \u2014 148 have a cross-chunk consumer, 87 are barrel-only, 42 chunks import at least one. Two measured corrections to the scout: 13 *ForTesting exports, not 12 (dropPrecautionarySuppressionForTesting), and 42 importing chunks, not 43."
+      "note": "C1's class-method mechanism spike, kept as a permanent splice: one method of the transcript store (materializeSessionFile) is owned, the store is not. `spliced` — the store instance itself crosses as the delegation's receiver, which is exactly the `SessionPort` C12 will design. C4/W1 retrofit: the three pure error predicates (errorCode/isExpected/formatError) are now owned outright, so the module is standalone-complete behind its store/log/report ports and is registered in engine-ts/modules/index.ts. The SUBSYSTEM stays `spliced` — W9 owns the SessionPort. C12a/W9a (machinery child): the row's EDGE ARRAY was empty while three spliced rows pointed edges AT it, so the list was one-directional; it now carries the four symmetric edges the W9 scout named (→ compaction for the boundary's compactMetadata, which W4 writes and GVt consumes here; → moat-tools for BOTH C11c's shared `queue-operation` record, which `ssn` writes and this subsystem's transcript carries, AND the task store's session-keyed <config>/tasks/<sessionId>/ directory, plus C11d's <config>/sessions/ registry; → subagent-dispatch for the route-by-agent subagent transcripts; → query-loop for E4n's segment form). The ARTIFACT LIST is no longer one 723-byte method: research/fixtures/session-storage-surface-2.1.251.json derives the barrel's 235 public names and, for each, who imports its local out of the engine chunk — 148 have a cross-chunk consumer, 87 are barrel-only, 42 chunks import at least one. Two measured corrections to the scout: 13 *ForTesting exports, not 12 (dropPrecautionarySuppressionForTesting), and 42 importing chunks, not 43."
     },
     {
       "id": "subsystem/bash-executor",
@@ -6985,6 +6985,7 @@
       "state": "spliced",
       "edges": [
         "subsystem/permissions",
+        "subsystem/sandboxing",
         "subsystem/control-protocol",
         "subsystem/hook-dispatch",
         "subsystem/moat-tools"
@@ -7169,7 +7170,7 @@
               "declStart": 114284,
               "declEnd": 114432,
               "sha256": "947c710befafd5f256cf0f5b42f783c812aafe69ec528c4d65059346a5afc166",
-              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row \u2014 conservative staling, not a narrowed contract",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
               "closure": [
                 {
                   "name": "chunk-9e2ns8ty.js",
@@ -7179,7 +7180,7 @@
                   "declStart": 0,
                   "declEnd": 243672,
                   "sha256": "53d260820b9f7af2d3d03096e1321b57dbd682bc79a5c755df7f396bfa52fe45",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-zjeqf9vh.js",
@@ -7189,7 +7190,7 @@
                   "declStart": 0,
                   "declEnd": 12736,
                   "sha256": "3e9250e1b29ac69eb29034e88592a2fda1f61ff8684b18b3bb9e3c74f3ff4483",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 }
               ]
             },
@@ -7231,7 +7232,7 @@
               "declStart": 12764,
               "declEnd": 12766,
               "sha256": "da2969b098a8b89b82e4b159449f9dc597d38f78cfe8cbad13944c4a0e49f795",
-              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row \u2014 conservative staling, not a narrowed contract",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
               "from": {
                 "chunk": "chunk-fgwne0fb.js",
                 "exportedAs": "ZE",
@@ -7248,7 +7249,7 @@
                   "declStart": 0,
                   "declEnd": 62907,
                   "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 }
               ]
             },
@@ -7260,7 +7261,7 @@
               "declStart": 11349,
               "declEnd": 11352,
               "sha256": "b8716887ae946583b398ce16643180c54af89abae7cd0412599cef949d7afe5a",
-              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row \u2014 conservative staling, not a narrowed contract",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
               "from": {
                 "chunk": "chunk-9e2ns8ty.js",
                 "exportedAs": "KTe",
@@ -7277,7 +7278,7 @@
                   "declStart": 0,
                   "declEnd": 243672,
                   "sha256": "53d260820b9f7af2d3d03096e1321b57dbd682bc79a5c755df7f396bfa52fe45",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-fgwne0fb.js",
@@ -7287,7 +7288,7 @@
                   "declStart": 0,
                   "declEnd": 62907,
                   "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 }
               ]
             },
@@ -7370,7 +7371,7 @@
               "declStart": 11449,
               "declEnd": 11451,
               "sha256": "83236ec7ea73e9165af86bf92d17ff9c04421f34c58824b694cc815a9d80995b",
-              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row \u2014 conservative staling, not a narrowed contract",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
               "from": {
                 "chunk": "chunk-9e2ns8ty.js",
                 "exportedAs": "S_",
@@ -7387,7 +7388,7 @@
                   "declStart": 0,
                   "declEnd": 243672,
                   "sha256": "53d260820b9f7af2d3d03096e1321b57dbd682bc79a5c755df7f396bfa52fe45",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-zyp65cht.js",
@@ -7397,7 +7398,7 @@
                   "declStart": 0,
                   "declEnd": 4203,
                   "sha256": "4ab4a61eb58fd83053bc2a4bffa499c9e2dc0a05fedefea18141715e0f88296d",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-snzr790g.js",
@@ -7407,7 +7408,7 @@
                   "declStart": 0,
                   "declEnd": 17587,
                   "sha256": "29ccb7e9b76d6718c4c8a7d1059b5674236f5b6939df647c8372a20f1317952d",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-qpcjd2zp.js",
@@ -7417,7 +7418,7 @@
                   "declStart": 0,
                   "declEnd": 12188,
                   "sha256": "95c44637d15eb772c0365f11ab6d5585758847c551ac637f4271d22802472e3e",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-ynzt0fm1.js",
@@ -7427,7 +7428,7 @@
                   "declStart": 0,
                   "declEnd": 45468,
                   "sha256": "6d6941baa6bfd42a0b991e9dc8901248ae28f7436366f9a0fb33a65e68154aa8",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-qr1avfxy.js",
@@ -7437,7 +7438,7 @@
                   "declStart": 0,
                   "declEnd": 6499,
                   "sha256": "c02dd8122c4db9da3304003c5b75464853cd9d546cb830afb39dcd1c41bb8d22",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-5b2g0bc6.js",
@@ -7447,7 +7448,7 @@
                   "declStart": 0,
                   "declEnd": 2740,
                   "sha256": "3b80e8c986c1505ebb16069f4590427a328d8e46bc54535e66388572b6010ac3",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 }
               ]
             },
@@ -7459,7 +7460,7 @@
               "declStart": 1011392,
               "declEnd": 1011551,
               "sha256": "c4156d2b5f7909b4048da36bfaeb3ad4817dc02d56b9dedfe1d4ebbc38421145",
-              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row \u2014 conservative staling, not a narrowed contract",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
               "closure": [
                 {
                   "name": "chunk-fy12d89p.js",
@@ -7469,7 +7470,7 @@
                   "declStart": 0,
                   "declEnd": 3995555,
                   "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-fgwne0fb.js",
@@ -7479,7 +7480,7 @@
                   "declStart": 0,
                   "declEnd": 62907,
                   "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 }
               ]
             },
@@ -7491,7 +7492,7 @@
               "declStart": 1011551,
               "declEnd": 1011639,
               "sha256": "948e2bcc38f4198f6144730becf31922aa8f68b3112438b52a339357d3a6a5db",
-              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row \u2014 conservative staling, not a narrowed contract",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
               "closure": [
                 {
                   "name": "chunk-fy12d89p.js",
@@ -7501,7 +7502,7 @@
                   "declStart": 0,
                   "declEnd": 3995555,
                   "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-fgwne0fb.js",
@@ -7511,7 +7512,7 @@
                   "declStart": 0,
                   "declEnd": 62907,
                   "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 }
               ]
             },
@@ -7539,7 +7540,7 @@
               "declStart": 965749,
               "declEnd": 966157,
               "sha256": "0658a48294344886a7b7245c2fa2b3c74bc1c48a550e9a2c18c729127a5156ed",
-              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row \u2014 conservative staling, not a narrowed contract",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
               "closure": [
                 {
                   "name": "chunk-fy12d89p.js",
@@ -7549,7 +7550,7 @@
                   "declStart": 0,
                   "declEnd": 3995555,
                   "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-fgwne0fb.js",
@@ -7559,7 +7560,7 @@
                   "declStart": 0,
                   "declEnd": 62907,
                   "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 }
               ]
             },
@@ -7665,7 +7666,7 @@
               "declStart": 961232,
               "declEnd": 962808,
               "sha256": "739ca7472e2d74480d54b4c06563cee7ff4b2659e2bc6ac1d31d8059950e2468",
-              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row \u2014 conservative staling, not a narrowed contract",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
               "closure": [
                 {
                   "name": "chunk-fy12d89p.js",
@@ -7675,7 +7676,7 @@
                   "declStart": 0,
                   "declEnd": 3995555,
                   "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-9e2ns8ty.js",
@@ -7685,7 +7686,7 @@
                   "declStart": 0,
                   "declEnd": 243672,
                   "sha256": "53d260820b9f7af2d3d03096e1321b57dbd682bc79a5c755df7f396bfa52fe45",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 }
               ]
             },
@@ -7697,7 +7698,7 @@
               "declStart": 964682,
               "declEnd": 965215,
               "sha256": "9dc50584cc8852ad5cc34003a52ac941b691fcb13be5296802fc189bf9859ea6",
-              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row \u2014 conservative staling, not a narrowed contract",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
               "closure": [
                 {
                   "name": "chunk-fy12d89p.js",
@@ -7707,7 +7708,7 @@
                   "declStart": 0,
                   "declEnd": 3995555,
                   "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-9e2ns8ty.js",
@@ -7717,7 +7718,7 @@
                   "declStart": 0,
                   "declEnd": 243672,
                   "sha256": "53d260820b9f7af2d3d03096e1321b57dbd682bc79a5c755df7f396bfa52fe45",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-zyp65cht.js",
@@ -7727,7 +7728,7 @@
                   "declStart": 0,
                   "declEnd": 4203,
                   "sha256": "4ab4a61eb58fd83053bc2a4bffa499c9e2dc0a05fedefea18141715e0f88296d",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-snzr790g.js",
@@ -7737,7 +7738,7 @@
                   "declStart": 0,
                   "declEnd": 17587,
                   "sha256": "29ccb7e9b76d6718c4c8a7d1059b5674236f5b6939df647c8372a20f1317952d",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-fgwne0fb.js",
@@ -7747,7 +7748,7 @@
                   "declStart": 0,
                   "declEnd": 62907,
                   "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 }
               ]
             },
@@ -7800,7 +7801,7 @@
               "declStart": 915443,
               "declEnd": 915457,
               "sha256": "a5fda7491fecd6bcf45c731ee4e8b5fda5d5b156d6b8a924e1ba43cff4dd87a3",
-              "note": "exporting module 'os' is not part of the graph \u2014 only the import site is covered"
+              "note": "exporting module 'os' is not part of the graph — only the import site is covered"
             },
             {
               "name": "s_e",
@@ -8094,7 +8095,7 @@
               "declStart": 916889,
               "declEnd": 917811,
               "sha256": "1122ed602fbb6607efbe86d28a67bdb64e5d84fee82291a2984f1c4ae5b6535a",
-              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row \u2014 conservative staling, not a narrowed contract",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
               "closure": [
                 {
                   "name": "chunk-fy12d89p.js",
@@ -8104,7 +8105,7 @@
                   "declStart": 0,
                   "declEnd": 3995555,
                   "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-9e2ns8ty.js",
@@ -8114,7 +8115,7 @@
                   "declStart": 0,
                   "declEnd": 243672,
                   "sha256": "53d260820b9f7af2d3d03096e1321b57dbd682bc79a5c755df7f396bfa52fe45",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-fgwne0fb.js",
@@ -8124,7 +8125,7 @@
                   "declStart": 0,
                   "declEnd": 62907,
                   "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 }
               ]
             },
@@ -8415,6 +8416,1702 @@
             "sha256": "cbeb36b3abac32ade0be37fb7ffc50d6491427bc41ad9cdf65d8a7a9c1cf860c"
           },
           "captures": []
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 1003463,
+            "end": 1004739,
+            "sha256": "71426551ba5c46fd778776f8d15b89867e1c7ee93fe51d08460c55b22e3050e8"
+          },
+          "captures": [
+            {
+              "name": "he",
+              "as": "readPermissionContext",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 16303,
+              "declEnd": 16305,
+              "sha256": "372f7e2fd2d01ce2a1d71dc072acbba4c6fd25a1087cd7f153f4ec0ce37e1ede",
+              "from": {
+                "chunk": "chunk-3k4hb7pf.js",
+                "exportedAs": "he",
+                "declStart": 3260,
+                "declEnd": 4374,
+                "sha256": "c608774b22126ef1d4508cfeb08a14d62fd2920ee53cfeb24a954b115215855e"
+              }
+            },
+            {
+              "name": "Prn",
+              "as": "checkClamp",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 986786,
+              "declEnd": 987563,
+              "sha256": "7ccc64537f3f8cdf1b00316a900d72a18880f5145512e6cf57b420199b961aad",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-9e2ns8ty.js",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 243672,
+                  "sha256": "53d260820b9f7af2d3d03096e1321b57dbd682bc79a5c755df7f396bfa52fe45",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-4vdmpx05.js",
+                  "chunk": "chunk-4vdmpx05.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 1027,
+                  "sha256": "775e6f2f3d6906ed0ed66096f96037273df4d7352fcd833c3226251b659a21e2",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fk13r7sg.js",
+                  "chunk": "chunk-fk13r7sg.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3154,
+                  "sha256": "b2f589b067c07bf60c791eb6a5d80234147edf77ad0449895c051d9cb7f7f5b4",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-qw5jhqey.js",
+                  "chunk": "chunk-qw5jhqey.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 1627,
+                  "sha256": "4bd6ff7fe68065d561e41a97be51d2b6b3bbf43636bc6e384eb4bda7744f47c6",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "s",
+              "as": "emitTelemetry",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 4719,
+              "declEnd": 4720,
+              "sha256": "043a718774c572bd8a25adbeb1bfcd5c0256ae11cecf9f9c3f925d0e52beaf89",
+              "from": {
+                "chunk": "chunk-qw5jhqey.js",
+                "exportedAs": "s",
+                "declStart": 1332,
+                "declEnd": 1449,
+                "sha256": "06595e467f1ac955f8b81113e32cdb5b2e84936c11c78c1cd0eecbd6956d84f5"
+              }
+            },
+            {
+              "name": "yi",
+              "as": "bashTool",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 3839118,
+              "declEnd": 3850985,
+              "sha256": "e3541e622bc74601d4efad6c4df8a8ebf1236c1503840e52c9ceaf207b2de782"
+            },
+            {
+              "name": "b",
+              "as": "displaySpan",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 2533,
+              "declEnd": 2534,
+              "sha256": "3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d",
+              "from": {
+                "chunk": "chunk-ynzt0fm1.js",
+                "exportedAs": "b",
+                "declStart": 13038,
+                "declEnd": 13118,
+                "sha256": "bc3949a6bea4435cbdae7c6a77f03233bab1a80a81bdaaa1b604b468a5791bc5"
+              },
+              "closure": [
+                {
+                  "name": "Jd",
+                  "chunk": "chunk-ynzt0fm1.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 13032,
+                  "declEnd": 13037,
+                  "sha256": "90e0e5ea6b5c9c30a65ac235bcc7c1023f4f159339ddd82534a7206febf96e21",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "lt",
+                  "chunk": "chunk-ynzt0fm1.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 13004,
+                  "declEnd": 13028,
+                  "sha256": "7904230c0ed9ef042724a0c01f84031cd1920ff5526a52606897550dc8cb129f",
+                  "declKind": "function"
+                },
+                {
+                  "name": "ct",
+                  "chunk": "chunk-ynzt0fm1.js",
+                  "depth": 3,
+                  "basis": "declaration",
+                  "declStart": 12978,
+                  "declEnd": 13003,
+                  "sha256": "849821f63e44c8820d19cadb460daf5bbbc62ed7a195e4ffb9bca77c31dcc224",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "QNe",
+              "as": "clampRejectionReason",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 6793,
+              "declEnd": 6796,
+              "sha256": "feea519653100020e6842fcd9acd4ca1d9f2afb6c948f997df37f86fc8b32bf7",
+              "from": {
+                "chunk": "chunk-af80z9sa.js",
+                "exportedAs": "QNe",
+                "declStart": 1937,
+                "declEnd": 1995,
+                "sha256": "8ed0e7118c95887f868f5e4fe3f253dbb61cf3dbd86a28b09bf7a5f7f7becb46"
+              }
+            },
+            {
+              "name": "jrn",
+              "as": "checkCore",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1004739,
+              "declEnd": 1011392,
+              "sha256": "1769e905f881642be3b695c9f496c3393eb616651c51348b022fc4c9668419aa"
+            },
+            {
+              "name": "D8e",
+              "as": "decorateDecision",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1003033,
+              "declEnd": 1003463,
+              "sha256": "4d19d131dd60990cc2dbe83f74650dadd9ce87052162fbb7eba26b8d2bccf816"
+            },
+            {
+              "name": "JNe",
+              "as": "sandboxAutoAllowReason",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 6781,
+              "declEnd": 6784,
+              "sha256": "1ad643f5a48bba7d199decef11b8ead17f008f8aab2327eef6fc4e08b2c14abe",
+              "from": {
+                "chunk": "chunk-af80z9sa.js",
+                "exportedAs": "JNe",
+                "declStart": 1780,
+                "declEnd": 1846,
+                "sha256": "7ff914f81c5e0020efc867246a32784ce1e9750f4e44e7677793925258fff580"
+              }
+            },
+            {
+              "name": "pEe",
+              "as": "parseOrAbort",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 12774,
+              "declEnd": 12777,
+              "sha256": "dae7d11b232eb6c873336d9828e5118aa1a6d101bc5d337d460c1043c2f79fcd",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "from": {
+                "chunk": "chunk-fgwne0fb.js",
+                "exportedAs": "pEe",
+                "declStart": 61183,
+                "declEnd": 61515,
+                "sha256": "56fae2c515fdc9102ce32b5d6ba26694baa72b3524fc9faff429f8e5d3416b05"
+              },
+              "closure": [
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-qw5jhqey.js",
+                  "chunk": "chunk-qw5jhqey.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 1627,
+                  "sha256": "4bd6ff7fe68065d561e41a97be51d2b6b3bbf43636bc6e384eb4bda7744f47c6",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-38213y7h.js",
+                  "chunk": "chunk-38213y7h.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 94444,
+                  "sha256": "210dc834a30092805d6cd139337048efe5c1e01adf214be33adc3ccc19642a6b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "w3",
+              "as": "parseAborted",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 12771,
+              "declEnd": 12773,
+              "sha256": "55eae50b75e2b2990f2c18be84ca079727a85f61b839c3359249801fe1ab9e9c",
+              "from": {
+                "chunk": "chunk-fgwne0fb.js",
+                "exportedAs": "w3",
+                "declStart": 61156,
+                "declEnd": 61182,
+                "sha256": "51c5804e6069aece9c6a0c59d28154cc87787c86165ae34d7b0f9e92d0eaf8b9"
+              }
+            },
+            {
+              "name": "eQe",
+              "as": "hasUnsafeBackgroundOperator",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 1002853,
+              "declEnd": 1003033,
+              "sha256": "3934b723dba1a9bf1d09cceb762cfc843b6027248b00d103bc5b559e2c4dcc28",
+              "closure": []
+            },
+            {
+              "name": "ql",
+              "as": "permissionMessage",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 1031335,
+              "declEnd": 1032707,
+              "sha256": "6af1f610482a67a5c6e24da1614479bc649044910eb9609bc27811081a562abb",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fk13r7sg.js",
+                  "chunk": "chunk-fk13r7sg.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3154,
+                  "sha256": "b2f589b067c07bf60c791eb6a5d80234147edf77ad0449895c051d9cb7f7f5b4",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-04aem4bh.js",
+                  "chunk": "chunk-04aem4bh.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 5767,
+                  "sha256": "e8af93a4d91fae5ac8b9e5b62394d42fb9e5e4c802b5d6c4469370fb6cea1259",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-af80z9sa.js",
+                  "chunk": "chunk-af80z9sa.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 5916,
+                  "sha256": "6698ac971bba87a454204e3a26bae053df610c412d35d654e7b9196a3f506a57",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-8c6qx8qp.js",
+                  "chunk": "chunk-8c6qx8qp.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 59565,
+                  "sha256": "756566ebb9c4186f77a69d5bb8e0bc9d13f4d07564c4d561a57d08f875dda5bd",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 1004739,
+            "end": 1011392,
+            "sha256": "1769e905f881642be3b695c9f496c3393eb616651c51348b022fc4c9668419aa"
+          },
+          "captures": [
+            {
+              "name": "he",
+              "as": "readPermissionContext",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 16303,
+              "declEnd": 16305,
+              "sha256": "372f7e2fd2d01ce2a1d71dc072acbba4c6fd25a1087cd7f153f4ec0ce37e1ede",
+              "from": {
+                "chunk": "chunk-3k4hb7pf.js",
+                "exportedAs": "he",
+                "declStart": 3260,
+                "declEnd": 4374,
+                "sha256": "c608774b22126ef1d4508cfeb08a14d62fd2920ee53cfeb24a954b115215855e"
+              }
+            },
+            {
+              "name": "x9e",
+              "as": "replaceSessionEnvironmentKeys",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 909432,
+              "declEnd": 909481,
+              "sha256": "d69a7e1122b23d52b13d3dcee71c342f7fd4f688b914156e8d3058c9d39cba07"
+            },
+            {
+              "name": "pEe",
+              "as": "parseOrAbort",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 12774,
+              "declEnd": 12777,
+              "sha256": "dae7d11b232eb6c873336d9828e5118aa1a6d101bc5d337d460c1043c2f79fcd",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "from": {
+                "chunk": "chunk-fgwne0fb.js",
+                "exportedAs": "pEe",
+                "declStart": 61183,
+                "declEnd": 61515,
+                "sha256": "56fae2c515fdc9102ce32b5d6ba26694baa72b3524fc9faff429f8e5d3416b05"
+              },
+              "closure": [
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-qw5jhqey.js",
+                  "chunk": "chunk-qw5jhqey.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 1627,
+                  "sha256": "4bd6ff7fe68065d561e41a97be51d2b6b3bbf43636bc6e384eb4bda7744f47c6",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-38213y7h.js",
+                  "chunk": "chunk-38213y7h.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 94444,
+                  "sha256": "210dc834a30092805d6cd139337048efe5c1e01adf214be33adc3ccc19642a6b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "KTe",
+              "as": "classifyCommand",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 11349,
+              "declEnd": 11352,
+              "sha256": "b8716887ae946583b398ce16643180c54af89abae7cd0412599cef949d7afe5a",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "KTe",
+                "declStart": 112426,
+                "declEnd": 114161,
+                "sha256": "85616a709942122fa802cb6d92115b7b2cbe30a2700b3a10abafb42f46a8b697"
+              },
+              "closure": [
+                {
+                  "name": "chunk-9e2ns8ty.js",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 243672,
+                  "sha256": "53d260820b9f7af2d3d03096e1321b57dbd682bc79a5c755df7f396bfa52fe45",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "Urn",
+              "as": "checkTooComplexSafety",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 999315,
+              "declEnd": 1000376,
+              "sha256": "9162b4bed66a3df93f37b98f7309eb77250ae844255e33b0a4ac71c4b4589790"
+            },
+            {
+              "name": "xrn",
+              "as": "checkTooComplexSandbox",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 991217,
+              "declEnd": 994012,
+              "sha256": "86e43c072187f928fa9197f72f3c94dd9fa90335b2cb49e1fba18451855c8bd9"
+            },
+            {
+              "name": "s",
+              "as": "emitTelemetry",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 4719,
+              "declEnd": 4720,
+              "sha256": "043a718774c572bd8a25adbeb1bfcd5c0256ae11cecf9f9c3f925d0e52beaf89",
+              "from": {
+                "chunk": "chunk-qw5jhqey.js",
+                "exportedAs": "s",
+                "declStart": 1332,
+                "declEnd": 1449,
+                "sha256": "06595e467f1ac955f8b81113e32cdb5b2e84936c11c78c1cd0eecbd6956d84f5"
+              }
+            },
+            {
+              "name": "yQn",
+              "as": "classifierNodeTypeId",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 11309,
+              "declEnd": 11312,
+              "sha256": "957c51913b846d5b2b375e85419833863c96331413b95a0f9e916cca25488c82",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "yQn",
+                "declStart": 110120,
+                "declEnd": 110213,
+                "sha256": "c079040c0c34c195fb6b82e2d60ca1bdf2e9c666ca5893fdedfc757a62cda880"
+              },
+              "closure": [
+                {
+                  "name": "Aa",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 110109,
+                  "declEnd": 110119,
+                  "sha256": "cc96a80d794dea8bca7a548adce60d5df05eb73acb8891843ffe45ec271506ed",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "$o",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 109769,
+                  "declEnd": 110108,
+                  "sha256": "96a6e311bc69fd20715cbab0fdeb35325bcb316580d01df85d83b7810bbe4a01",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "ql",
+              "as": "permissionMessage",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 1031335,
+              "declEnd": 1032707,
+              "sha256": "6af1f610482a67a5c6e24da1614479bc649044910eb9609bc27811081a562abb",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fk13r7sg.js",
+                  "chunk": "chunk-fk13r7sg.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3154,
+                  "sha256": "b2f589b067c07bf60c791eb6a5d80234147edf77ad0449895c051d9cb7f7f5b4",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-04aem4bh.js",
+                  "chunk": "chunk-04aem4bh.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 5767,
+                  "sha256": "e8af93a4d91fae5ac8b9e5b62394d42fb9e5e4c802b5d6c4469370fb6cea1259",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-af80z9sa.js",
+                  "chunk": "chunk-af80z9sa.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 5916,
+                  "sha256": "6698ac971bba87a454204e3a26bae053df610c412d35d654e7b9196a3f506a57",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-8c6qx8qp.js",
+                  "chunk": "chunk-8c6qx8qp.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 59565,
+                  "sha256": "756566ebb9c4186f77a69d5bb8e0bc9d13f4d07564c4d561a57d08f875dda5bd",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "yi",
+              "as": "bashTool",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 3839118,
+              "declEnd": 3850985,
+              "sha256": "e3541e622bc74601d4efad6c4df8a8ebf1236c1503840e52c9ceaf207b2de782"
+            },
+            {
+              "name": "bQn",
+              "as": "validateCommandSemantics",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 11417,
+              "declEnd": 11420,
+              "sha256": "1b144c9417e50ad96370d2a39cad2ff7bbead25ac9a42762843ad1f5de00c9ba",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "bQn",
+                "declStart": 163205,
+                "declEnd": 175587,
+                "sha256": "bb8de285908e6e046bd207ac51535528106f52dd8c3cfd496a1a25423cf1916f"
+              },
+              "closure": [
+                {
+                  "name": "chunk-9e2ns8ty.js",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 243672,
+                  "sha256": "53d260820b9f7af2d3d03096e1321b57dbd682bc79a5c755df7f396bfa52fe45",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-bsdtxcdc.js",
+                  "chunk": "chunk-bsdtxcdc.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 808595,
+                  "sha256": "911f3e76c42f483b2ee2db1166683d8964768f46766b9009adf4036107030935",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "Hrn",
+              "as": "checkInvalidSemanticsRules",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1002348,
+              "declEnd": 1002853,
+              "sha256": "4f6ad157eeb8a898f6041844741ac6b07aacd542fdc40688cb6cb9df10e31d32"
+            },
+            {
+              "name": "A8e",
+              "as": "checkSandboxAutoAllow",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 990426,
+              "declEnd": 991217,
+              "sha256": "e3d398b588f73d25ef3bfa659fe1893dfe376f5bf2d36a2523d9e8dc073282d3"
+            },
+            {
+              "name": "aQ",
+              "as": "checkExactPermission",
+              "kind": "effectful-port",
+              "declKind": "variable",
+              "declStart": 988253,
+              "declEnd": 988893,
+              "sha256": "7a00fb7dc64045d11b3d248dc19894941c52f9630edef6499c53b29db3cecf23"
+            },
+            {
+              "name": "w8e",
+              "as": "checkPipeSafety",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 975286,
+              "declEnd": 975472,
+              "sha256": "1cd1e76af39f610abf95daf18441d6bb670aa6fa5ddfdde9d950741591c2f455",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "$ct",
+              "as": "checkPermission",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1003463,
+              "declEnd": 1004739,
+              "sha256": "71426551ba5c46fd778776f8d15b89867e1c7ee93fe51d08460c55b22e3050e8"
+            },
+            {
+              "name": "Lb",
+              "as": "isNormalizedCdCommand",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 1011551,
+              "declEnd": 1011639,
+              "sha256": "948e2bcc38f4198f6144730becf31922aa8f68b3112438b52a339357d3a6a5db",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "LP",
+              "as": "isNormalizedGitCommand",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 1011392,
+              "declEnd": 1011551,
+              "sha256": "c4156d2b5f7909b4048da36bfaeb3ad4817dc02d56b9dedfe1d4ebbc38421145",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "$rn",
+              "as": "isCdGitSequenceSafe",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 996685,
+              "declEnd": 996923,
+              "sha256": "ffa75e5735fd2d70acf7f29e9e5907563c48b321d27f1b1338a9f74a5478062c"
+            },
+            {
+              "name": "ee",
+              "as": "currentWorkingDirectory",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 4844,
+              "declEnd": 4846,
+              "sha256": "27a84712e4b22c415fc544d55cdee82327a829f96d03329457f76ebf9af4dcaa",
+              "from": {
+                "chunk": "chunk-z9mp80s2.js",
+                "exportedAs": "ee",
+                "declStart": 1013,
+                "declEnd": 1063,
+                "sha256": "9dd4f005c82c20f1d7bf25cb5f32d05ed99415dacea87a7eda6c51e8d4b163c7"
+              }
+            },
+            {
+              "name": "I8",
+              "as": "checkPathSafety",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 939072,
+              "declEnd": 941297,
+              "sha256": "ab21e2f3928ca6a5a51b13aa5b3ce500996d0965da3216ca8645c6bdc68e763f"
+            },
+            {
+              "name": "fL",
+              "as": "hasNormalizedCdCommand",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 1011639,
+              "declEnd": 1011691,
+              "sha256": "9b1e24de60bffa8f2d63381e4e132e24c70577b6e3297c833f873522f06981e0",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "D",
+              "as": "platform",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 22853,
+              "declEnd": 22854,
+              "sha256": "3f39d5c348e5b79d06e842c114e6cc571583bbf44e4b0ebfda1a01ec05745d43",
+              "from": {
+                "chunk": "chunk-zyp65cht.js",
+                "exportedAs": "D",
+                "declStart": 3527,
+                "declEnd": 3565,
+                "sha256": "1e3f50096e8f681bca101a612e81f576341b9d33184d472fca548abbef3a5d60"
+              }
+            },
+            {
+              "name": "LC",
+              "as": "normalizeWindowsPath",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 6215,
+              "declEnd": 6217,
+              "sha256": "0a980e2263735001c25089e83b967fb4156f3b1284d49e808c12c2d72cc0134e",
+              "from": {
+                "chunk": "chunk-vvj94wew.js",
+                "exportedAs": "LC",
+                "declStart": 2877,
+                "declEnd": 3086,
+                "sha256": "5ed8aff871eaa6c94a32e38ce7fd79f642a0a3177a28b063244403a2e78abd3d"
+              },
+              "closure": [
+                {
+                  "name": "_0",
+                  "chunk": "chunk-zx8x716f.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 1524,
+                  "declEnd": 1806,
+                  "sha256": "296c14c2f89586043f4ea3b8b1ceda80356c2bc4f3967d88a9de0f245a9695ae",
+                  "declKind": "function"
+                },
+                {
+                  "name": "cd",
+                  "chunk": "chunk-ced4kqn1.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 2358,
+                  "declEnd": 17434,
+                  "sha256": "61c2f459b73849ee64514b52b2822ab75097dd0ca618670a482e76e0cc4f9945",
+                  "declKind": "class"
+                },
+                {
+                  "name": "y",
+                  "chunk": "chunk-ced4kqn1.js",
+                  "depth": 3,
+                  "basis": "declaration",
+                  "declStart": 1803,
+                  "declEnd": 1848,
+                  "sha256": "38759c783c9acbf65cc861006590a7becb2391d2f97b81444afa39c199d93113",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "x",
+                  "chunk": "chunk-ced4kqn1.js",
+                  "depth": 3,
+                  "basis": "declaration",
+                  "declStart": 1849,
+                  "declEnd": 1988,
+                  "sha256": "c59e7ff73e2308546e11b046c72841c11e1c79eb9f5b80e24d52dc0861bc318c",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "T",
+                  "chunk": "chunk-ced4kqn1.js",
+                  "depth": 3,
+                  "basis": "declaration",
+                  "declStart": 2049,
+                  "declEnd": 2358,
+                  "sha256": "8713d070b882c96d1c33beaa655c73ed268c9ced427459babcb82f2b622d97c9",
+                  "declKind": "class"
+                },
+                {
+                  "name": "M",
+                  "chunk": "chunk-ced4kqn1.js",
+                  "depth": 3,
+                  "basis": "declaration",
+                  "declStart": 1769,
+                  "declEnd": 1785,
+                  "sha256": "4666b42cca50a7d361d514299544f05b1479e7fdec4a9d2ada04e615480fb4e7",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "D",
+                  "chunk": "chunk-ced4kqn1.js",
+                  "depth": 3,
+                  "basis": "declaration",
+                  "declStart": 718,
+                  "declEnd": 727,
+                  "sha256": "259427559de3a10a572defc4280b1126c2074102bba5d9214d98a4690bc7724b",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "L",
+                  "chunk": "chunk-ced4kqn1.js",
+                  "depth": 3,
+                  "basis": "declaration",
+                  "declStart": 778,
+                  "declEnd": 884,
+                  "sha256": "598c0cc52980cb48a9fb39db81391ee2e3d7b366317986bea5a5228aad6c1b2f",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "O",
+                  "chunk": "chunk-ced4kqn1.js",
+                  "depth": 3,
+                  "basis": "declaration",
+                  "declStart": 1989,
+                  "declEnd": 2049,
+                  "sha256": "bd6d4071888d4b40afd76752f0cf5d2e532a62973530fa0b45abdfb2ec7b9a82",
+                  "declKind": "class"
+                },
+                {
+                  "name": "F",
+                  "chunk": "chunk-ced4kqn1.js",
+                  "depth": 3,
+                  "basis": "declaration",
+                  "declStart": 619,
+                  "declEnd": 717,
+                  "sha256": "f9e053600019554687d1d3e7af836133511d08aa21fa48f76572aaebb664d8f2",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "z",
+                  "chunk": "chunk-ced4kqn1.js",
+                  "depth": 3,
+                  "basis": "declaration",
+                  "declStart": 885,
+                  "declEnd": 913,
+                  "sha256": "85eaf7d1a7ecb3c5f3d28cc95c98a3e469ea592fbc5a0f63602f002a1fab7544",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "C",
+                  "chunk": "chunk-ced4kqn1.js",
+                  "depth": 4,
+                  "basis": "declaration",
+                  "declStart": 728,
+                  "declEnd": 777,
+                  "sha256": "f70c6887811534c714b21f2b7d89bf5daf038ad914fb5f4ffc1a44b09b8816aa",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "Drn",
+              "as": "decomposeCommands",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 995251,
+              "declEnd": 995594,
+              "sha256": "965e648986a439be666e4db08755fbf4e137efbf5cd7a7b95032ab42160c69f8",
+              "closure": [
+                {
+                  "name": "M8e",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 995594,
+                  "declEnd": 995652,
+                  "sha256": "27c52274a502cafa438b6f5df5cf25ead2324745c70b4c671deb642770f48ab4",
+                  "declKind": "function"
+                },
+                {
+                  "name": "Qa",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 109282,
+                  "declEnd": 109334,
+                  "sha256": "0efe916dda3cc66bc1c3b5f4ef4d2d93c15fb2e4abba643be86ea5a13c712b3a",
+                  "declKind": "function"
+                },
+                {
+                  "name": "Me",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 109239,
+                  "declEnd": 109261,
+                  "sha256": "233cc5fb4ea708e96c0fa5c67b36a622a3d4b3605aeaf4d6d4ef355f7952e96b",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "z",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 109262,
+                  "declEnd": 109281,
+                  "sha256": "fc3dc77b6831251dfdb8d8d07d12af2f57ac8cfafe09e2df14f1b0bb48fe1e4d",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "te",
+              "as": "uniqueValues",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 23372,
+              "declEnd": 23374,
+              "sha256": "2d6c9a90dd38f6852515274cde41a8cd8e7e1a7a053835334ec7e29f61b918dd",
+              "from": {
+                "chunk": "chunk-4vdmpx05.js",
+                "exportedAs": "te",
+                "declStart": 731,
+                "declEnd": 768,
+                "sha256": "6ffde3998e55781a73c37dec46d904815d2c833debe4a2276a841c5acf544586"
+              },
+              "closure": []
+            },
+            {
+              "name": "TT",
+              "as": "allowedDirectories",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 11552,
+              "declEnd": 11554,
+              "sha256": "9779469589f956f434b70b578302dcbaa084a5eabb0124ccd61b0ae58c596e70",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "TT",
+                "declStart": 223415,
+                "declEnd": 223494,
+                "sha256": "e8b8dcf1569150dda0a02415305149421c9861e60aba801e4a806989c1f40f7f"
+              }
+            },
+            {
+              "name": "Qo",
+              "as": "resolvePathPolicy",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 2566,
+              "declEnd": 2568,
+              "sha256": "2267fdc9517de393810a6abc7ee1b3d5cef3184e4953ccb053de19bf3f5cd45a",
+              "from": {
+                "chunk": "chunk-ynzt0fm1.js",
+                "exportedAs": "Qo",
+                "declStart": 16163,
+                "declEnd": 16477,
+                "sha256": "a5f883f3c6da01c9c1dd3f001b2ba3b84933a565d42ecb4e2cedca224b54947b"
+              }
+            },
+            {
+              "name": "le",
+              "as": "filesystem",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 2582,
+              "declEnd": 2584,
+              "sha256": "61098a4bf2a5e216533e5f2994d8f290308b310f2efa046548a96302afe412ea",
+              "from": {
+                "chunk": "chunk-ynzt0fm1.js",
+                "exportedAs": "le",
+                "declStart": 22453,
+                "declEnd": 22477,
+                "sha256": "15f0ecdc6269a118368b5e10428378de993d8bff7805f2b6ed8ae5823c7f510e"
+              }
+            },
+            {
+              "name": "FP",
+              "as": "normalizePath",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 908465,
+              "declEnd": 908480,
+              "sha256": "3741dd86bff8b65f34fe4363a307fa3d9b5e4a0efadac822c61972fb78daf647",
+              "note": "exporting module 'path' is not part of the graph — only the import site is covered; its transitive closure is therefore unrecorded — this row cannot be staled by a change to what the helper calls"
+            },
+            {
+              "name": "yr",
+              "as": "caseFoldPath",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 11533,
+              "declEnd": 11535,
+              "sha256": "5ee26e7e05ffa7c93628cf29c423c55503ea72aed9ef3d743c85eb9986e88956",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "yr",
+                "declStart": 215100,
+                "declEnd": 215184,
+                "sha256": "e9c6b3839917ff70b92ff80f533744a865d2e8f069d836f1106f421cf1e7eeb3"
+              },
+              "closure": []
+            },
+            {
+              "name": "Srn",
+              "as": "pathSeparator",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 908496,
+              "declEnd": 908506,
+              "sha256": "0a7353155d2ecd9f25d8861be6f78d5137d4d964aa1287cf20013e9ce638de2a",
+              "note": "exporting module 'path' is not part of the graph — only the import site is covered"
+            },
+            {
+              "name": "Db",
+              "as": "peelCommandPrefixes",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 942645,
+              "declEnd": 943599,
+              "sha256": "78a2430056bbdb255e0680ef75faa7af08ca814659ff2c3b143fb99a7a2a6c94",
+              "closure": [
+                {
+                  "name": "a_e",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 980878,
+                  "declEnd": 981375,
+                  "sha256": "8954de42957e31dd5714ee6df7d3216dd79b18aeb82aa32a2b51863075612fec",
+                  "declKind": "function"
+                },
+                {
+                  "name": "Nnn",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 942169,
+                  "declEnd": 942409,
+                  "sha256": "0eeff982a5761b3cdc115909425c28f8e03d7d0bae8b52a97b4103f04790166c",
+                  "declKind": "function"
+                },
+                {
+                  "name": "$nn",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 942409,
+                  "declEnd": 942645,
+                  "sha256": "e9c74fa79f26ca69d22ef209670a8bf82df00bd8fc20f2a743687357b6e5700f",
+                  "declKind": "function"
+                },
+                {
+                  "name": "v8e",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 980853,
+                  "declEnd": 980877,
+                  "sha256": "b83e250e94f73ea187519d7f4d6e134450193b43ecd6072a178e97d711f4601e",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "Qa",
+              "as": "hasUnknownTrackedValue",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 11306,
+              "declEnd": 11308,
+              "sha256": "18b68dd0be6488243208af5bdfec9ad801a8ff4b796e148dfc3eaf751acb6dd7",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "Qa",
+                "declStart": 109282,
+                "declEnd": 109334,
+                "sha256": "0efe916dda3cc66bc1c3b5f4ef4d2d93c15fb2e4abba643be86ea5a13c712b3a"
+              },
+              "closure": [
+                {
+                  "name": "Me",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 109239,
+                  "declEnd": 109261,
+                  "sha256": "233cc5fb4ea708e96c0fa5c67b36a622a3d4b3605aeaf4d6d4ef355f7952e96b",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "z",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 109262,
+                  "declEnd": 109281,
+                  "sha256": "fc3dc77b6831251dfdb8d8d07d12af2f57ac8cfafe09e2df14f1b0bb48fe1e4d",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "lW",
+              "as": "isAbsolutePath",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 908448,
+              "declEnd": 908464,
+              "sha256": "7671b5e61274fbb5c2d3189ac35957ef2ba831377ffd24de2e9acd5ac1e5147f",
+              "note": "exporting module 'path' is not part of the graph — only the import site is covered; its transitive closure is therefore unrecorded — this row cannot be staled by a change to what the helper calls"
+            },
+            {
+              "name": "F8e",
+              "as": "resolvePath",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 908481,
+              "declEnd": 908495,
+              "sha256": "6d8bc8db166151340d3857f62e70aa7f07e303b509932696ad66ca4a8e3cef5e",
+              "note": "exporting module 'path' is not part of the graph — only the import site is covered; its transitive closure is therefore unrecorded — this row cannot be staled by a change to what the helper calls"
+            },
+            {
+              "name": "dL",
+              "as": "checkDangerousRemoval",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 924029,
+              "declEnd": 926567,
+              "sha256": "f5c9494863eaf72422b3f063313bfb09536eb135198e1c401162cf40aafdeb9b"
+            },
+            {
+              "name": "Lrn",
+              "as": "isSafeCdSequence",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 995652,
+              "declEnd": 995799,
+              "sha256": "72cd0af40bd519556462517c626386cfd588467910072855031a686375d69368",
+              "closure": []
+            },
+            {
+              "name": "Frn",
+              "as": "resolveLeadingDirectoryChange",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 995799,
+              "declEnd": 996270,
+              "sha256": "dc0843487fc8b504999a5794298bd52cd6bfdb0e0727c0f0f054469e91f10e90"
+            },
+            {
+              "name": "Nrn",
+              "as": "isCdGitAstSequenceSafe",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 996270,
+              "declEnd": 996685,
+              "sha256": "ed6aeed8fd727461ad6e5198a9201a10ef11586a02a937de89a6d29e60ce9c9d"
+            },
+            {
+              "name": "tQ",
+              "as": "hasUnsafeGitStructureFromAnalysis",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 967748,
+              "declEnd": 969083,
+              "sha256": "fcaf53f8c2ac42fe193549ecbc9e170586ffcc71858de84e97a53d6b8d486baf"
+            },
+            {
+              "name": "iW",
+              "as": "hasUnsafeGitStructureFromCommand",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 965749,
+              "declEnd": 966157,
+              "sha256": "0658a48294344886a7b7245c2fa2b3c74bc1c48a550e9a2c18c729127a5156ed"
+            },
+            {
+              "name": "j8e",
+              "as": "checkDirectCommand",
+              "kind": "effectful-port",
+              "declKind": "variable",
+              "declStart": 988894,
+              "declEnd": 990128,
+              "sha256": "63ba5a480f826c34c094ba75f0984ea84d96e5f25038618e3a92ab75c941c937"
+            },
+            {
+              "name": "r_e",
+              "as": "isSedCommand",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 921326,
+              "declEnd": 921363,
+              "sha256": "295d71771e52a6313e4f4f577db304b4f83a265949b15f5b512c367dfdeb1646",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-9e2ns8ty.js",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 243672,
+                  "sha256": "53d260820b9f7af2d3d03096e1321b57dbd682bc79a5c755df7f396bfa52fe45",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "o_e",
+              "as": "checkRedirectSedRisk",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 922986,
+              "declEnd": 923829,
+              "sha256": "8852f65b31129270f29657fbc4cc3423a5b7f9d03d6017f1a1e79546e534f42e",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-9e2ns8ty.js",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 243672,
+                  "sha256": "53d260820b9f7af2d3d03096e1321b57dbd682bc79a5c755df7f396bfa52fe45",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "Q",
+              "as": "countMatching",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 23370,
+              "declEnd": 23371,
+              "sha256": "4ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260",
+              "from": {
+                "chunk": "chunk-4vdmpx05.js",
+                "exportedAs": "Q",
+                "declStart": 672,
+                "declEnd": 731,
+                "sha256": "59ed2ec3f238b0bde58431d4c6cf8dda622e6dff7cd825b0e835ab24a45ccb16"
+              },
+              "closure": []
+            },
+            {
+              "name": "Ze",
+              "as": "classifierAbortError",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 2277,
+              "declEnd": 2279,
+              "sha256": "23e8cb6b17006b6fc5d07b21291408a42922d424162e9d931982e67c09db1af3",
+              "from": {
+                "chunk": "chunk-qr1avfxy.js",
+                "exportedAs": "Ze",
+                "declStart": 858,
+                "declEnd": 929,
+                "sha256": "0972d933991bcd6e4002ee3f76173e245dcb6071288586803429264230134de4"
+              },
+              "closure": []
+            },
+            {
+              "name": "C8e",
+              "as": "checkSubcommandPermission",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 990129,
+              "declEnd": 990426,
+              "sha256": "43c011e69f93c0bee2f0d8c53b58c520fd9154c790f28c4f75f9ae652caf6820"
+            },
+            {
+              "name": "Fy",
+              "as": "findSafetyCheckReason",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 1056420,
+              "declEnd": 1056619,
+              "sha256": "7822ff5800d41ba6fd66501edb28ec23c58281b57f705af48124e4c266cfbf9b",
+              "closure": []
+            },
+            {
+              "name": "yKe",
+              "as": "normalizeSuggestions",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 11456,
+              "declEnd": 11459,
+              "sha256": "94085334bc332abff6b7e605667372fe62d9432c29dbb045e4526d01bbfe697a",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "yKe",
+                "declStart": 203200,
+                "declEnd": 203319,
+                "sha256": "65d4d0c811cd141ea588df62fbf15f2988faecc3634862745972df9162f2f2c9"
+              },
+              "closure": []
+            },
+            {
+              "name": "eo",
+              "as": "serializeRule",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 7252,
+              "declEnd": 7254,
+              "sha256": "5d61caeedf54c4df706492776961de8e326e6d23957ac6c0622e21afa0ada80c",
+              "from": {
+                "chunk": "chunk-fk13r7sg.js",
+                "exportedAs": "eo",
+                "declStart": 2379,
+                "declEnd": 2481,
+                "sha256": "1e4a91a386f6880ffc68d9e55318970b34cfaf3db2b45d22230584268c156738"
+              },
+              "closure": [
+                {
+                  "name": "c",
+                  "chunk": "chunk-fk13r7sg.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 1556,
+                  "declEnd": 1647,
+                  "sha256": "68386cb5094dbce819d7d6ca47e169e1d7fd18bfe705e97757ff877f0223d7d4",
+                  "declKind": "function"
+                }
+              ]
+            },
+            {
+              "name": "w3e",
+              "as": "permissionSuggestions",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 978197,
+              "declEnd": 978381,
+              "sha256": "2ac0e5fdaecbc69a56e1ecab4bce0697a1082a42be1bd58b232fd957b3505350",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-9e2ns8ty.js",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 243672,
+                  "sha256": "53d260820b9f7af2d3d03096e1321b57dbd682bc79a5c755df7f396bfa52fe45",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-04aem4bh.js",
+                  "chunk": "chunk-04aem4bh.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 5767,
+                  "sha256": "e8af93a4d91fae5ac8b9e5b62394d42fb9e5e4c802b5d6c4469370fb6cea1259",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-vb9my8xr.js",
+                  "chunk": "chunk-vb9my8xr.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 2638,
+                  "sha256": "457ca5a7b88ee46aed3e6c5092c5fa40d62dc7eb237913dd66dd3b369d9d9c4e",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-bsdtxcdc.js",
+                  "chunk": "chunk-bsdtxcdc.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 808595,
+                  "sha256": "911f3e76c42f483b2ee2db1166683d8964768f46766b9009adf4036107030935",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-bqw67h0a.js",
+                  "chunk": "chunk-bqw67h0a.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 751,
+                  "sha256": "d5ead4305f2c4c9bc581687467d172836314e26c111886425bc2e471870da636",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-38213y7h.js",
+                  "chunk": "chunk-38213y7h.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 94444,
+                  "sha256": "210dc834a30092805d6cd139337048efe5c1e01adf214be33adc3ccc19642a6b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-9mcb844f.js",
+                  "chunk": "chunk-9mcb844f.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 8375,
+                  "sha256": "4a73397f504e83f4983e256e433610571c191e4d649a2b22901f3511b491c438",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "brn",
+              "as": "suggestionLimit",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 977101,
+              "declEnd": 977106,
+              "sha256": "5febcf9080c52631017112acb434a4cd6171e00e5c0a4b8fcbd690d90934bbaa"
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 987955,
+            "end": 988249,
+            "sha256": "effc651a80e5d4a88f16a8b6acc5dc8bbcaae94257cb03cb901cad7ce32b30ff"
+          },
+          "captures": [
+            {
+              "name": "he",
+              "as": "readPermissionContext",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 16303,
+              "declEnd": 16305,
+              "sha256": "372f7e2fd2d01ce2a1d71dc072acbba4c6fd25a1087cd7f153f4ec0ce37e1ede",
+              "from": {
+                "chunk": "chunk-3k4hb7pf.js",
+                "exportedAs": "he",
+                "declStart": 3260,
+                "declEnd": 4374,
+                "sha256": "c608774b22126ef1d4508cfeb08a14d62fd2920ee53cfeb24a954b115215855e"
+              }
+            },
+            {
+              "name": "XXe",
+              "as": "clampFailureReason",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 6797,
+              "declEnd": 6800,
+              "sha256": "40d47439fb7f2b2329e90e576f62346be8317bfe887ccec4718a640b0060e8dd",
+              "from": {
+                "chunk": "chunk-af80z9sa.js",
+                "exportedAs": "XXe",
+                "declStart": 1996,
+                "declEnd": 2056,
+                "sha256": "a7625a70b4b9f2cde0580347f412776637317c30cb0225c480e5d7c95dd083d6"
+              }
+            }
+          ]
         }
       ],
       "evidence": [
@@ -8455,9 +10152,16 @@
         "strangle/bash-read-only-corpus.ts",
         "strangle/bash-read-only-parity.test.ts",
         "scenario:perm-accept-edits",
-        "scenario:bash-compound-safety"
+        "scenario:bash-compound-safety",
+        "strangle/manifest.ts:bash-permission-*",
+        "strangle/modules/bash-compound-safety/reference.js",
+        "strangle/bash-compound-safety-capture-specs.ts",
+        "strangle/bash-compound-safety-captures.ts",
+        "strangle/bash-compound-safety-corpus.ts",
+        "strangle/bash-compound-safety-parity.test.ts",
+        "strangle/bash-compound-safety-coverage.ts"
       ],
-      "note": "C13a/W10a owns ONE unit of this row outright: chunk-fgwne0fb.js, the bash tokenizer and parser, as the campaign's third whole-chunk replacement (62,907 upstream bytes, 105 declarations at 99.8 % density, seven exports, one import, four named importers and 294 bare ones -- enumerated from the artifact in research/fixtures/shell-parser-2.1.251.json, which corrected the scout's declaration count and found a reader no static import scan sees). It is the SUBSTRATE of the row rather than a slice of it: the command-safety chain, the destructive classifier, the read-only classifier, the redirection analysis and the per-subcommand permission aggregate all begin with a tree this module built. `spliced`, and a long way from closing. The executor itself is untouched -- the ShellCommand handle, the TaskOutput buffer, the spawn, the shell snapshot, the cwd write-back, the sandbox wrap and the four backgrounding arms are all still upstream's, and are C13b through C13e's. The 179 KB of pure, unblocked surface the W10 scout measured is what this child took the first 63 KB of. EDGES stay empty, deliberately: the owned unit has exactly ONE port -- the telemetry function it calls on an abort -- and no ledger row owns telemetry. The subsystem's real edges (permissions for canUseTool, sandboxing for the seatbelt wrap, session-storage for output persistence, subagent-dispatch for the task registry) are consumed by the executor, which this child did not touch; recording them here would be claiming a cut C13a did not make. WHAT GRADES IT: the corpus observes this module through exactly one door. Measured, per export, with a twin built for each: only `parseOrAbort` reddens a scenario, because `dde` -> `KTe` turns its abort sentinel into a `too-complex` verdict that the recorded permission decision carries. The other six exports feed analyses whose fallbacks the corpus's commands (`echo REFORGE_TOOL_OK`, `chmod 600 perm.txt`, `mkdir -p`, `cd`, `pwd`, `sleep`) cannot distinguish from their real answers. That is a fact about the corpus, not about the exports, and it is why this unit shipped with a contract test rather than with more scenarios: strangle/parser-parity.test.ts evaluates the PINNED CHUNK'S OWN BYTES and compares the two parse trees node for node over sixteen partitions of the input domain.\n\nC13c/W10c adds no splice and four EDGES, each of which is a typed port into a subsystem this row does not own and cannot close without. -> subsystem/permissions: a compound Bash command is decided per SUBCOMMAND and aggregated (`drn`), so every Bash denial the corpus carries is really a permission answer about a parse this row produced; `bash-compound-safety` is the recording that exercises the aggregate, and C13b consumes it. -> subsystem/control-protocol: `background_tasks` is a control_request subtype whose handler reaches into the shell registry, so backgrounding a running command is an act of the control protocol performed on this row's state; W7 fired the ARM against an EMPTY registry (answered success without touching a shell) and `bash-background-control` is the EFFECT. -> subsystem/hook-dispatch: the hook runner calls `B2` and `jx` directly and never touches `LG`, so the process-handle and output-sink ports are SHARED and the shell-provider layer above them is not -- C13d's port cut is that sentence, and the edge is what records it. -> subsystem/moat-tools: a backgrounded command's completion notification is composed here (`x$e`/`M$e`, prefix `Background command `) and DELIVERED by C11c's queue and task store, so this row owns what the notification says and when, and not where it is kept.\n\nThe machinery those edges are graded through is this child's, and it is oracle machinery rather than ownership: a scripted child whose behaviour is its argv (no clock in the bytes, so the same argv is byte-identical on every engine), a build-time rewrite of the six shell deadlines derived by the SHAPE OF EACH USE rather than by a minified name, and a third member of the state snapshot that sees what a run left RUNNING -- the blind spot W9 named as its carry-over and the one W10 cannot be graded without."
+      "note": "C13a/W10a owns ONE unit of this row outright: chunk-fgwne0fb.js, the bash tokenizer and parser, as the campaign's third whole-chunk replacement (62,907 upstream bytes, 105 declarations at 99.8 % density, seven exports, one import, four named importers and 294 bare ones -- enumerated from the artifact in research/fixtures/shell-parser-2.1.251.json, which corrected the scout's declaration count and found a reader no static import scan sees). It is the SUBSTRATE of the row rather than a slice of it: the command-safety chain, the destructive classifier, the read-only classifier, the redirection analysis and the per-subcommand permission aggregate all begin with a tree this module built. `spliced`, and a long way from closing. The executor itself is untouched -- the ShellCommand handle, the TaskOutput buffer, the spawn, the shell snapshot, the cwd write-back, the sandbox wrap and the four backgrounding arms are all still upstream's, and are C13b through C13e's. The 179 KB of pure, unblocked surface the W10 scout measured is what this child took the first 63 KB of. EDGES stay empty, deliberately: the owned unit has exactly ONE port -- the telemetry function it calls on an abort -- and no ledger row owns telemetry. The subsystem's real edges (permissions for canUseTool, sandboxing for the seatbelt wrap, session-storage for output persistence, subagent-dispatch for the task registry) are consumed by the executor, which this child did not touch; recording them here would be claiming a cut C13a did not make. WHAT GRADES IT: the corpus observes this module through exactly one door. Measured, per export, with a twin built for each: only `parseOrAbort` reddens a scenario, because `dde` -> `KTe` turns its abort sentinel into a `too-complex` verdict that the recorded permission decision carries. The other six exports feed analyses whose fallbacks the corpus's commands (`echo REFORGE_TOOL_OK`, `chmod 600 perm.txt`, `mkdir -p`, `cd`, `pwd`, `sleep`) cannot distinguish from their real answers. That is a fact about the corpus, not about the exports, and it is why this unit shipped with a contract test rather than with more scenarios: strangle/parser-parity.test.ts evaluates the PINNED CHUNK'S OWN BYTES and compares the two parse trees node for node over sixteen partitions of the input domain.\n\nC13c/W10c adds no splice and four EDGES, each of which is a typed port into a subsystem this row does not own and cannot close without. -> subsystem/permissions: a compound Bash command is decided per SUBCOMMAND and aggregated (`drn`), so every Bash denial the corpus carries is really a permission answer about a parse this row produced; `bash-compound-safety` is the recording that exercises the aggregate, and C13b consumes it. -> subsystem/control-protocol: `background_tasks` is a control_request subtype whose handler reaches into the shell registry, so backgrounding a running command is an act of the control protocol performed on this row's state; W7 fired the ARM against an EMPTY registry (answered success without touching a shell) and `bash-background-control` is the EFFECT. -> subsystem/hook-dispatch: the hook runner calls `B2` and `jx` directly and never touches `LG`, so the process-handle and output-sink ports are SHARED and the shell-provider layer above them is not -- C13d's port cut is that sentence, and the edge is what records it. -> subsystem/moat-tools: a backgrounded command's completion notification is composed here (`x$e`/`M$e`, prefix `Background command `) and DELIVERED by C11c's queue and task store, so this row owns what the notification says and when, and not where it is kept.\n\nThe machinery those edges are graded through is this child's, and it is oracle machinery rather than ownership: a scripted child whose behaviour is its argv (no clock in the bytes, so the same argv is byte-identical on every engine), a build-time rewrite of the six shell deadlines derived by the SHAPE OF EACH USE rather than by a minified name, and a third member of the state snapshot that sees what a run left RUNNING -- the blind spot W9 named as its carry-over and the one W10 cannot be graded without.\n\nC13b/W10b owns the command-admission leaf without claiming the executor: five anchored runtime roots (KTe, _8e, $ct, jrn, XNt), five pure folds beneath them (w8e, mrn, drn, hrn, bQn), and eleven asserted table declarators. The direct table population is 22,674 pinned bytes and its fixture accounts for 27 additional declaration dependencies. jrn remains its own splice rather than being folded into $ct: $ct has 13 direct free variables, while jrn has 53 and directly reaches permission, sandbox, path, filesystem, cwd, and rule-store state that cannot honestly be forwarded through a caller that does not capture them. The aggregate contract executes pinned upstream declaration bytes and requires exact decisions, insertion-ordered Map overwrite behavior, and subcommandResults. The registered bash-compound-safety replay exercises the owned chain but, as two exact throwing probes proved, reaches neither Fy call site; direct pinned-byte cases grade both the multi-cd safety preservation and duplicate-subcommand tie-break instead. No live recording was added. The subsystem stays spliced: shell process execution, timeout/background control, output persistence, sandbox wrapping, and notification delivery remain later C13 children."
     },
     {
       "id": "subsystem/mcp-adapter",
@@ -8810,7 +10514,7 @@
         "scenario:sigterm-mid-turn",
         "scenario:sighup-mid-turn"
       ],
-      "note": "C1's switch-case mechanism spike (the streaming assembler's `text_delta` arm) plus C16b/W13b's PROCESS LIFECYCLE: the shutdown latch `chunk-29shcjw2.js` owned WHOLE as the campaign's second S-chunk (780 B of file, 165 B of code, three exports, ten named importers, 90 call sites \u2014 enumerated from the artifact in `research/fixtures/process-lifecycle-2.1.251.json`), and four of the shutdown coordinator `TWn`'s 44 members: the in-progress claim's reader, its two writers, and the synchronous shutdown entry point that commits the latch. `spliced`, and not close to closing: the turn driver, the retry ladder, the transport, the compaction drivers and the frame layer are all still upstream's. EDGES, recorded here for the first time (the array was empty until this child): the eight subsystems the loop CONSUMES, per the W13 scout \u00a73.2 table \u2014 permissions supplies `canUseTool`, hook-dispatch the five executor points, environment-and-system-prompt the assembly, compaction the summarizer and boundary, session-storage the load/append/resume tail, control-protocol the ladder's arms, and bash-executor/subagent-dispatch the per-tool execution. The session-storage edge now has a second, measured strand: the headless dispatcher wires `sealTranscriptAppendsForShutdown` (`Ccn`, a facade over the session store's `sealAppendsForShutdown`) as the `onInternalEventLaneClosed` callback \u2014 RECORDED, NOT OWNED, and W9's when it comes. The INBOUND edge from hook-dispatch is on that row: the executor children C10.7/C10.8 consume `isShuttingDown`/`hang` from this subsystem's owned module instead of the stub they were going to build. Two of the latch's three exports are corpus-DARK with measured reasons and a re-measured population (see the manifest): the commit and the hang are unobservable on BOTH shutdown paths a headless engine has, because the SIGTERM handler aborts the run controller before the guard the commit opens, and the SIGHUP path force-exits before any continuation resumes."
+      "note": "C1's switch-case mechanism spike (the streaming assembler's `text_delta` arm) plus C16b/W13b's PROCESS LIFECYCLE: the shutdown latch `chunk-29shcjw2.js` owned WHOLE as the campaign's second S-chunk (780 B of file, 165 B of code, three exports, ten named importers, 90 call sites — enumerated from the artifact in `research/fixtures/process-lifecycle-2.1.251.json`), and four of the shutdown coordinator `TWn`'s 44 members: the in-progress claim's reader, its two writers, and the synchronous shutdown entry point that commits the latch. `spliced`, and not close to closing: the turn driver, the retry ladder, the transport, the compaction drivers and the frame layer are all still upstream's. EDGES, recorded here for the first time (the array was empty until this child): the eight subsystems the loop CONSUMES, per the W13 scout §3.2 table — permissions supplies `canUseTool`, hook-dispatch the five executor points, environment-and-system-prompt the assembly, compaction the summarizer and boundary, session-storage the load/append/resume tail, control-protocol the ladder's arms, and bash-executor/subagent-dispatch the per-tool execution. The session-storage edge now has a second, measured strand: the headless dispatcher wires `sealTranscriptAppendsForShutdown` (`Ccn`, a facade over the session store's `sealAppendsForShutdown`) as the `onInternalEventLaneClosed` callback — RECORDED, NOT OWNED, and W9's when it comes. The INBOUND edge from hook-dispatch is on that row: the executor children C10.7/C10.8 consume `isShuttingDown`/`hang` from this subsystem's owned module instead of the stub they were going to build. Two of the latch's three exports are corpus-DARK with measured reasons and a re-measured population (see the manifest): the commit and the hang are unobservable on BOTH shutdown paths a headless engine has, because the SIGTERM handler aborts the run controller before the guard the commit opens, and the SIGHUP path force-exits before any continuation resumes."
     },
     {
       "id": "subsystem/sandboxing",
@@ -8824,7 +10528,7 @@
     {
       "id": "tool/Agent",
       "kind": "tool",
-      "title": "Agent \u2014 subagent dispatch tool",
+      "title": "Agent — subagent dispatch tool",
       "wave": "C15",
       "state": "unowned",
       "edges": [],
@@ -8959,12 +10663,12 @@
     {
       "id": "tool/PowerShell",
       "kind": "tool",
-      "title": "PowerShell \u2014 presented only under the in-allowlist CLAUDE_CODE_USE_POWERSHELL_TOOL override",
+      "title": "PowerShell — presented only under the in-allowlist CLAUDE_CODE_USE_POWERSHELL_TOOL override",
       "wave": "C13",
       "state": "unowned",
       "edges": [],
       "footprint": null,
-      "note": "Added 2026-09-03 by W8a, from the W8 scout's measurement of the flip cassette: the flipped headless catalog is 23 tools, not 22, and PowerShell is INSERTED at the sorted index 10 while Read shifts to 11 and stays. Three documents recorded that positional diff as a substitution. Its tool object (7,739 B) lives in chunk-hw8qz4q5.js, which the W5-W7 scout already assigns to W10, and it shares the executor and the notification path with Bash \u2014 so the row is C13's."
+      "note": "Added 2026-09-03 by W8a, from the W8 scout's measurement of the flip cassette: the flipped headless catalog is 23 tools, not 22, and PowerShell is INSERTED at the sorted index 10 while Read shifts to 11 and stays. Three documents recorded that positional diff as a substitution. Its tool object (7,739 B) lives in chunk-hw8qz4q5.js, which the W5-W7 scout already assigns to W10, and it shares the executor and the notification path with Bash — so the row is C13's."
     },
     {
       "id": "tool/Read",

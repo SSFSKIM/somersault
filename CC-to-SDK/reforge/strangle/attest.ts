@@ -31,7 +31,7 @@ import { join } from "node:path";
 import { ENGINE_VERSION } from "../src/pin.js";
 import { REFORGE_ROOT } from "../src/runTurn.js";
 import { branchSites, type BranchSite } from "./branches.js";
-import { adjudicate } from "./adjudicate.js";
+import { adjudicate, coverageLinesSince } from "./adjudicate.js";
 import { ATTESTED, EXCLUSIONS } from "./attestation.js";
 import { COVERAGE_DIR, SOURCE_MODULES } from "./instrument.js";
 import { runnerFor } from "./runners.js";
@@ -149,11 +149,11 @@ if (red.length > 0) {
 // the corpus cannot reach. See `AttestedModule.contract` for when a module earns
 // one and `strangle/adjudicate.ts` for why the two sets are reported apart.
 //
-// Attribution is by RECORDER FILE and by BYTE OFFSET inside it. The recorder
-// appends, one file per PID, so everything the corpus replays wrote is a prefix
-// of what is on disk when the drivers finish — and reading only the suffix means
-// a driver whose PID happens to collide with a finished engine's is still
-// attributed correctly rather than crediting the engine's work to the suite.
+// Attribution is by RECORDER FILE and by BYTE OFFSET inside it. A driver may
+// append to the existing instrumented build or rebuild it and replace the whole
+// coverage directory, so its delta is collected immediately: append snapshots
+// contribute only their suffix, while reset snapshots contribute their complete
+// contents. Corpus lines are excluded in either case.
 const coverageFiles = (): Map<string, string> => {
   const out = new Map<string, string>();
   if (!existsSync(COVERAGE_DIR)) return out;
@@ -167,6 +167,7 @@ const executed = new Set<string>();
 for (const text of beforeContract.values()) for (const line of linesOf(text)) executed.add(line);
 
 const contract = new Set<string>();
+let contractSnapshot = beforeContract;
 const contractSuites = ATTESTED.filter((a) => a.contract !== undefined);
 for (const a of contractSuites) {
   const driver = a.contract!.driver;
@@ -181,12 +182,9 @@ for (const a of contractSuites) {
     console.log(`FAIL — the contract driver for '${a.module}' did not run, so its branch evidence is missing rather than absent`);
     process.exit(1);
   }
-}
-const afterContract = coverageFiles();
-for (const [file, text] of afterContract) {
-  const already = beforeContract.get(file) ?? "";
-  const suffix = text.startsWith(already) ? text.slice(already.length) : text;
-  for (const line of linesOf(suffix)) if (!executed.has(line)) contract.add(line);
+  const afterDriver = coverageFiles();
+  for (const line of coverageLinesSince(contractSnapshot, afterDriver, executed)) contract.add(line);
+  contractSnapshot = afterDriver;
 }
 if (contractSuites.length > 0 && contract.size === 0) {
   console.log("FAIL — the contract drivers recorded no branch outcome at all; they ran against something that is not the instrumented build");
@@ -256,8 +254,8 @@ lines.push(
   "UPSTREAM'S OWN implementation of it and required the outputs to be identical, where a scenario could",
   "only ever have compared what its transcript happened to show.",
   "",
-  "An `excluded` row was not executed at all, and carries a reviewed reason. FIVE upstream-differential",
-  "contract tests are the oracle behind those reasons, one per wave's modules:",
+  "An `excluded` row was not executed at all, and carries a reviewed reason. Five earlier",
+  "upstream-differential suites are the oracle behind those reasons, one per wave's modules:",
   "",
   "- `strangle/description-parity.test.ts` — the four tool descriptions (W2);",
   "- `strangle/prompt-parity.test.ts` — the prompt-assembly pipeline and the compaction prompt (W3);",
@@ -274,8 +272,8 @@ lines.push(
   "",
   ...(contractSuites.length > 0
     ? [
-        "The sixth is the one whose coverage is measured rather than argued, and it is why the `contract`",
-        "state exists:",
+        "The modules below add the distinct lane whose coverage is measured rather than argued, which is",
+        "why the `contract` state exists:",
         "",
         ...contractSuites.map((a) => `- \`${a.module}\` — ${a.contract!.why}`),
         "",
