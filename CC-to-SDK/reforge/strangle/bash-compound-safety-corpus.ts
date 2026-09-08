@@ -1,0 +1,433 @@
+// Shared inputs for C13b's pinned-byte differential and branch-evidence driver.
+// The driver owns no private command, decision, mode, or configuration case.
+
+export const HELPER_CASES = {
+  split: [
+    "echo one | grep one",
+    "echo one > out | cat",
+    "(cd one; pwd)",
+    "echo ';' && printf x",
+    "cat <<EOF\nhello\nEOF",
+    "",
+  ],
+  argv: [
+    "echo a b",
+    "A=1 echo x",
+    "echo a$(x)b c",
+    "$(x)y foo bar",
+    "",
+    "x".repeat(10_001),
+  ],
+  normalize: [
+    "LANG=C timeout --signal TERM 2 nohup mkdir work",
+    "time -- nice -n 4 command -pp -- echo ok",
+    "SECRET=x mkdir work",
+    "SHELL=/bin/sh echo ok",
+    "# comment\nnohup echo ok",
+    "'timeout' 2 echo ok",
+    "",
+  ],
+  peel: [
+    ["/usr/bin/timeout", "--signal", "TERM", "2", "nohup", "mkdir", "work"],
+    ["env", "A=1", "-i", "command", "-pp", "--", "git", "status"],
+    ["stdbuf", "-oL", "grep", "x"],
+    ["builtin", "--", "cd", "one"],
+    ["timeout", "--bad", "2", "echo"],
+    [],
+  ],
+} as const;
+
+export const SEMANTIC_RECORDS = [
+  { argv: ["echo", "ok"], envVars: [], redirects: [], text: "echo ok", hasUnquotedGlob: false },
+  { argv: ["timeout", "--bad", "2", "echo"], envVars: [], redirects: [], text: "timeout --bad 2 echo", hasUnquotedGlob: false },
+  { argv: ["env", "-i", "printf", "%s", "ok"], envVars: [], redirects: [], text: "env -i printf %s ok", hasUnquotedGlob: false },
+  { argv: ["printf", "__CMDSUB_OUTPUT__"], envVars: [], redirects: [], text: "printf $(x)", hasUnquotedGlob: false },
+  { argv: ["jq", "system(\"id\")"], envVars: [], redirects: [], text: "jq system", hasUnquotedGlob: false },
+  { argv: ["find", ".", "-exec", "id", ";"], envVars: [], redirects: [], text: "find . -exec id", hasUnquotedGlob: false },
+  { argv: ["awk", "{print $1}"], envVars: [], redirects: [], text: "awk", hasUnquotedGlob: false },
+  { argv: ["set", "-o", "pipefail"], envVars: [], redirects: [], text: "set -o pipefail", hasUnquotedGlob: false },
+  { argv: ["jobs", "-x", "echo"], envVars: [], redirects: [], text: "jobs -x echo", hasUnquotedGlob: false },
+  { argv: ["cat", "/proc/1/environ"], envVars: [], redirects: [], text: "cat /proc/1/environ", hasUnquotedGlob: false },
+] as const;
+
+export type PlannedDecision = {
+  behavior: "allow" | "ask" | "deny" | "passthrough";
+  message?: string;
+  decisionReason?: Record<string, unknown>;
+  suggestions?: unknown[];
+  updatedInput?: Record<string, unknown>;
+};
+
+export const DANGEROUS_SAFETY_REASON = {
+  type: "safetyCheck",
+  reason: "dangerous removal",
+  classifierApprovable: false,
+  circuitBreaker: "dangerousRemoval",
+} as const;
+
+export const DUPLICATE_REMOVAL_SCHEDULE: readonly PlannedDecision[] = [
+  {
+    behavior: "ask",
+    message: "pre one",
+    decisionReason: { type: "other", reason: "pre one" },
+  },
+  {
+    behavior: "ask",
+    message: "pre two",
+    decisionReason: { type: "other", reason: "pre two" },
+  },
+  { behavior: "passthrough", message: "path pass" },
+  { behavior: "passthrough", message: "path pass" },
+  {
+    behavior: "ask",
+    message: "ordinary duplicate",
+    decisionReason: { type: "other", reason: "ordinary duplicate" },
+    suggestions: [],
+  },
+  {
+    behavior: "ask",
+    message: "safety duplicate",
+    decisionReason: DANGEROUS_SAFETY_REASON,
+    suggestions: [],
+  },
+] as const;
+
+export const PIPE_CASES: readonly {
+  tag: string;
+  command: string;
+  decisions: readonly PlannedDecision[];
+  root?: "parsed" | "sentinel";
+}[] = [
+  {
+    tag: "pipe-redirect",
+    command: "echo alpha > out | grep alpha",
+    decisions: [
+      { behavior: "allow", updatedInput: { command: "echo alpha" } },
+      {
+        behavior: "ask",
+        message: "grep asks",
+        suggestions: [{ type: "addRules", rules: ["grep"] }],
+      },
+    ],
+  },
+  { tag: "no-pipe", command: "echo alpha > out", decisions: [] },
+  {
+    tag: "bare-redirect",
+    command: "> out | cat",
+    decisions: [
+      { behavior: "passthrough", message: "path approved" },
+      { behavior: "allow", updatedInput: { command: "cat" } },
+    ],
+  },
+  {
+    tag: "quoted-redirect",
+    command: "echo '>' | cat",
+    decisions: [{ behavior: "allow" }, { behavior: "allow" }],
+  },
+  { tag: "subshell", command: "(echo alpha) | cat", decisions: [] },
+  {
+    tag: "quoted-subshell",
+    command: "echo '(alpha)' | cat",
+    decisions: [{ behavior: "allow" }, { behavior: "allow" }],
+  },
+  {
+    tag: "two-cd-ordinary",
+    command: "cd one | cd two",
+    decisions: [
+      {
+        behavior: "ask",
+        message: "ordinary ask",
+        decisionReason: {
+          type: "safetyCheck",
+          reason: "background",
+          circuitBreaker: "backgroundOperator",
+        },
+      },
+      { behavior: "allow" },
+    ],
+  },
+  {
+    tag: "one-cd",
+    command: "cd one | pwd",
+    decisions: [{ behavior: "allow" }, { behavior: "allow" }],
+  },
+  {
+    tag: "duplicate-last-allow",
+    command: "printf x | printf x",
+    decisions: [
+      { behavior: "deny", message: "first deny" },
+      { behavior: "allow", updatedInput: { command: "printf x" } },
+    ],
+  },
+  {
+    tag: "distinct-first-deny",
+    command: "printf x | printf y",
+    decisions: [
+      { behavior: "deny", message: "first deny" },
+      { behavior: "allow" },
+    ],
+  },
+  {
+    tag: "supplied-root",
+    command: "echo root | cat",
+    root: "parsed",
+    decisions: [{ behavior: "allow" }, { behavior: "allow" }],
+  },
+  {
+    tag: "sentinel-root",
+    command: "echo root | cat",
+    root: "sentinel",
+    decisions: [{ behavior: "allow" }, { behavior: "allow" }],
+  },
+  {
+    tag: "nested-subshell-in-assignment",
+    command: "A=$( (echo hi) )",
+    decisions: [],
+  },
+  { tag: "over-length", command: "x".repeat(10_001), decisions: [] },
+] as const;
+
+export const MODE_CASES = [
+  {
+    tag: "accept-edits-prefixes",
+    command: "LANG=C timeout 2 nohup mkdir work",
+    context: { mode: "acceptEdits" },
+  },
+  {
+    tag: "default-negative",
+    command: "LANG=C timeout 2 nohup mkdir work",
+    context: { mode: "default" },
+  },
+  {
+    tag: "unknown-env-negative",
+    command: "SECRET=x mkdir work",
+    context: { mode: "acceptEdits" },
+  },
+  { tag: "empty-negative", command: "", context: { mode: "acceptEdits" } },
+] as const;
+
+export const AGGREGATE_CASES = {
+  multiCd: {
+    input: { command: "cd one | cd two" },
+    normalized: ["cd one", "cd two"],
+    original: ["cd one", "cd two"],
+  },
+  duplicateCore: {
+    input: { command: "rm x; rm x" },
+    subcommand: "rm x",
+  },
+  emptyCd: {
+    input: { command: "cd" },
+    homeDirectory: "/pinned/home",
+  },
+  direct: {
+    input: { command: "alpha | beta", description: "direct aggregate" },
+    normalized: ["alpha", "beta"],
+    original: ["alpha", "beta"],
+  },
+} as const;
+
+export const EFFECT_STATE = {
+  cwd: "/pinned/cwd",
+  platform: "macos",
+  homeDirectory: "/pinned/home",
+  subprocessEnvironmentScrubbing: false,
+  sandboxingEnabled: false,
+  autoAllowBashIfSandboxed: false,
+  sandboxEligible: false,
+  restricted: false,
+  permissionContext: { mode: "default" },
+} as const;
+
+export const ROOT_CASES = {
+  clampedOverLength: {
+    input: { command: "x".repeat(10_001) },
+    permissionContext: { bashCommandClamps: [["Bash(echo:*)"]] },
+  },
+  background: {
+    input: { command: "echo ok &" },
+    permissionContext: { mode: "default", bashCommandClamps: [] },
+  },
+  failureWithClamp: {
+    toolName: "Bash",
+    permissionContext: { bashCommandClamps: [["Bash(echo:*)"]] },
+  },
+  failureWithoutClamp: {
+    toolName: "Bash",
+    permissionContext: { bashCommandClamps: [] },
+  },
+} as const;
+
+// Security-sensitive direct-caller cases added from independent review. Both
+// the pinned differential and branch driver import this exact data.
+export const SAFETY_REGRESSION_CASES = {
+  sedExecuteInAcceptEdits: {
+    input: { command: "sed 'e id' file" },
+    permissionContext: { mode: "acceptEdits" },
+  },
+  sedRedirectRisk: {
+    input: { command: "sed 's/a/b/' file > \"$OUT\"" },
+    subcommand: "sed 's/a/b/' file",
+    permissionContext: { mode: "default" },
+  },
+  sedRedirectSafe: {
+    input: { command: "sed 's/a/b/' file > out" },
+    subcommand: "sed 's/a/b/' file",
+    permissionContext: { mode: "default" },
+  },
+  sandboxSubcommandDeny: {
+    input: { command: "echo ok; touch file" },
+    deniedSubcommand: "touch file",
+    permissionContext: { mode: "default" },
+  },
+  sandboxTooComplexJq: {
+    input: { command: 'jq "$UNKNOWN"' },
+    nodeType: "expansion",
+    reason: "Contains shell expansion",
+    permissionContext: { mode: "default" },
+  },
+  remoteTooComplex: {
+    input: { command: 'echo "$UNKNOWN"' },
+    nodeType: "expansion",
+    reason: "Contains shell expansion",
+    permissionContext: { mode: "default" },
+  },
+  inheritedUnsafeAssignment: {
+    input: { command: "GIT_EXTERNAL_DIFF=evil; git diff" },
+    subcommand: "git diff",
+    assignment: "GIT_EXTERNAL_DIFF",
+    permissionContext: { mode: "default" },
+  },
+  clampQuotedWhitespace: {
+    input: { command: "rm 'foo  bar'" },
+    permissionContext: {
+      mode: "default",
+      bashCommandClamps: [["Bash(rm 'foo bar')"]],
+    },
+  },
+  clampWildcard: {
+    input: { command: "git status --short" },
+    permissionContext: {
+      mode: "default",
+      bashCommandClamps: [["Bash(git * --short)"]],
+    },
+  },
+  clampPrefixThroughXargs: {
+    input: { command: "xargs git status --short" },
+    permissionContext: {
+      mode: "default",
+      bashCommandClamps: [["Bash(git status:*)"]],
+    },
+  },
+  clampStarOnly: {
+    input: { command: "echo ok" },
+    permissionContext: {
+      mode: "default",
+      bashCommandClamps: [["Bash(*)"]],
+    },
+  },
+  clampEscapedLiteral: {
+    input: { command: String.raw`echo '(a\b)'` },
+    permissionContext: {
+      mode: "default",
+      bashCommandClamps: [[String.raw`Bash(echo '\(a\\b\)')`]],
+    },
+  },
+  clampNestedRedirectAssignment: {
+    input: { command: "A=$(echo ok >out)" },
+    permissionContext: {
+      mode: "default",
+      bashCommandClamps: [[String.raw`Bash(A=$\(echo ok \))`]],
+    },
+  },
+  multiCdDangerousRemoval: {
+    input: { command: "cd one; cd two; rm -rf /" },
+    subcommands: ["cd one", "cd two", "rm -rf /"],
+    permissionContext: { mode: "default" },
+  },
+  multiCdCandidateSafe: {
+    input: { command: "cd sub && cd nested && rm -rf cache/*" },
+    subcommands: ["cd sub", "cd nested", "rm -rf cache/*"],
+    expectedUnsafeCwd: false,
+    permissionContext: { mode: "default" },
+  },
+  multiCdCandidateUnsafe: {
+    input: { command: "cd ../escape && cd nested && rm -rf cache/*" },
+    subcommands: ["cd ../escape", "cd nested", "rm -rf cache/*"],
+    expectedUnsafeCwd: true,
+    permissionContext: { mode: "default" },
+  },
+  asyncTooComplexSafety: {
+    input: { command: 'echo "$UNKNOWN"' },
+    nodeType: "expansion",
+    reason: "Contains shell expansion",
+    permissionContext: { mode: "default" },
+  },
+  nestedRuleSuggestions: {
+    input: { command: "custom alpha; custom beta" },
+    subcommands: ["custom alpha", "custom beta"],
+    permissionContext: { mode: "default" },
+  },
+  emptyRuleSuggestions: {
+    input: { command: "custom alpha; custom beta" },
+    subcommands: ["custom alpha", "custom beta"],
+    permissionContext: { mode: "default" },
+    suggestions: [{
+      type: "addRules",
+      rules: [],
+      behavior: "allow",
+      destination: "localSettings",
+    }],
+    decisionBehaviors: ["ask", "passthrough"],
+  },
+  reorderedRuleSuggestions: {
+    input: { command: "custom alpha; custom beta" },
+    subcommands: ["custom alpha", "custom beta"],
+    permissionContext: { mode: "default" },
+    rules: [
+      { toolName: "Bash", ruleContent: "custom (x)\\path" },
+      { ruleContent: "custom (x)\\path", toolName: "Bash" },
+    ],
+  },
+  classifierAbort: {
+    input: { command: "custom alpha" },
+    permissionContext: { mode: "default" },
+    expectedError: { name: "AbortError", message: "" },
+  },
+  assignmentSuggestions: {
+    input: { command: "SECRET=x custom alpha; LANG=C custom alpha" },
+    subcommands: ["SECRET=x custom alpha", "LANG=C custom alpha"],
+    permissionContext: { mode: "default" },
+  },
+  windowsSyntheticCd: {
+    input: { command: "cd /c/foo && custom alpha" },
+    subcommands: ["cd /c/foo", "custom alpha"],
+    permissionContext: { mode: "default" },
+    cwd: "C:\\foo",
+    platform: "windows",
+  },
+  aggregateAnalysisCwd: {
+    input: { command: "git status | cat" },
+    subcommands: ["git status", "cat"],
+    permissionContext: { mode: "default" },
+    cwd: "/pinned/repository",
+  },
+  pipeCdGitCwd: {
+    input: { command: "cd repo | git status" },
+    subcommands: ["cd repo", "git status"],
+    permissionContext: { mode: "default" },
+    cwd: "/pinned/cwd",
+  },
+  resolvedLeadingCd: {
+    input: { command: "cd sub && cat file" },
+    subcommands: ["cd sub", "cat file"],
+    cwd: "/pinned/cwd",
+    resolvedCwd: "/pinned/cwd/sub",
+    permissionContext: { mode: "default" },
+  },
+  classifierPrefix: {
+    input: { command: "custom something" },
+    prefix: "custom",
+    permissionContext: { mode: "default" },
+  },
+} as const;
