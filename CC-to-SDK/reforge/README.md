@@ -2763,6 +2763,13 @@ built, solo-sabotaged, found green, and removed. Three separate things were wron
   multi-`cd` aggregator, the subcommand merge's tie-break), wanting only a command shape no cell
   wrote.
 
+**CORRECTED 2026-09-08 (C13b):** exact throwing probes at the multi-`cd` aggregate and the
+`Fy` duplicate-subcommand tie-break stayed GREEN on the registered `bash-compound-safety` cassette
+(`build/c13b-fy-multicd-reachability.log` and `build/c13b-fy-tiebreak-reachability.log`). The
+subshell rejects before `drn`, and the other input produces no duplicate normalized subcommand, so
+that cassette reaches neither site. C13b's direct pinned-byte contracts grade both behaviours; no
+new live take was made.
+
 C7's "a single-caller pure helper cannot be a live splice" still holds. What does not follow from it
 is that a many-caller one is dark because **one** twin, run against **one** corpus, moved nothing.
 **A darkness verdict is a measurement, and it inherits every limitation of the twin and the corpus it
@@ -2906,11 +2913,15 @@ paths, so the refusal now needs a condition this environment does not produce).
 (`eln`/`initializeToolPermissionContext`, 5.4 KB of settings and filesystem I/O, belongs with the
 settings layer rather than with the decision chain.)
 
-And **four decisionReason kinds are named but not created**: `safetyCheck` (creating it means
-running something genuinely dangerous, which this project should design deliberately rather than
-improvise), `subcommandResults`, `sandboxOverride`, `workingDir`, `asyncAgent` — plus `classifier`,
-which §4.1 below turned from unreachable into merely uncreated. Each is a row in
-`research/2026-09-01-w6-permission-matrix.md` with its condition written out, not a blank.
+**CORRECTED 2026-09-08 (C13b):** this paragraph originally counted four kinds while listing five
+and incorrectly included `subcommandResults` among the uncreated ones. At W6 close, **four
+`decisionReason` kinds were named but not created**: `safetyCheck` (creating it means running
+something genuinely dangerous, which this project should design deliberately rather than improvise),
+`sandboxOverride`, `workingDir` and `asyncAgent` — plus `classifier`, which §4.1 below turned from
+unreachable into merely uncreated. `subcommandResults` was already created in W6 as an aggregate of
+one on every Bash denial; C13b's direct pinned-byte contract now also proves a genuinely multi-part
+aggregate. Each uncreated kind is a row in `research/2026-09-01-w6-permission-matrix.md` with its
+condition written out, not a blank.
 
 ### The corpus: thirteen recordings, five of which measured the wrong thing first
 
@@ -5636,8 +5647,8 @@ concurrently; the measurement is recorded next to it.
 
 ### Seam notes for C13b
 
-C13b owns the command-safety chain and the classifier region, both of which consume this module's
-output. What it is consuming, stated once:
+**CONSUMED AND CONFIRMED 2026-09-08 (C13b).** C13b now owns the command-safety chain and the
+classifier region, both of which consume this module's output. What it consumed, stated once:
 
 **The node.** Exactly five keys, in this order: `type`, `text`, `startIndex`, `endIndex`, `children`.
 `startIndex`/`endIndex` are UTF-8 BYTE offsets, not UTF-16 indices; `text` is already the corresponding
@@ -5654,10 +5665,11 @@ a body and a closing `EOF` emits `heredoc_body` and `heredoc_end` on the normal 
 `heredoc_content` appears whenever a heredoc body carries an expansion.
 
 **The sentinel.** `PARSE_ABORTED` is a module-scope `Symbol("parse-aborted")` and its identity is the
-contract. C13b must IMPORT it from `strangle/modules/shell-parser/reference.js` when it owns `KTe`,
-never mint its own — a second symbol with the same description is the exact defect the row's own
-sabotage twin demonstrates. Note the asymmetry between the two async entry points on the same three
-causes: `parseOrAbort` returns the sentinel and emits `tengu_tree_sitter_parse_abort`;
+contract. C13b's owned `KTe` imports C13a's exact identity from
+`strangle/modules/shell-parser/reference.js`; it does not mint its own — a second symbol with the
+same description is the exact defect the row's own sabotage twin demonstrates. Note the asymmetry
+between the two async entry points on the same three causes: `parseOrAbort` returns the sentinel and
+emits `tengu_tree_sitter_parse_abort`;
 `parseCommandWithEnv` returns `null` and emits nothing.
 
 **The three abort causes**, in the order `parseOrAbort` tests them: over the 10,000-character cap
@@ -5667,8 +5679,8 @@ only by a caller passing a non-string with a `length`, which is the shape the pa
 with.
 
 **Two caps with the same value and separate declarations.** `MAX_COMMAND_LENGTH` is `1e4` in this
-chunk; `SS` is `1e4` in the engine chunk, and C13b will own that one. They are not the same
-declaration and a pin can move one without the other, so a shared constant would be a claim the
+chunk; `SS` remains a separately owned `1e4` declaration in C13b's engine chunk. They are not the
+same declaration and a pin can move one without the other, so a shared constant would be a claim the
 artifact does not support.
 
 **The argv contract** (`commandArgv`), which is more than a `map`, and whose substitution rule is
@@ -5693,7 +5705,7 @@ in order, as raw `text`, stopping at the first `command_name` or `word`.
 `pipeline` descends into its children in order and returns the first hit; a `redirected_statement`
 takes its first command-typed CHILD rather than descending. Everything else is a pre-order walk.
 
-**The `zshBraceDiff` flag**, which C13b will meet in its own classifier: it is set deep in word and
+**The `zshBraceDiff` flag**, which C13b consumes in its owned classifier: it is set deep in word and
 expansion parsing when a construct bash and zsh would read differently is found, and it makes
 `parseProgram` wrap the whole program in an `ERROR` node spanning the same range rather than failing.
 A consumer that treats a root `ERROR` as a parse failure will behave differently from one that looks
@@ -5724,6 +5736,9 @@ a graded fact rather than a sentence: `"echo a$(x)b c"` → `["echo"]`, `"$(x)y 
 `["$(x)y","foo","bar"]`, `"a"$(x) z` → `["\"a\"$(x)","z"]`. Three rather than two because the
 command-name arm makes two claims and `$(x)y` cannot separate them — it joins to the same bytes it
 slices. Each is red under its own sabotage of the owned extractor.
+
+**CONSUMED AND CONFIRMED 2026-09-08 (C13b):** the owned classifier preserved this positional
+`commandArgv` behaviour.
 
 **Fourth — three of the "seven node types that exist only to record a recovery" are on the normal
 path.** A well-formed `cat <<EOF` with a body and a closing `EOF` emits `heredoc_body` and
@@ -6068,7 +6083,7 @@ the fix round below).
 
 | scenario | graded pair | cassette | exchanges |
 |---|---|---|---|
-| `bash-compound-safety` | real vs extracted | 170,469 B | 3 |
+| `bash-compound-safety`[^c13b-fy-cassette] | real vs extracted | 170,469 B | 3 |
 | `bash-background-explicit` | real vs extracted | 339,413 B | 5 |
 | `bash-background-control` | real vs extracted | 339,611 B | 5 |
 | `bash-large-output` | real vs extracted | 170,441 B | 3 |
@@ -6076,6 +6091,10 @@ the fix round below).
 | `bash-prespawn-error` | real vs extracted | 336,533 B | 5 |
 | `bash-kill-escalation` | extracted vs strangled @ `sigterm-to-sigkill=400ms, post-kill-liveness-poll=40ms` | 172,821 B | 3 |
 | `bash-stall-detect` | extracted vs strangled @ `stall-poll=400ms, stall-idle=1800ms` | 469,058 B | 6 |
+
+[^c13b-fy-cassette]: **C13b correction (2026-09-08):** exact throwing probes proved that this
+  cassette reaches neither `Fy` site. C13b took no new live recording; its direct pinned-byte
+  contracts grade both behaviours.
 
 **W7's row is closed.** `background_tasks` fired against an empty registry when W7 measured it —
 FIRED arm, UNREACHED effect. The recording carries the effect: a `task_started`, then a tool result

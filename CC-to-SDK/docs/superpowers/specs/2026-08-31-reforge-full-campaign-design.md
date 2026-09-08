@@ -59,7 +59,7 @@ zero JSX imports — holds essentially the whole agent; satellites add a few hun
 | Control-protocol switch (`control_request`/`control_response` subtypes) | high (one `switch` with literal cases) | `fy12d89p` @38.7k + `mfkbzdqf`, `kje2nmp8` |
 | Moat tools: `SendMessage`/`ListAgents`, `Workflow`, `ScheduleWakeup`, TaskCreate family, `Skill`, plan/worktree tools | per-tool (scenario-led) | `fy12d89p` various |
 | Session/transcript storage; resume/fork | a 31 KB writer class (136 members, ALL public) + a host-scoped store object + a 6.7 KB pure fold to a 39-field session projection (the W9 scout 2026-09-02; the original read "module-level (Result-monad fs layer)" — that layer is the gate-dead v5 backend) | `fy12d89p` @4–10k (chunk-relative pretty lines ≈3,545–9,900 — CORRECT, do not "fix"; 172,430 B contiguous) + `1x1tv6fk` (path derivation, 2.8 KB). `trstwd25` REMOVED (it is the remote-container dir-sync git worker, §1.2 periphery); `d78hxkfm` REMOVED to an exclusion (generic storage-v5 backend behind `tengu_hover_rest`, default false, no env override) |
-| Bash executor (exec/timeout/background) + command-safety AST | four tiers (W10 scout 2026-09-02): S-chunk for the parser, S-method for the safety chain/prompt/tool object (an OBJECT LITERAL, 26 members, zero private fields — not a class), owned data for 17 KB of flag tables, S-module for the process core (four small classes, 11.2 KB, where the private fields actually live) | `fgwne0fb` (62,907 B — the hand-written bash parser, 7 exports, 1 import, zero I/O; never named before), `9e2ns8ty` @108,945–162,000 (53 KB classifier region; the rest of that chunk is W6's), `fy12d89p` @100–105k (correct) + four regions totalling 238 KB; `13d9rycm` as a shared edge. `w7bq1qyb` REMOVED — it is the `claude plugin eval` harness (287 KB leave the row; ~354 KB remain) |
+| Bash executor (exec/timeout/background) + command-safety AST | four tiers (W10 scout 2026-09-02): S-chunk for the parser, S-method for the safety chain/prompt/tool object (an OBJECT LITERAL, 26 members, zero private fields — not a class), owned data for 22,674 pinned bytes across 11 direct table declarators, with 27 additional declaration dependencies accounted (C13b correction 2026-09-08; the scout estimated 17 KB), S-module for the process core (four small classes, 11.2 KB, where the private fields actually live) | `fgwne0fb` (62,907 B — the hand-written bash parser, 7 exports, 1 import, zero I/O; never named before), `9e2ns8ty` @108,945–162,000 (53 KB classifier region; the rest of that chunk is W6's), `fy12d89p` @100–105k (correct) + four regions totalling 238 KB; `13d9rycm` as a shared edge. `w7bq1qyb` REMOVED — it is the `claude plugin eval` harness (287 KB leave the row; ~354 KB remain) |
 | MCP adapter (thin layer over the vendored MCP SDK) | "thin" survives; "high seam quality" does not — every prose anchor in the MCP surface ties 2× because the layer is a RUNTIME GENERATION FORK (W11 scout 2026-09-02) | `1bxday80` (v1, LIVE at this pin, 187,877 B) and `4mp04j81` (v2, DEAD, 193,087 B) are the same module one generation apart, selected by `bT()` (`cr9f4adc`) reading `MCP_SDK_GENERATION` BEFORE the gate `tengu_brindle_causeway`; eight module pairs fork this way; plus the accessor `6rdsq6fw`, the elicitation impl `5ww6p4vy`, the MCP-skills fetcher, ten MCP control arms (13,051 B) |
 | Slash commands + skills loading | high (all in one chunk, anchors clean) — W11 scout 2026-09-02 | `fy12d89p` @3,310–3,495 KB (commands + plugin/skill loading, 133-element registry, 181,873 B declared) and @2,019–2,058 KB (skills belt, 37,960 B) — the "@10–12.5k" locator pointed at prompt-expansion/LSP code; plus `304awr1a` (35,905 B, the expansion path, never named). `g461tywa` is a 302 KB / 198-export grab-bag, not a commands chunk and not S-chunk-able |
 | Agent/Task subagent dispatch | HIGH (W12 scout 2026-09-02): the Agent tool is an OBJECT LITERAL (27,595 B, 17 members, zero private fields), its `call` one 22,962 B method, its prompt 16,727 B; only three tiny counter classes (1,681 B) carry private fields. "Nested loop reentry" was the wrong seam: the child loop IS the parent's — `Bb` builds the child's context and delegates to `Kx`, the same generator the headless loop imports, so W12 owns everything that constructs `Kx`'s arguments and cleans up after it, and W13 owns `Kx` | `fy12d89p` @55–58k (CORRECT — about a quarter of the row; five further belts at ≈33.9k observers, ≈47.8k agent-worktree, ≈53.5k child-stream builder, ≈77k inheritance contract, ≈105k task records), ~188 KB. `bf5vvscj` REMOVED — it is the plugin-hooks runtime the ledger already assigns to C8 (112,652 B leave; ~700 B stay as the `agent.spawn` edge) |
@@ -966,18 +966,22 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
     substitution, the byte-offset table, the length cap, the abort symbol). Riders: the ledger's
     `tool/PowerShell` row (→ C13) and `subsystem/tool-result-validators`'s wave field (C4 → C13).
   • **C13b / W10b — the command-safety chain and its data tables** (autonomous, opus-tier; cut
-    NOW; parse types from C13a): the five engine-chunk regions (124,832 B) + `9e2ns8ty`'s
-    classifier region (53,180 B: the parse entry, the eleven-predicate too-complex gate, the 10 KB
-    command-tree walker, argv/env/redirect/heredoc extraction). Own the ~17 KB of flag/effect
-    tables outright with adapter equality assertions; S-method rows on the prose anchors (≥16
-    anchors 1-of-1 across all 1,800 module files — "Bash has no graph-unique literal" was true of
-    the FORMATTER only; correct the README note); fold in the unanchorable pure helpers at their
-    spliced callers. Adds `bash-compound-safety`, which closes the two live-but-dark `Fy` callers
-    W6 recorded (the multi-cd aggregator and the subcommand merge tie-break). Edge → C9/W6: this is
-    the Bash half of the permission surface — the `subcommandResults` aggregate every corpus Bash
-    denial carries. Rider: the `bash-tool-result` row's `useTaskAck` capture derives from a gate
-    (`FE()`) that returns `!1` unconditionally in this build — the capture is live, the BRANCH is
-    dead; say so in the row.
+    NOW; parse types from C13a): **REALIZED 2026-09-08:** five anchored splices — `KTe`, `_8e`,
+    `$ct`, `jrn`, `XNt` — and five folds at their spliced callers — `w8e`, `mrn`, `drn`, `hrn`,
+    `bQn`. Eleven direct table declarators own 22,674 pinned bytes, with 27 additional declaration
+    dependencies accounted. The 2026-09-02 cut scoped five engine-chunk regions (124,832 B) plus
+    `9e2ns8ty`'s classifier region (53,180 B: the parse entry, the eleven-predicate too-complex gate,
+    the 10 KB command-tree walker and argv/env/redirect/heredoc extraction), estimated ~17 KB of
+    flag/effect tables, and required adapter equality assertions and S-method rows on prose anchors
+    (≥16 anchors 1-of-1 across all 1,800 module files — "Bash has no graph-unique literal" was true
+    of the FORMATTER only). C13c had already registered and recorded `bash-compound-safety`; C13b
+    reused it and proved that the cassette reaches neither `Fy` caller — the multi-`cd` aggregator
+    nor the duplicate-subcommand tie-break — rather than taking a new live recording. Direct
+    pinned-byte contracts grade multi-`cd` preservation, the duplicate tie-break, insertion-ordered
+    `Map` behaviour and the exact `subcommandResults` aggregate. Edge → C9/W6: this is the Bash half
+    of the permission surface. Rider: the `bash-tool-result` row's `useTaskAck` capture derives from
+    a gate (`FE()`) that returns `!1` unconditionally in this build — the capture is live, the BRANCH
+    is dead; say so in the row.
   • **C13c / W10c — executor oracle machinery** (controlled, opus-tier; cut NOW; serializes per
     X5): the three capabilities no oracle has and only this subsystem needs — a scripted child
     process committed into the sandbox with a declarative argv (byte schedule, exit code, signal
