@@ -34,7 +34,7 @@
 //                  not become a way to pass by existing.
 //   stale (suite)  an exclusion for a branch a suite now executes -> FAILS, and
 //                  says WHICH channel overtook it, because the fix differs.
-import { adjudicate, coverageLinesSince } from "./adjudicate.js";
+import { adjudicate, contractEvidenceForDriver, coverageLinesSince } from "./adjudicate.js";
 import { branchSites, outcomesOf } from "./branches.js";
 
 let pass = 0;
@@ -103,35 +103,91 @@ const ALL = new Set(inventory);
 // only ever passes is a channel nobody has watched refuse anything.
 {
   const corpus = new Set([inventory[0]]);
-  const suite = new Set([inventory[1], inventory[2], inventory[3]]);
+  const suite = new Map(
+    [inventory[1], inventory[2], inventory[3]].map((branch) => [branch, "driver-one"]),
+  );
   const v = adjudicate(sites, [], corpus, suite);
   check("a branch a contract suite executed is ADJUDICATED rather than missing",
     v.ok && v.unadjudicated.length === 0 && v.contractCount === 3 && v.executedCount === 1,
     JSON.stringify({ executed: v.executedCount, contract: v.contractCount, unadjudicated: v.unadjudicated.length }));
   check("…and it is reported as its own state, not folded into `executed`",
     v.rows.find((r) => r.branch === inventory[1])?.state === "contract" && v.rows.find((r) => r.branch === inventory[0])?.state === "executed");
+  check("…and every accepted row cites the driver that actually produced it",
+    v.rows.find((r) => r.branch === inventory[1])?.contractDriver === "driver-one");
 }
 {
   // The evidence ORDER: corpus wins, because end-to-end is the stronger claim
   // and the report should say the strongest true thing about each branch.
-  const v = adjudicate(sites, [], ALL, ALL);
+  const contract = new Map([...ALL].map((branch) => [branch, "driver-one"]));
+  const v = adjudicate(sites, [], ALL, contract);
   check("a branch BOTH executed and contract-covered is reported as executed",
     v.executedCount === 4 && v.contractCount === 0);
 }
 {
   // The channel must not become a way to pass without evidence.
-  const v = adjudicate(sites, [], new Set(), new Set());
+  const v = adjudicate(sites, [], new Set(), new Map());
   check("an EMPTY contract set adjudicates nothing — the channel cannot excuse a branch by existing",
     !v.ok && v.unadjudicated.length === 4 && v.contractCount === 0);
 }
 {
   // Staleness, third direction: a reason that has been overtaken by a suite.
-  const v = adjudicate(sites, [{ branch: inventory[3], reason: "nothing drives the nullish arm" }], new Set(), new Set([inventory[3]]));
+  const v = adjudicate(sites, [{ branch: inventory[3], reason: "nothing drives the nullish arm" }], new Set(), new Map([[inventory[3], "driver-one"]]));
   check("an exclusion for a branch a CONTRACT SUITE now executes FAILS as stale",
     !v.ok && v.stale.length === 1 && v.stale[0].why === "a contract suite now executes it", JSON.stringify(v.stale));
-  const byCorpus = adjudicate(sites, [{ branch: inventory[3], reason: "nothing drives the nullish arm" }], new Set([inventory[3]]), new Set());
+  const byCorpus = adjudicate(sites, [{ branch: inventory[3], reason: "nothing drives the nullish arm" }], new Set([inventory[3]]), new Map());
   check("…and it is distinguishable from the corpus-executes-it case, so the fix is legible",
     byCorpus.stale[0]?.why === "the corpus now executes it", JSON.stringify(byCorpus.stale));
+}
+
+// ---- contract evidence must belong to the registered module ----------------
+{
+  const fixtureInventory = new Set(inventory);
+  const driver = "strangle/fixture-coverage.ts";
+  const accepted = contractEvidenceForDriver(
+    "fixture",
+    driver,
+    new Set([inventory[1]]),
+    fixtureInventory,
+  );
+  check("a driver's own recorded inventory outcome is accepted",
+    accepted.size === 1 && accepted.get(inventory[1]) === driver,
+    JSON.stringify([...accepted]));
+
+  const empty = contractEvidenceForDriver(
+    "fixture",
+    driver,
+    new Set(),
+    fixtureInventory,
+  );
+  check("an EMPTY driver output contributes no contract evidence",
+    empty.size === 0, JSON.stringify([...empty]));
+
+  const dependencyOnly = contractEvidenceForDriver(
+    "fixture",
+    driver,
+    new Set(["dependency#render@0:T"]),
+    fixtureInventory,
+  );
+  check("dependency-only output contributes no contract evidence",
+    dependencyOnly.size === 0, JSON.stringify([...dependencyOnly]));
+
+  const wrongModule = contractEvidenceForDriver(
+    "other-module",
+    driver,
+    new Set([inventory[1]]),
+    fixtureInventory,
+  );
+  check("a valid outcome recorded for the wrong declared module is rejected",
+    wrongModule.size === 0, JSON.stringify([...wrongModule]));
+
+  const unknownOutcome = contractEvidenceForDriver(
+    "fixture",
+    driver,
+    new Set(["fixture#render@99:T"]),
+    fixtureInventory,
+  );
+  check("an unknown outcome cannot become contract evidence through a driver label",
+    unknownOutcome.size === 0, JSON.stringify([...unknownOutcome]));
 }
 
 // ---- contract recorder accumulation -----------------------------------------

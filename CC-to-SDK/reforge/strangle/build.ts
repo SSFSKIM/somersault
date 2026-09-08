@@ -39,7 +39,10 @@ import { spliceFootprint, type FootprintFile } from "./footprint.js";
 import { CHUNK_REPLACEMENTS, deriveCaptures, SABOTAGE_TARGETS, SPLICES } from "./manifest.js";
 import { instrumentModules } from "./instrument.js";
 import { bootCheck, BUILD_DIR, materializeGraph, STRANGLED_DIR, textModules } from "./prepare.js";
-import { assertCaptureInventory } from "./scope.js";
+import {
+  assertCaptureInventory,
+  ownedBindingViolations,
+} from "./scope.js";
 
 // ---- CLI --------------------------------------------------------------------
 const args = process.argv.slice(2);
@@ -108,6 +111,8 @@ for (const path of textModules(STRANGLED_DIR)) sources.set(path, readFileSync(pa
 const preludesFor = new Map<string, string[]>();
 const editsFor = new Map<string, Edit[]>();
 const footprints: FootprintFile["splices"] = [];
+const spliceBindings = new Set<string>();
+const ownedBindingCaptures: { owner: string; path: string; identifier: string }[] = [];
 
 for (const sp of SPLICES) {
   // Uniqueness is a whole-GRAPH property, not a per-file one: a second match in
@@ -124,7 +129,17 @@ for (const sp of SPLICES) {
   // …and it must be the node the operator verified, not a same-shaped neighbour.
   assertSignature(sp.name, cut, sp.signature);
 
+  spliceBindings.add(`${path}\0${cut.label}`);
   const captures = deriveCaptures(sp, cut.original);
+  for (const capture of captures) {
+    if (capture.kind === "owned-binding") {
+      ownedBindingCaptures.push({
+        owner: sp.name,
+        path,
+        identifier: capture.identifier,
+      });
+    }
+  }
   // The manifest is not its own witness: the body's free variables are derived
   // from the AST and must match the declared captures exactly, either way.
   assertCaptureInventory(sp.name, cut.node, captures.map((c) => c.identifier));
@@ -197,6 +212,14 @@ for (const sp of SPLICES) {
       valueNote +
       `${sabotaged ? " [SABOTAGE]" : ""}`,
   );
+}
+
+const ownedBindingErrors = ownedBindingViolations(
+  spliceBindings,
+  ownedBindingCaptures,
+);
+if (ownedBindingErrors.length > 0) {
+  throw new Error(ownedBindingErrors.join("; "));
 }
 
 // ---- S-chunk: whole-file replacement (§2.2) ---------------------------------

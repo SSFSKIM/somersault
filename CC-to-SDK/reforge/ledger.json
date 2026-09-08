@@ -8605,7 +8605,7 @@
             {
               "name": "jrn",
               "as": "checkCore",
-              "kind": "effectful-port",
+              "kind": "owned-binding",
               "declKind": "function",
               "declStart": 1004739,
               "declEnd": 1011392,
@@ -8614,7 +8614,7 @@
             {
               "name": "D8e",
               "as": "decorateDecision",
-              "kind": "effectful-port",
+              "kind": "owned-binding",
               "declKind": "function",
               "declStart": 1003033,
               "declEnd": 1003463,
@@ -8909,7 +8909,7 @@
             {
               "name": "Urn",
               "as": "checkTooComplexSafety",
-              "kind": "effectful-port",
+              "kind": "owned-binding",
               "declKind": "function",
               "declStart": 999315,
               "declEnd": 1000376,
@@ -8918,7 +8918,7 @@
             {
               "name": "xrn",
               "as": "checkTooComplexSandbox",
-              "kind": "effectful-port",
+              "kind": "owned-binding",
               "declKind": "function",
               "declStart": 991217,
               "declEnd": 994012,
@@ -9111,7 +9111,7 @@
             {
               "name": "Hrn",
               "as": "checkInvalidSemanticsRules",
-              "kind": "effectful-port",
+              "kind": "owned-binding",
               "declKind": "function",
               "declStart": 1002348,
               "declEnd": 1002853,
@@ -9120,7 +9120,7 @@
             {
               "name": "A8e",
               "as": "checkSandboxAutoAllow",
-              "kind": "effectful-port",
+              "kind": "owned-binding",
               "declKind": "function",
               "declStart": 990426,
               "declEnd": 991217,
@@ -9129,7 +9129,7 @@
             {
               "name": "aQ",
               "as": "checkExactPermission",
-              "kind": "effectful-port",
+              "kind": "owned-binding",
               "declKind": "variable",
               "declStart": 988253,
               "declEnd": 988893,
@@ -9170,7 +9170,7 @@
             {
               "name": "$ct",
               "as": "checkPermission",
-              "kind": "effectful-port",
+              "kind": "owned-binding",
               "declKind": "function",
               "declStart": 1003463,
               "declEnd": 1004739,
@@ -9243,7 +9243,7 @@
             {
               "name": "$rn",
               "as": "isCdGitSequenceSafe",
-              "kind": "effectful-port",
+              "kind": "owned-binding",
               "declKind": "function",
               "declStart": 996685,
               "declEnd": 996923,
@@ -9268,7 +9268,7 @@
             {
               "name": "I8",
               "as": "checkPathSafety",
-              "kind": "effectful-port",
+              "kind": "owned-binding",
               "declKind": "function",
               "declStart": 939072,
               "declEnd": 941297,
@@ -9725,7 +9725,7 @@
             {
               "name": "dL",
               "as": "checkDangerousRemoval",
-              "kind": "effectful-port",
+              "kind": "owned-binding",
               "declKind": "function",
               "declStart": 924029,
               "declEnd": 926567,
@@ -9744,7 +9744,7 @@
             {
               "name": "Frn",
               "as": "resolveLeadingDirectoryChange",
-              "kind": "effectful-port",
+              "kind": "owned-binding",
               "declKind": "function",
               "declStart": 995799,
               "declEnd": 996270,
@@ -9753,7 +9753,7 @@
             {
               "name": "Nrn",
               "as": "isCdGitAstSequenceSafe",
-              "kind": "effectful-port",
+              "kind": "owned-binding",
               "declKind": "function",
               "declStart": 996270,
               "declEnd": 996685,
@@ -9762,7 +9762,7 @@
             {
               "name": "tQ",
               "as": "hasUnsafeGitStructureFromAnalysis",
-              "kind": "effectful-port",
+              "kind": "owned-binding",
               "declKind": "function",
               "declStart": 967748,
               "declEnd": 969083,
@@ -9771,7 +9771,7 @@
             {
               "name": "iW",
               "as": "hasUnsafeGitStructureFromCommand",
-              "kind": "effectful-port",
+              "kind": "owned-binding",
               "declKind": "function",
               "declStart": 965749,
               "declEnd": 966157,
@@ -9780,7 +9780,7 @@
             {
               "name": "j8e",
               "as": "checkDirectCommand",
-              "kind": "effectful-port",
+              "kind": "owned-binding",
               "declKind": "variable",
               "declStart": 988894,
               "declEnd": 990128,
@@ -9907,7 +9907,7 @@
             {
               "name": "C8e",
               "as": "checkSubcommandPermission",
-              "kind": "effectful-port",
+              "kind": "owned-binding",
               "declKind": "function",
               "declStart": 990129,
               "declEnd": 990426,
@@ -10112,6 +10112,4118 @@
               }
             }
           ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 1003033,
+            "end": 1003463,
+            "sha256": "4d19d131dd60990cc2dbe83f74650dadd9ce87052162fbb7eba26b8d2bccf816"
+          },
+          "captures": [
+            {
+              "name": "Tyt",
+              "as": "isAutoOrActivePlanMode",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 12835,
+              "declEnd": 12838,
+              "sha256": "fb1aab57c8df13346433806ce8683d13dea7068d8302660d5483bae97fbcdad7",
+              "from": {
+                "chunk": "chunk-nd2stzp2.js",
+                "exportedAs": "Tyt",
+                "declStart": 1533,
+                "declEnd": 1632,
+                "sha256": "16dcd82b6dd97c939a1c37c7894f2817e0adcb93ae63f4b1d281beba03d3b713"
+              }
+            },
+            {
+              "name": "Fy",
+              "as": "findSafetyCheckReason",
+              "kind": "owned-binding",
+              "declKind": "function",
+              "declStart": 1056420,
+              "declEnd": 1056619,
+              "sha256": "7822ff5800d41ba6fd66501edb28ec23c58281b57f705af48124e4c266cfbf9b"
+            },
+            {
+              "name": "_Tt",
+              "as": "isClassifierRoutedSafetyCheck",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 6777,
+              "declEnd": 6780,
+              "sha256": "5c72fd356851a034ab80504d20bf3b090a0063bc60488c15be15759fa07cd056",
+              "from": {
+                "chunk": "chunk-af80z9sa.js",
+                "exportedAs": "_Tt",
+                "declStart": 1423,
+                "declEnd": 1518,
+                "sha256": "e570a4fb26caac961e55cc3eedc49fc00e06e3b5ccf996f545905e57bb15c47d"
+              }
+            },
+            {
+              "name": "Ua",
+              "as": "splitSubcommands",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 900715,
+              "declEnd": 901124,
+              "sha256": "3759b6281b613dcb2d975bc765999106b87a04f899ef0cea30996b1483edc0c6",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "zw",
+              "as": "matchRules",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 986369,
+              "declEnd": 986786,
+              "sha256": "4fd2f9ffcf83592fca7da073539d50e12b057e45d5f41ad075d66a390dc2e785"
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 999315,
+            "end": 1000376,
+            "sha256": "9162b4bed66a3df93f37b98f7309eb77250ae844255e33b0a4ac71c4b4589790"
+          },
+          "captures": [
+            {
+              "name": "J8e",
+              "as": "checkPrefixAndExactRules",
+              "kind": "owned-binding",
+              "declKind": "function",
+              "declStart": 998878,
+              "declEnd": 999315,
+              "sha256": "1262dc233dbc1a49038c79d8b41019d4d0dd9af68eb039ff62cc5de5f8bc4a45"
+            },
+            {
+              "name": "Ua",
+              "as": "splitSubcommands",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 900715,
+              "declEnd": 901124,
+              "sha256": "3759b6281b613dcb2d975bc765999106b87a04f899ef0cea30996b1483edc0c6",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "zw",
+              "as": "matchRules",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 986369,
+              "declEnd": 986786,
+              "sha256": "4fd2f9ffcf83592fca7da073539d50e12b057e45d5f41ad075d66a390dc2e785"
+            },
+            {
+              "name": "yi",
+              "as": "bashTool",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 3839118,
+              "declEnd": 3850985,
+              "sha256": "e3541e622bc74601d4efad6c4df8a8ebf1236c1503840e52c9ceaf207b2de782"
+            },
+            {
+              "name": "i_e",
+              "as": "findDangerousRemovalExpansion",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 926742,
+              "declEnd": 927532,
+              "sha256": "6fa0a7d5b5b298fa3c97f8adcf44737177a3eccad64b0857287c70f5c5e4735b",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "s",
+              "as": "emitTelemetry",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 4719,
+              "declEnd": 4720,
+              "sha256": "043a718774c572bd8a25adbeb1bfcd5c0256ae11cecf9f9c3f925d0e52beaf89",
+              "from": {
+                "chunk": "chunk-qw5jhqey.js",
+                "exportedAs": "s",
+                "declStart": 1332,
+                "declEnd": 1449,
+                "sha256": "06595e467f1ac955f8b81113e32cdb5b2e84936c11c78c1cd0eecbd6956d84f5"
+              }
+            },
+            {
+              "name": "Bw",
+              "as": "dangerousRemovalDecision",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 923829,
+              "declEnd": 924029,
+              "sha256": "dcccc5e71624a8930c948e8e3c267ede61dbbbb7ee88b8968b9b01423b0d3272",
+              "closure": []
+            },
+            {
+              "name": "w3",
+              "as": "parseAborted",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 12771,
+              "declEnd": 12773,
+              "sha256": "55eae50b75e2b2990f2c18be84ca079727a85f61b839c3359249801fe1ab9e9c",
+              "from": {
+                "chunk": "chunk-fgwne0fb.js",
+                "exportedAs": "w3",
+                "declStart": 61156,
+                "declEnd": 61182,
+                "sha256": "51c5804e6069aece9c6a0c59d28154cc87787c86165ae34d7b0f9e92d0eaf8b9"
+              }
+            },
+            {
+              "name": "Brn",
+              "as": "checkNestedDangerousRemoval",
+              "kind": "owned-binding",
+              "declKind": "function",
+              "declStart": 1000376,
+              "declEnd": 1002348,
+              "sha256": "6760627ba90b8a4136a6c314cc3830b5afdcf1db1ceaca6d0faff677bc20a832"
+            },
+            {
+              "name": "ee",
+              "as": "currentWorkingDirectory",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 4844,
+              "declEnd": 4846,
+              "sha256": "27a84712e4b22c415fc544d55cdee82327a829f96d03329457f76ebf9af4dcaa",
+              "from": {
+                "chunk": "chunk-z9mp80s2.js",
+                "exportedAs": "ee",
+                "declStart": 1013,
+                "declEnd": 1063,
+                "sha256": "9dd4f005c82c20f1d7bf25cb5f32d05ed99415dacea87a7eda6c51e8d4b163c7"
+              }
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 991217,
+            "end": 994012,
+            "sha256": "86e43c072187f928fa9197f72f3c94dd9fa90335b2cb49e1fba18451855c8bd9"
+          },
+          "captures": [
+            {
+              "name": "pt",
+              "as": "sandbox",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 15301,
+              "declEnd": 15303,
+              "sha256": "e75b11da693d7bb5273985dcf9f02729455da7e7c80e54a0615e00ec2ae76d8e",
+              "from": {
+                "chunk": "chunk-q4xe0m2r.js",
+                "exportedAs": "pt",
+                "declStart": 577398,
+                "declEnd": 580070,
+                "sha256": "314c7869f16ea30d73eee3d897aa7c8789f33476e2e92f57094a6398f864437a"
+              }
+            },
+            {
+              "name": "bv",
+              "as": "isSandboxEligible",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1012469,
+              "declEnd": 1012876,
+              "sha256": "8fb7548ebd2e3698d52c922c77809fc6afd3ba162fd37c570e97b53fe1957199"
+            },
+            {
+              "name": "Q8e",
+              "as": "isSandboxAutoAllowSuspended",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 3953,
+              "declEnd": 3956,
+              "sha256": "5ec4e099d422710b4b9b0a6eca4382a9063c2f04ec386553bd8e7f84a81af086",
+              "from": {
+                "chunk": "chunk-bsdtxcdc.js",
+                "exportedAs": "Q8e",
+                "declStart": 572972,
+                "declEnd": 573035,
+                "sha256": "e82a12d98b7665b577a04846cb0bd1edb54a243f8e29ba95fc13adf1a61597be"
+              }
+            },
+            {
+              "name": "rW",
+              "as": "splitClampCommands",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 901124,
+              "declEnd": 901637,
+              "sha256": "36ab4fcd232ce2a97a2bc6965a46cdab886ba42a5c16d3a0fa3a5c5b28553718",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "zw",
+              "as": "matchRules",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 986369,
+              "declEnd": 986786,
+              "sha256": "4fd2f9ffcf83592fca7da073539d50e12b057e45d5f41ad075d66a390dc2e785"
+            },
+            {
+              "name": "yi",
+              "as": "bashTool",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 3839118,
+              "declEnd": 3850985,
+              "sha256": "e3541e622bc74601d4efad6c4df8a8ebf1236c1503840e52c9ceaf207b2de782"
+            },
+            {
+              "name": "Irn",
+              "as": "stripEnvironmentAssignments",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 994167,
+              "declEnd": 994388,
+              "sha256": "c7ec693803c4b0880d65b2a54ebe93c5bbac661bf839c9234b2f2749f0a16ff4",
+              "closure": [
+                {
+                  "name": "XTe",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 162899,
+                  "declEnd": 162976,
+                  "sha256": "dea7c4580e17a9c9ac27629f3136d3357f0a9b3be1035740603cdb85e9c1ddc0",
+                  "declKind": "function"
+                },
+                {
+                  "name": "Jn",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 162773,
+                  "declEnd": 162899,
+                  "sha256": "1e8080407782f128c204a309388d4706494f0f7565b62b237fa5e1d75c471ba9",
+                  "declKind": "function"
+                },
+                {
+                  "name": "or",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 162227,
+                  "declEnd": 162609,
+                  "sha256": "8758b53391b02124583341ef0bcfa372dd62b54eacdf8d83ea4acb187f7ddbeb",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "Va",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 3,
+                  "basis": "declaration",
+                  "declStart": 161846,
+                  "declEnd": 162226,
+                  "sha256": "ecc6be0e6c5307d7c4519fdef4169ce129b2381345c72ef5cfd7b83f25c965bc",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "Db",
+              "as": "peelCommandPrefixes",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 942645,
+              "declEnd": 943599,
+              "sha256": "78a2430056bbdb255e0680ef75faa7af08ca814659ff2c3b143fb99a7a2a6c94",
+              "closure": [
+                {
+                  "name": "a_e",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 980878,
+                  "declEnd": 981375,
+                  "sha256": "8954de42957e31dd5714ee6df7d3216dd79b18aeb82aa32a2b51863075612fec",
+                  "declKind": "function"
+                },
+                {
+                  "name": "Nnn",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 942169,
+                  "declEnd": 942409,
+                  "sha256": "0eeff982a5761b3cdc115909425c28f8e03d7d0bae8b52a97b4103f04790166c",
+                  "declKind": "function"
+                },
+                {
+                  "name": "$nn",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 942409,
+                  "declEnd": 942645,
+                  "sha256": "e9c74fa79f26ca69d22ef209670a8bf82df00bd8fc20f2a743687357b6e5700f",
+                  "declKind": "function"
+                },
+                {
+                  "name": "v8e",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 980853,
+                  "declEnd": 980877,
+                  "sha256": "b83e250e94f73ea187519d7f4d6e134450193b43ecd6072a178e97d711f4601e",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "XTe",
+              "as": "isDangerousEnvironmentVariable",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 11413,
+              "declEnd": 11416,
+              "sha256": "630c34b0298d92002a00884b9ce0e919a7c438fd681133f913a5374190fff486",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "XTe",
+                "declStart": 162899,
+                "declEnd": 162976,
+                "sha256": "dea7c4580e17a9c9ac27629f3136d3357f0a9b3be1035740603cdb85e9c1ddc0"
+              },
+              "closure": [
+                {
+                  "name": "Jn",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 162773,
+                  "declEnd": 162899,
+                  "sha256": "1e8080407782f128c204a309388d4706494f0f7565b62b237fa5e1d75c471ba9",
+                  "declKind": "function"
+                },
+                {
+                  "name": "or",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 162227,
+                  "declEnd": 162609,
+                  "sha256": "8758b53391b02124583341ef0bcfa372dd62b54eacdf8d83ea4acb187f7ddbeb",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "Va",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 161846,
+                  "declEnd": 162226,
+                  "sha256": "ecc6be0e6c5307d7c4519fdef4169ce129b2381345c72ef5cfd7b83f25c965bc",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "SQn",
+              "as": "isSandboxExcludedCommand",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 11381,
+              "declEnd": 11384,
+              "sha256": "636e26012baba666c556e8ed1c8e876e96b35ecb4b011bc8c1a845a902d69c4b",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "SQn",
+                "declStart": 160818,
+                "declEnd": 160942,
+                "sha256": "4923248836c17d435dba949db06afaae49421d47e19bda602f65f8cd7aa559e2"
+              },
+              "closure": [
+                {
+                  "name": "fKe",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 159719,
+                  "declEnd": 159873,
+                  "sha256": "b6e0dfa78a540f85e97a3d74f1421164243438724e0249527e674d86311f21f5",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "cWt",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 158860,
+                  "declEnd": 159130,
+                  "sha256": "62e757bf4ccb6de82891e4294511741d4c28fad6b14713e990c34a6b9e4830fe",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "Z_t",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 160705,
+                  "declEnd": 160817,
+                  "sha256": "82e9209014371abf6d8a54d73647230768ea09ced03379929f98abf9ca56b97a",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "R8e",
+              "as": "sandboxBlockedCommands",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 994076,
+              "declEnd": 994166,
+              "sha256": "68fe1f54262affe9bf226626625706aaa3f2ce0bb43d79747bd96ac009faa57b"
+            },
+            {
+              "name": "Mrn",
+              "as": "sandboxDynamicCommands",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 994016,
+              "declEnd": 994075,
+              "sha256": "f9f040dfd9de90e55a82b955756c9e32ead0020eb40f7c261cd7fbd89b60d868"
+            },
+            {
+              "name": "mKe",
+              "as": "arithmeticComparisonOperators",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 11389,
+              "declEnd": 11392,
+              "sha256": "6e8b7cae68b96237350c450492ad6a059e6724af32b22423b857e53ae6dff3bb",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "mKe",
+                "declStart": 161131,
+                "declEnd": 161181,
+                "sha256": "cf838f55e86be62a677e71370b12c02cd99c1faf3a8352337f20bc7c8117acd0"
+              }
+            },
+            {
+              "name": "uWt",
+              "as": "sandboxUnsupportedCommands",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 11373,
+              "declEnd": 11376,
+              "sha256": "5be18d6161f75a3f174bee5fa0a0a19f355421ee4d7dde34270d414fc20f6255",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "uWt",
+                "declStart": 159874,
+                "declEnd": 159915,
+                "sha256": "916f5bfef019c46cf237789a69b193de15e438a5d0fbc96b238fe3683c421629"
+              }
+            },
+            {
+              "name": "o_n",
+              "as": "findActions",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 11357,
+              "declEnd": 11360,
+              "sha256": "02c0bdde0499754540baaeb89d868d1ee768c4992148d47d39e830fd2c6314f7",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "o_n",
+                "declStart": 159131,
+                "declEnd": 159243,
+                "sha256": "1e0b7efc480f14971e6f238201f4974fe70cb206e474d28bcd05e87ed3a08504"
+              }
+            },
+            {
+              "name": "J_t",
+              "as": "findValueOptionPattern",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 11361,
+              "declEnd": 11364,
+              "sha256": "07b6123d41bb6991739a75c30b8ffdb27ba7be061b4b1d99b296245daf228865",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "J_t",
+                "declStart": 159244,
+                "declEnd": 159690,
+                "sha256": "df8d85771b5ce541ae954f1be1f5b6a18b190a740a7e2a14ca32e1e2cd3d77c1"
+              }
+            },
+            {
+              "name": "Q_t",
+              "as": "findQuotedValuePattern",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 11365,
+              "declEnd": 11368,
+              "sha256": "6fd3920b0502031c2046682e6ae39e2b1be59b94ef98af0b53f1d0fd1e31db26",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "Q_t",
+                "declStart": 159691,
+                "declEnd": 159718,
+                "sha256": "6b7940189164d99d23e3f0d460ebd7e06a29e3b16288b20e4f25b4ef678d3cc9"
+              }
+            },
+            {
+              "name": "a_n",
+              "as": "safeSetLongOptions",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 11405,
+              "declEnd": 11408,
+              "sha256": "046b4724fc2febf009e0d74429da7ccd97ea4844104812540954b4c08820044c",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "a_n",
+                "declStart": 161605,
+                "declEnd": 161778,
+                "sha256": "b02ada940bb84e74e875c0019c9819db8936b9a63a270aca9b321a68d3733d57"
+              }
+            },
+            {
+              "name": "l_n",
+              "as": "safeSetShortOptions",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 11409,
+              "declEnd": 11412,
+              "sha256": "a113110bb27da5fa0872a6f24047256d840694e99d7509f7b8415f10c3563fde",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "l_n",
+                "declStart": 161779,
+                "declEnd": 161845,
+                "sha256": "d55bb1936e7a7b60828ddf2ee5f268b129778f3010482e6b6991c7c5c2bf1f01"
+              }
+            },
+            {
+              "name": "ql",
+              "as": "permissionMessage",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 1031335,
+              "declEnd": 1032707,
+              "sha256": "6af1f610482a67a5c6e24da1614479bc649044910eb9609bc27811081a562abb"
+            },
+            {
+              "name": "JNe",
+              "as": "sandboxAutoAllowReason",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 6781,
+              "declEnd": 6784,
+              "sha256": "1ad643f5a48bba7d199decef11b8ead17f008f8aab2327eef6fc4e08b2c14abe",
+              "from": {
+                "chunk": "chunk-af80z9sa.js",
+                "exportedAs": "JNe",
+                "declStart": 1780,
+                "declEnd": 1846,
+                "sha256": "7ff914f81c5e0020efc867246a32784ce1e9750f4e44e7677793925258fff580"
+              }
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 1002348,
+            "end": 1002853,
+            "sha256": "4f6ad157eeb8a898f6041844741ac6b07aacd542fdc40688cb6cb9df10e31d32"
+          },
+          "captures": [
+            {
+              "name": "J8e",
+              "as": "checkPrefixAndExactRules",
+              "kind": "owned-binding",
+              "declKind": "function",
+              "declStart": 998878,
+              "declEnd": 999315,
+              "sha256": "1262dc233dbc1a49038c79d8b41019d4d0dd9af68eb039ff62cc5de5f8bc4a45"
+            },
+            {
+              "name": "zw",
+              "as": "matchRules",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 986369,
+              "declEnd": 986786,
+              "sha256": "4fd2f9ffcf83592fca7da073539d50e12b057e45d5f41ad075d66a390dc2e785"
+            },
+            {
+              "name": "yi",
+              "as": "bashTool",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 3839118,
+              "declEnd": 3850985,
+              "sha256": "e3541e622bc74601d4efad6c4df8a8ebf1236c1503840e52c9ceaf207b2de782"
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 990426,
+            "end": 991217,
+            "sha256": "e3d398b588f73d25ef3bfa659fe1893dfe376f5bf2d36a2523d9e8dc073282d3"
+          },
+          "captures": [
+            {
+              "name": "pt",
+              "as": "sandbox",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 15301,
+              "declEnd": 15303,
+              "sha256": "e75b11da693d7bb5273985dcf9f02729455da7e7c80e54a0615e00ec2ae76d8e",
+              "from": {
+                "chunk": "chunk-q4xe0m2r.js",
+                "exportedAs": "pt",
+                "declStart": 577398,
+                "declEnd": 580070,
+                "sha256": "314c7869f16ea30d73eee3d897aa7c8789f33476e2e92f57094a6398f864437a"
+              }
+            },
+            {
+              "name": "bv",
+              "as": "isSandboxEligible",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1012469,
+              "declEnd": 1012876,
+              "sha256": "8fb7548ebd2e3698d52c922c77809fc6afd3ba162fd37c570e97b53fe1957199"
+            },
+            {
+              "name": "Q8e",
+              "as": "isSandboxAutoAllowSuspended",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 3953,
+              "declEnd": 3956,
+              "sha256": "5ec4e099d422710b4b9b0a6eca4382a9063c2f04ec386553bd8e7f84a81af086",
+              "from": {
+                "chunk": "chunk-bsdtxcdc.js",
+                "exportedAs": "Q8e",
+                "declStart": 572972,
+                "declEnd": 573035,
+                "sha256": "e82a12d98b7665b577a04846cb0bd1edb54a243f8e29ba95fc13adf1a61597be"
+              }
+            },
+            {
+              "name": "Orn",
+              "as": "checkSandboxRules",
+              "kind": "owned-binding",
+              "declKind": "function",
+              "declStart": 994388,
+              "declEnd": 995251,
+              "sha256": "d79e19db7fa684be8bcdff9079df10f51e155be76f1786ead8735c9bcedcaf9d"
+            },
+            {
+              "name": "oW",
+              "as": "spawnEnvironmentKeys",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 909525,
+              "declEnd": 909566,
+              "sha256": "b787bf511e889fefb2b67e0d651d137f93c7c5005a227083c80d2956581e4431"
+            },
+            {
+              "name": "Ww",
+              "as": "isSafeEnvironmentVariable",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 979408,
+              "declEnd": 979444,
+              "sha256": "3b05ec85c096fc6c8cb43436f9b74efff4caa0efde19bcfb97c38d47e9c08654",
+              "closure": [
+                {
+                  "name": "cW",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 978884,
+                  "declEnd": 979407,
+                  "sha256": "f9d6988851c9cafee6465d8598a0a6477ae64b22b7c320bed80ee174ea6a59fd",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "Db",
+              "as": "peelCommandPrefixes",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 942645,
+              "declEnd": 943599,
+              "sha256": "78a2430056bbdb255e0680ef75faa7af08ca814659ff2c3b143fb99a7a2a6c94",
+              "closure": [
+                {
+                  "name": "a_e",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 980878,
+                  "declEnd": 981375,
+                  "sha256": "8954de42957e31dd5714ee6df7d3216dd79b18aeb82aa32a2b51863075612fec",
+                  "declKind": "function"
+                },
+                {
+                  "name": "Nnn",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 942169,
+                  "declEnd": 942409,
+                  "sha256": "0eeff982a5761b3cdc115909425c28f8e03d7d0bae8b52a97b4103f04790166c",
+                  "declKind": "function"
+                },
+                {
+                  "name": "$nn",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 942409,
+                  "declEnd": 942645,
+                  "sha256": "e9c74fa79f26ca69d22ef209670a8bf82df00bd8fc20f2a743687357b6e5700f",
+                  "declKind": "function"
+                },
+                {
+                  "name": "v8e",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 980853,
+                  "declEnd": 980877,
+                  "sha256": "b83e250e94f73ea187519d7f4d6e134450193b43ecd6072a178e97d711f4601e",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "dL",
+              "as": "checkDangerousRemoval",
+              "kind": "owned-binding",
+              "declKind": "function",
+              "declStart": 924029,
+              "declEnd": 926567,
+              "sha256": "f5c9494863eaf72422b3f063313bfb09536eb135198e1c401162cf40aafdeb9b"
+            },
+            {
+              "name": "ee",
+              "as": "currentWorkingDirectory",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 4844,
+              "declEnd": 4846,
+              "sha256": "27a84712e4b22c415fc544d55cdee82327a829f96d03329457f76ebf9af4dcaa",
+              "from": {
+                "chunk": "chunk-z9mp80s2.js",
+                "exportedAs": "ee",
+                "declStart": 1013,
+                "declEnd": 1063,
+                "sha256": "9dd4f005c82c20f1d7bf25cb5f32d05ed99415dacea87a7eda6c51e8d4b163c7"
+              }
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 988256,
+            "end": 988893,
+            "sha256": "e285333df62ea5359acffc9053e01b93a737aa1474984f75b3facd8c458b11ad"
+          },
+          "captures": [
+            {
+              "name": "zw",
+              "as": "matchRules",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 986369,
+              "declEnd": 986786,
+              "sha256": "4fd2f9ffcf83592fca7da073539d50e12b057e45d5f41ad075d66a390dc2e785"
+            },
+            {
+              "name": "yi",
+              "as": "bashTool",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 3839118,
+              "declEnd": 3850985,
+              "sha256": "e3541e622bc74601d4efad6c4df8a8ebf1236c1503840e52c9ceaf207b2de782"
+            },
+            {
+              "name": "ql",
+              "as": "permissionMessage",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 1031335,
+              "declEnd": 1032707,
+              "sha256": "6af1f610482a67a5c6e24da1614479bc649044910eb9609bc27811081a562abb"
+            },
+            {
+              "name": "w3e",
+              "as": "permissionSuggestions",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 978197,
+              "declEnd": 978381,
+              "sha256": "2ac0e5fdaecbc69a56e1ecab4bce0697a1082a42be1bd58b232fd957b3505350",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-9e2ns8ty.js",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 243672,
+                  "sha256": "53d260820b9f7af2d3d03096e1321b57dbd682bc79a5c755df7f396bfa52fe45",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-04aem4bh.js",
+                  "chunk": "chunk-04aem4bh.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 5767,
+                  "sha256": "e8af93a4d91fae5ac8b9e5b62394d42fb9e5e4c802b5d6c4469370fb6cea1259",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-vb9my8xr.js",
+                  "chunk": "chunk-vb9my8xr.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 2638,
+                  "sha256": "457ca5a7b88ee46aed3e6c5092c5fa40d62dc7eb237913dd66dd3b369d9d9c4e",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-bsdtxcdc.js",
+                  "chunk": "chunk-bsdtxcdc.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 808595,
+                  "sha256": "911f3e76c42f483b2ee2db1166683d8964768f46766b9009adf4036107030935",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-bqw67h0a.js",
+                  "chunk": "chunk-bqw67h0a.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 751,
+                  "sha256": "d5ead4305f2c4c9bc581687467d172836314e26c111886425bc2e471870da636",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-38213y7h.js",
+                  "chunk": "chunk-38213y7h.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 94444,
+                  "sha256": "210dc834a30092805d6cd139337048efe5c1e01adf214be33adc3ccc19642a6b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-9mcb844f.js",
+                  "chunk": "chunk-9mcb844f.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 8375,
+                  "sha256": "4a73397f504e83f4983e256e433610571c191e4d649a2b22901f3511b491c438",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 996685,
+            "end": 996923,
+            "sha256": "ffa75e5735fd2d70acf7f29e9e5907563c48b321d27f1b1338a9f74a5478062c"
+          },
+          "captures": [
+            {
+              "name": "m_e",
+              "as": "directoryIdentity",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 998475,
+              "declEnd": 998878,
+              "sha256": "4541aafc94509a67db744eb51280359fcf5bfa4d44255c997437ee5ae9c2eb8c"
+            },
+            {
+              "name": "Q",
+              "as": "countMatching",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 23370,
+              "declEnd": 23371,
+              "sha256": "4ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260",
+              "from": {
+                "chunk": "chunk-4vdmpx05.js",
+                "exportedAs": "Q",
+                "declStart": 672,
+                "declEnd": 731,
+                "sha256": "59ed2ec3f238b0bde58431d4c6cf8dda622e6dff7cd825b0e835ab24a45ccb16"
+              }
+            },
+            {
+              "name": "Lb",
+              "as": "isNormalizedCdCommand",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 1011551,
+              "declEnd": 1011639,
+              "sha256": "948e2bcc38f4198f6144730becf31922aa8f68b3112438b52a339357d3a6a5db",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "z8e",
+              "as": "parseCdTarget",
+              "kind": "owned-binding",
+              "declKind": "function",
+              "declStart": 996923,
+              "declEnd": 997407,
+              "sha256": "d0eae04439a9855f5394b5dd1c4cbd0454b47ff4e199ea3715eda2bbf1353e05"
+            },
+            {
+              "name": "V8e",
+              "as": "checkSameDirectoryCd",
+              "kind": "owned-binding",
+              "declKind": "function",
+              "declStart": 997496,
+              "declEnd": 997993,
+              "sha256": "800c7785367828c745d152905c710936f3c19d351af5fa4b3e143c2a0e4bbc7d"
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 939072,
+            "end": 941297,
+            "sha256": "ab21e2f3928ca6a5a51b13aa5b3ce500996d0965da3216ca8645c6bdc68e763f"
+          },
+          "captures": [
+            {
+              "name": "Fnn",
+              "as": "analyzeAstRedirections",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 941297,
+              "declEnd": 942169,
+              "sha256": "0d19a5a3d9d4ed8ce00642b0fa4aac6387cfeec533624265829ab9df39b483ea",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-9e2ns8ty.js",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 243672,
+                  "sha256": "53d260820b9f7af2d3d03096e1321b57dbd682bc79a5c755df7f396bfa52fe45",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-snzr790g.js",
+                  "chunk": "chunk-snzr790g.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 17587,
+                  "sha256": "29ccb7e9b76d6718c4c8a7d1059b5674236f5b6939df647c8372a20f1317952d",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-zyp65cht.js",
+                  "chunk": "chunk-zyp65cht.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 4203,
+                  "sha256": "4ab4a61eb58fd83053bc2a4bffa499c9e2dc0a05fedefea18141715e0f88296d",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-qpcjd2zp.js",
+                  "chunk": "chunk-qpcjd2zp.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 12188,
+                  "sha256": "95c44637d15eb772c0365f11ab6d5585758847c551ac637f4271d22802472e3e",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-ynzt0fm1.js",
+                  "chunk": "chunk-ynzt0fm1.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 45468,
+                  "sha256": "6d6941baa6bfd42a0b991e9dc8901248ae28f7436366f9a0fb33a65e68154aa8",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-qr1avfxy.js",
+                  "chunk": "chunk-qr1avfxy.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 6499,
+                  "sha256": "c02dd8122c4db9da3304003c5b75464853cd9d546cb830afb39dcd1c41bb8d22",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "See",
+              "as": "analyzeOutputRedirections",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 905938,
+              "declEnd": 908388,
+              "sha256": "a8f74e58a5ff0d3d24ff179ab867f2b4ea2d7cd9ee83ee58c0ed18bb9f49dcb6",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "Rm",
+              "as": "expandHomePath",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 23035,
+              "declEnd": 23037,
+              "sha256": "e861fef791a00644d191ac60d956231ac8c870315fa6b400e74bbcec8c90c32e",
+              "from": {
+                "chunk": "chunk-snzr790g.js",
+                "exportedAs": "Rm",
+                "declStart": 9671,
+                "declEnd": 9749,
+                "sha256": "d32008da34953c125f3215308af4f7a618225882bda583b68a087f053d759b1b"
+              }
+            },
+            {
+              "name": "r8e",
+              "as": "resolvePath",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 915508,
+              "declEnd": 915522,
+              "sha256": "8d0877b4b1ef7af477e6f8a9a8e3e558ff5df91105a93334e5662b36dc4ca4eb",
+              "note": "exporting module 'path' is not part of the graph — only the import site is covered"
+            },
+            {
+              "name": "uL",
+              "as": "isAbsolutePath",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 915474,
+              "declEnd": 915490,
+              "sha256": "dfcb32790e1133e31c9e6521f74097785438f0ce4320fae6eb489302ffed7ff0",
+              "note": "exporting module 'path' is not part of the graph — only the import site is covered"
+            },
+            {
+              "name": "ao",
+              "as": "resolvePathVariants",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 2579,
+              "declEnd": 2581,
+              "sha256": "2dd411308b37266d33c9246821adc5aa4002f0091f5e2aece1953789930ad924",
+              "from": {
+                "chunk": "chunk-ynzt0fm1.js",
+                "exportedAs": "ao",
+                "declStart": 18663,
+                "declEnd": 19366,
+                "sha256": "a0fc658e4cb608aa240958eab8f76df250dbf96564c3c41a60689f6e9314131c"
+              }
+            },
+            {
+              "name": "fa",
+              "as": "matchPathRule",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 11585,
+              "declEnd": 11587,
+              "sha256": "3097e26b7f3cbdb920765a6c3d2ba94985e465cccb0664c62cec43fdc7544670",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "fa",
+                "declStart": 229528,
+                "declEnd": 230051,
+                "sha256": "f5a058c3a1e68623bec2391f64937cf82b7a350910d82a12d9cb67ca3d73dc99"
+              }
+            },
+            {
+              "name": "oY",
+              "as": "checkSuspiciousPath",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 11549,
+              "declEnd": 11551,
+              "sha256": "50b11012f01714c607476316bcd0b64ab2bc640a1d69c1b27d4d8e205bf73f07",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "oY",
+                "declStart": 222662,
+                "declEnd": 223415,
+                "sha256": "22721b3d4f10bbfd82e229dfd2ca3025794d1ebfaecde07c40c531219711b4d6"
+              }
+            },
+            {
+              "name": "Lnn",
+              "as": "checkOutputRedirections",
+              "kind": "owned-binding",
+              "declKind": "function",
+              "declStart": 937801,
+              "declEnd": 939072,
+              "sha256": "7603602395a8596eb697f3dfd30c5c8b7687919e11aec02aa870e1295767aabc"
+            },
+            {
+              "name": "Dnn",
+              "as": "checkAstPathCommand",
+              "kind": "owned-binding",
+              "declKind": "function",
+              "declStart": 937368,
+              "declEnd": 937707,
+              "sha256": "7730eeb686b24aaa3b21810604e0988d2b9ce0cc9ab5ec27fc8b2cdd66ff0c50"
+            },
+            {
+              "name": "Ua",
+              "as": "splitSubcommands",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 900715,
+              "declEnd": 901124,
+              "sha256": "3759b6281b613dcb2d975bc765999106b87a04f899ef0cea30996b1483edc0c6",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "Onn",
+              "as": "checkTextPathCommand",
+              "kind": "owned-binding",
+              "declKind": "function",
+              "declStart": 937034,
+              "declEnd": 937368,
+              "sha256": "7339bef71396c192095924d14417e3dfa7a7729a96cf8cfac73c486700043da2"
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 924029,
+            "end": 926567,
+            "sha256": "f5c9494863eaf72422b3f063313bfb09536eb135198e1c401162cf40aafdeb9b"
+          },
+          "captures": [
+            {
+              "name": "pL",
+              "as": "pathArgumentExtractors",
+              "kind": "owned-binding",
+              "declKind": "variable",
+              "declStart": 928665,
+              "declEnd": 932132,
+              "sha256": "ca2a510b0e83837904b41995f19e64b0a56b21672335eb0e1f6298d57f46070a"
+            },
+            {
+              "name": "Qo",
+              "as": "resolvePathPolicy",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 2566,
+              "declEnd": 2568,
+              "sha256": "2267fdc9517de393810a6abc7ee1b3d5cef3184e4953ccb053de19bf3f5cd45a",
+              "from": {
+                "chunk": "chunk-ynzt0fm1.js",
+                "exportedAs": "Qo",
+                "declStart": 16163,
+                "declEnd": 16477,
+                "sha256": "a5f883f3c6da01c9c1dd3f001b2ba3b84933a565d42ecb4e2cedca224b54947b"
+              }
+            },
+            {
+              "name": "le",
+              "as": "filesystem",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 2582,
+              "declEnd": 2584,
+              "sha256": "61098a4bf2a5e216533e5f2994d8f290308b310f2efa046548a96302afe412ea",
+              "from": {
+                "chunk": "chunk-ynzt0fm1.js",
+                "exportedAs": "le",
+                "declStart": 22453,
+                "declEnd": 22477,
+                "sha256": "15f0ecdc6269a118368b5e10428378de993d8bff7805f2b6ed8ae5823c7f510e"
+              }
+            },
+            {
+              "name": "te",
+              "as": "uniqueValues",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 23372,
+              "declEnd": 23374,
+              "sha256": "2d6c9a90dd38f6852515274cde41a8cd8e7e1a7a053835334ec7e29f61b918dd",
+              "from": {
+                "chunk": "chunk-4vdmpx05.js",
+                "exportedAs": "te",
+                "declStart": 731,
+                "declEnd": 768,
+                "sha256": "6ffde3998e55781a73c37dec46d904815d2c833debe4a2276a841c5acf544586"
+              }
+            },
+            {
+              "name": "TT",
+              "as": "allowedDirectories",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 11552,
+              "declEnd": 11554,
+              "sha256": "9779469589f956f434b70b578302dcbaa084a5eabb0124ccd61b0ae58c596e70",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "TT",
+                "declStart": 223415,
+                "declEnd": 223494,
+                "sha256": "e8b8dcf1569150dda0a02415305149421c9861e60aba801e4a806989c1f40f7f"
+              }
+            },
+            {
+              "name": "Rm",
+              "as": "expandHomePath",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 23035,
+              "declEnd": 23037,
+              "sha256": "e861fef791a00644d191ac60d956231ac8c870315fa6b400e74bbcec8c90c32e",
+              "from": {
+                "chunk": "chunk-snzr790g.js",
+                "exportedAs": "Rm",
+                "declStart": 9671,
+                "declEnd": 9749,
+                "sha256": "d32008da34953c125f3215308af4f7a618225882bda583b68a087f053d759b1b"
+              }
+            },
+            {
+              "name": "uL",
+              "as": "isAbsolutePath",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 915474,
+              "declEnd": 915490,
+              "sha256": "dfcb32790e1133e31c9e6521f74097785438f0ce4320fae6eb489302ffed7ff0",
+              "note": "exporting module 'path' is not part of the graph — only the import site is covered"
+            },
+            {
+              "name": "r8e",
+              "as": "resolvePath",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 915508,
+              "declEnd": 915522,
+              "sha256": "8d0877b4b1ef7af477e6f8a9a8e3e558ff5df91105a93334e5662b36dc4ca4eb",
+              "note": "exporting module 'path' is not part of the graph — only the import site is covered"
+            },
+            {
+              "name": "Enn",
+              "as": "normalizePath",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 915491,
+              "declEnd": 915507,
+              "sha256": "dd275864d96ef4db328665a9a8a42ff53677a700e8d7ba832c638494d6f0cd5b",
+              "note": "exporting module 'path' is not part of the graph — only the import site is covered"
+            },
+            {
+              "name": "Bw",
+              "as": "dangerousRemovalDecision",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 923829,
+              "declEnd": 924029,
+              "sha256": "dcccc5e71624a8930c948e8e3c267ede61dbbbb7ee88b8968b9b01423b0d3272",
+              "closure": []
+            },
+            {
+              "name": "Cnn",
+              "as": "pathSeparator",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 915523,
+              "declEnd": 915533,
+              "sha256": "e10e93361d641cf11d6a4486823b41300644c9c05fe73d9e9adba8399a7b3621",
+              "note": "exporting module 'path' is not part of the graph — only the import site is covered"
+            },
+            {
+              "name": "kze",
+              "as": "hasUnsafeGlobRoot",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 16004,
+              "declEnd": 16007,
+              "sha256": "9a3edf3a8b19ceb442ee65b8abd367a7fb810abeaef038dad55602f8a741fa18",
+              "from": {
+                "chunk": "chunk-2q90zhqs.js",
+                "exportedAs": "kze",
+                "declStart": 4510,
+                "declEnd": 4664,
+                "sha256": "fb7804f0fa4bc81e84789b346d0eecb8befb87fd423fc29697999491fced68ce"
+              }
+            },
+            {
+              "name": "Qa",
+              "as": "hasUnknownTrackedValue",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 11306,
+              "declEnd": 11308,
+              "sha256": "18b68dd0be6488243208af5bdfec9ad801a8ff4b796e148dfc3eaf751acb6dd7",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "Qa",
+                "declStart": 109282,
+                "declEnd": 109334,
+                "sha256": "0efe916dda3cc66bc1c3b5f4ef4d2d93c15fb2e4abba643be86ea5a13c712b3a"
+              },
+              "closure": [
+                {
+                  "name": "Me",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 109239,
+                  "declEnd": 109261,
+                  "sha256": "233cc5fb4ea708e96c0fa5c67b36a622a3d4b3605aeaf4d6d4ef355f7952e96b",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "z",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 109262,
+                  "declEnd": 109281,
+                  "sha256": "fc3dc77b6831251dfdb8d8d07d12af2f57ac8cfafe09e2df14f1b0bb48fe1e4d",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "Bn",
+              "as": "hasBlockedPathShape",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 22965,
+              "declEnd": 22967,
+              "sha256": "a0638912f2384dfe3113db0454983b65372d3d402a33202a1eb966c1378317b5",
+              "from": {
+                "chunk": "chunk-snzr790g.js",
+                "exportedAs": "Bn",
+                "declStart": 5993,
+                "declEnd": 6041,
+                "sha256": "90c89f5bbc56e661ede3d15720b01457e659547de7a1e715983c7c7fb1642d37"
+              }
+            },
+            {
+              "name": "pwe",
+              "as": "isCriticalPath",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 16000,
+              "declEnd": 16003,
+              "sha256": "8e064b83fb2eeb241de2b432860997581e4149fc4d1ce186881314d8892bc7d4",
+              "from": {
+                "chunk": "chunk-2q90zhqs.js",
+                "exportedAs": "pwe",
+                "declStart": 3900,
+                "declEnd": 4336,
+                "sha256": "9b35d52b121bfb0fe895be416318079cf39036bed9514b0e87d10ac8197e5865"
+              }
+            },
+            {
+              "name": "nf",
+              "as": "pathContains",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 11566,
+              "declEnd": 11568,
+              "sha256": "4ce7bcf6e148d5048b8ebb6760ef1b0b11f67ac0a1d1aad41e31087a1b6a1db7",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "nf",
+                "declStart": 224526,
+                "declEnd": 224937,
+                "sha256": "2d66a74bef4b3f778963c37f9f18b0fb1832a1ca5b88494e7c9727a7f27a6909"
+              }
+            },
+            {
+              "name": "Q",
+              "as": "countMatching",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 23370,
+              "declEnd": 23371,
+              "sha256": "4ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260",
+              "from": {
+                "chunk": "chunk-4vdmpx05.js",
+                "exportedAs": "Q",
+                "declStart": 672,
+                "declEnd": 731,
+                "sha256": "59ed2ec3f238b0bde58431d4c6cf8dda622e6dff7cd825b0e835ab24a45ccb16"
+              }
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 995799,
+            "end": 996270,
+            "sha256": "dc0843487fc8b504999a5794298bd52cd6bfdb0e0727c0f0f054469e91f10e90"
+          },
+          "captures": [
+            {
+              "name": "Qa",
+              "as": "hasUnknownTrackedValue",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 11306,
+              "declEnd": 11308,
+              "sha256": "18b68dd0be6488243208af5bdfec9ad801a8ff4b796e148dfc3eaf751acb6dd7",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "Qa",
+                "declStart": 109282,
+                "declEnd": 109334,
+                "sha256": "0efe916dda3cc66bc1c3b5f4ef4d2d93c15fb2e4abba643be86ea5a13c712b3a"
+              },
+              "closure": [
+                {
+                  "name": "Me",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 109239,
+                  "declEnd": 109261,
+                  "sha256": "233cc5fb4ea708e96c0fa5c67b36a622a3d4b3605aeaf4d6d4ef355f7952e96b",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "z",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 109262,
+                  "declEnd": 109281,
+                  "sha256": "fc3dc77b6831251dfdb8d8d07d12af2f57ac8cfafe09e2df14f1b0bb48fe1e4d",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "K8e",
+              "as": "isPathLike",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 997407,
+              "declEnd": 997496,
+              "sha256": "21032b8a8c9dda141e88e2fcac16f61186026fca2e2236edd7e2b96cc7a01624",
+              "closure": [
+                {
+                  "name": "lW",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 908448,
+                  "declEnd": 908464,
+                  "sha256": "7671b5e61274fbb5c2d3189ac35957ef2ba831377ffd24de2e9acd5ac1e5147f",
+                  "declKind": "import",
+                  "note": "resolves to Node builtin 'path', outside the extracted graph — no bundle bump can change it (the runtime pin does, §3.5). The import site is covered; there is no bundle-side far side to hash."
+                }
+              ]
+            },
+            {
+              "name": "lW",
+              "as": "isAbsolutePath",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 908448,
+              "declEnd": 908464,
+              "sha256": "7671b5e61274fbb5c2d3189ac35957ef2ba831377ffd24de2e9acd5ac1e5147f",
+              "note": "exporting module 'path' is not part of the graph — only the import site is covered"
+            },
+            {
+              "name": "D",
+              "as": "platform",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 22853,
+              "declEnd": 22854,
+              "sha256": "3f39d5c348e5b79d06e842c114e6cc571583bbf44e4b0ebfda1a01ec05745d43",
+              "from": {
+                "chunk": "chunk-zyp65cht.js",
+                "exportedAs": "D",
+                "declStart": 3527,
+                "declEnd": 3565,
+                "sha256": "1e3f50096e8f681bca101a612e81f576341b9d33184d472fca548abbef3a5d60"
+              }
+            },
+            {
+              "name": "X8e",
+              "as": "isSafeWindowsPath",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 997993,
+              "declEnd": 998475,
+              "sha256": "fba2ded302983b9eb664144788dd58537d85e8c4e260f58c203090602defea32",
+              "closure": []
+            },
+            {
+              "name": "Omt",
+              "as": "checkPathPolicy",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 16008,
+              "declEnd": 16011,
+              "sha256": "18cb0334b89ef89a62d06476533df68e04d9aa3d0bb7b16d1ab02b38cf45c6fb",
+              "from": {
+                "chunk": "chunk-2q90zhqs.js",
+                "exportedAs": "Omt",
+                "declStart": 4664,
+                "declEnd": 5980,
+                "sha256": "0727dc309e7c6b5c6f9cfa9a45ebae18fdc96a82a0245d13c6b9181c39888e47"
+              }
+            },
+            {
+              "name": "Xy",
+              "as": "isPathAllowed",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 11555,
+              "declEnd": 11557,
+              "sha256": "4994e03260d0c55c634439be1962e3e52e1ff15e82b6c037d881e8717bd3551f",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "Xy",
+                "declStart": 223677,
+                "declEnd": 223826,
+                "sha256": "66297a17519e34fc8e5791bd75c40702276a9ea24daf342282e01d678d1ffd84"
+              }
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 996270,
+            "end": 996685,
+            "sha256": "ed6aeed8fd727461ad6e5198a9201a10ef11586a02a937de89a6d29e60ce9c9d"
+          },
+          "captures": [
+            {
+              "name": "m_e",
+              "as": "directoryIdentity",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 998475,
+              "declEnd": 998878,
+              "sha256": "4541aafc94509a67db744eb51280359fcf5bfa4d44255c997437ee5ae9c2eb8c"
+            },
+            {
+              "name": "Q",
+              "as": "countMatching",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 23370,
+              "declEnd": 23371,
+              "sha256": "4ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260",
+              "from": {
+                "chunk": "chunk-4vdmpx05.js",
+                "exportedAs": "Q",
+                "declStart": 672,
+                "declEnd": 731,
+                "sha256": "59ed2ec3f238b0bde58431d4c6cf8dda622e6dff7cd825b0e835ab24a45ccb16"
+              }
+            },
+            {
+              "name": "Lb",
+              "as": "isNormalizedCdCommand",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 1011551,
+              "declEnd": 1011639,
+              "sha256": "948e2bcc38f4198f6144730becf31922aa8f68b3112438b52a339357d3a6a5db",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "Qa",
+              "as": "hasUnknownTrackedValue",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 11306,
+              "declEnd": 11308,
+              "sha256": "18b68dd0be6488243208af5bdfec9ad801a8ff4b796e148dfc3eaf751acb6dd7",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "Qa",
+                "declStart": 109282,
+                "declEnd": 109334,
+                "sha256": "0efe916dda3cc66bc1c3b5f4ef4d2d93c15fb2e4abba643be86ea5a13c712b3a"
+              },
+              "closure": [
+                {
+                  "name": "Me",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 109239,
+                  "declEnd": 109261,
+                  "sha256": "233cc5fb4ea708e96c0fa5c67b36a622a3d4b3605aeaf4d6d4ef355f7952e96b",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "z",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 109262,
+                  "declEnd": 109281,
+                  "sha256": "fc3dc77b6831251dfdb8d8d07d12af2f57ac8cfafe09e2df14f1b0bb48fe1e4d",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "D",
+              "as": "platform",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 22853,
+              "declEnd": 22854,
+              "sha256": "3f39d5c348e5b79d06e842c114e6cc571583bbf44e4b0ebfda1a01ec05745d43",
+              "from": {
+                "chunk": "chunk-zyp65cht.js",
+                "exportedAs": "D",
+                "declStart": 3527,
+                "declEnd": 3565,
+                "sha256": "1e3f50096e8f681bca101a612e81f576341b9d33184d472fca548abbef3a5d60"
+              }
+            },
+            {
+              "name": "z8e",
+              "as": "parseCdTarget",
+              "kind": "owned-binding",
+              "declKind": "function",
+              "declStart": 996923,
+              "declEnd": 997407,
+              "sha256": "d0eae04439a9855f5394b5dd1c4cbd0454b47ff4e199ea3715eda2bbf1353e05"
+            },
+            {
+              "name": "V8e",
+              "as": "checkSameDirectoryCd",
+              "kind": "owned-binding",
+              "declKind": "function",
+              "declStart": 997496,
+              "declEnd": 997993,
+              "sha256": "800c7785367828c745d152905c710936f3c19d351af5fa4b3e143c2a0e4bbc7d"
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 967748,
+            "end": 969083,
+            "sha256": "fcaf53f8c2ac42fe193549ecbc9e170586ffcc71858de84e97a53d6b8d486baf"
+          },
+          "captures": [
+            {
+              "name": "orn",
+              "as": "readRedirectOperators",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 966161,
+              "declEnd": 966195,
+              "sha256": "054a40ee5120a6395fa6be7f9a0c4112fc2d0475ce3e3f0326f5adc41160e0eb"
+            },
+            {
+              "name": "Qa",
+              "as": "hasUnknownTrackedValue",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 11306,
+              "declEnd": 11308,
+              "sha256": "18b68dd0be6488243208af5bdfec9ad801a8ff4b796e148dfc3eaf751acb6dd7",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "Qa",
+                "declStart": 109282,
+                "declEnd": 109334,
+                "sha256": "0efe916dda3cc66bc1c3b5f4ef4d2d93c15fb2e4abba643be86ea5a13c712b3a"
+              },
+              "closure": [
+                {
+                  "name": "Me",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 109239,
+                  "declEnd": 109261,
+                  "sha256": "233cc5fb4ea708e96c0fa5c67b36a622a3d4b3605aeaf4d6d4ef355f7952e96b",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "z",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 109262,
+                  "declEnd": 109281,
+                  "sha256": "fc3dc77b6831251dfdb8d8d07d12af2f57ac8cfafe09e2df14f1b0bb48fe1e4d",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "eQ",
+              "as": "hasUnsafePath",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 966240,
+              "declEnd": 966379,
+              "sha256": "b25d68c10fde52ebac099ef0f15d531b658952b6421663c41c3ee5d65f6a9465"
+            },
+            {
+              "name": "Db",
+              "as": "peelCommandPrefixes",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 942645,
+              "declEnd": 943599,
+              "sha256": "78a2430056bbdb255e0680ef75faa7af08ca814659ff2c3b143fb99a7a2a6c94",
+              "closure": [
+                {
+                  "name": "a_e",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 980878,
+                  "declEnd": 981375,
+                  "sha256": "8954de42957e31dd5714ee6df7d3216dd79b18aeb82aa32a2b51863075612fec",
+                  "declKind": "function"
+                },
+                {
+                  "name": "Nnn",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 942169,
+                  "declEnd": 942409,
+                  "sha256": "0eeff982a5761b3cdc115909425c28f8e03d7d0bae8b52a97b4103f04790166c",
+                  "declKind": "function"
+                },
+                {
+                  "name": "$nn",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 942409,
+                  "declEnd": 942645,
+                  "sha256": "e9c74fa79f26ca69d22ef209670a8bf82df00bd8fc20f2a743687357b6e5700f",
+                  "declKind": "function"
+                },
+                {
+                  "name": "v8e",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 980853,
+                  "declEnd": 980877,
+                  "sha256": "b83e250e94f73ea187519d7f4d6e134450193b43ecd6072a178e97d711f4601e",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "DP",
+              "as": "pathEffectKinds",
+              "kind": "owned-binding",
+              "declKind": "variable",
+              "declStart": 933350,
+              "declEnd": 933792,
+              "sha256": "0015a416e6a64a09080c59b2b13b0f5d427789e227fd036dab59f68a6498b5d0"
+            },
+            {
+              "name": "f8e",
+              "as": "gitRiskExcludedCommands",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 965466,
+              "declEnd": 965499,
+              "sha256": "a674f960f3aca970d8ad7c01e1a016cf785219fa57bf7578896f606579fe0ba6"
+            },
+            {
+              "name": "pL",
+              "as": "pathArgumentExtractors",
+              "kind": "owned-binding",
+              "declKind": "variable",
+              "declStart": 928665,
+              "declEnd": 932132,
+              "sha256": "ca2a510b0e83837904b41995f19e64b0a56b21672335eb0e1f6298d57f46070a"
+            },
+            {
+              "name": "srn",
+              "as": "hasUnsafeMkdirPath",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 967314,
+              "declEnd": 967480,
+              "sha256": "ab283e143447f39613f33c8bf1fce1f3700fb1433b7626d9e8598f61baae7ec5"
+            },
+            {
+              "name": "Rm",
+              "as": "expandHomePath",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 23035,
+              "declEnd": 23037,
+              "sha256": "e861fef791a00644d191ac60d956231ac8c870315fa6b400e74bbcec8c90c32e",
+              "from": {
+                "chunk": "chunk-snzr790g.js",
+                "exportedAs": "Rm",
+                "declStart": 9671,
+                "declEnd": 9749,
+                "sha256": "d32008da34953c125f3215308af4f7a618225882bda583b68a087f053d759b1b"
+              }
+            },
+            {
+              "name": "le",
+              "as": "filesystem",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 2582,
+              "declEnd": 2584,
+              "sha256": "61098a4bf2a5e216533e5f2994d8f290308b310f2efa046548a96302afe412ea",
+              "from": {
+                "chunk": "chunk-ynzt0fm1.js",
+                "exportedAs": "le",
+                "declStart": 22453,
+                "declEnd": 22477,
+                "sha256": "15f0ecdc6269a118368b5e10428378de993d8bff7805f2b6ed8ae5823c7f510e"
+              }
+            },
+            {
+              "name": "ex",
+              "as": "realpath",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 2572,
+              "declEnd": 2574,
+              "sha256": "5312fb609f60384731fcfcb95deef3602239bf61f865a07bd8e08d818d22e9fa",
+              "from": {
+                "chunk": "chunk-ynzt0fm1.js",
+                "exportedAs": "ex",
+                "declStart": 16774,
+                "declEnd": 18222,
+                "sha256": "682950361dbda82778f09a247ce50a45685c4bb3da635aa72d8f09177ad95121"
+              }
+            },
+            {
+              "name": "u_e",
+              "as": "resolvePath",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 915400,
+              "declEnd": 915414,
+              "sha256": "4e03d86a11edc808cf3fc7d50e488e58bdc8c987243aa12895ca4786efd01dc2",
+              "note": "exporting module 'path' is not part of the graph — only the import site is covered"
+            },
+            {
+              "name": "g8e",
+              "as": "resolveExistingPath",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 966196,
+              "declEnd": 966240,
+              "sha256": "05f92287551f08952161a95f64fea39e646d8fc99d91e9527f53172f550e9902"
+            },
+            {
+              "name": "irn",
+              "as": "isPathAncestor",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 967480,
+              "declEnd": 967748,
+              "sha256": "2ad5a54d6ded0508add442712d9ee93015f98bf0270d991e0545d3da02198888"
+            },
+            {
+              "name": "DU",
+              "as": "shellExpansionIndex",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 23038,
+              "declEnd": 23040,
+              "sha256": "5d544acfc7fb56cda14aedb9c796836947a7cd98070bc4248884425e498b0e0a",
+              "from": {
+                "chunk": "chunk-snzr790g.js",
+                "exportedAs": "DU",
+                "declStart": 9749,
+                "declEnd": 9886,
+                "sha256": "0a37400caf283374ebc0952adf539acfe84ce123c7df8691f754cf12abeef71d"
+              }
+            },
+            {
+              "name": "a8e",
+              "as": "basename",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 915312,
+              "declEnd": 915327,
+              "sha256": "567aaaf7dbd9f818f3d655aaa718bf7afd7019885228f30af9bc02bfcfa33c90",
+              "note": "exporting module 'path' is not part of the graph — only the import site is covered"
+            },
+            {
+              "name": "mL",
+              "as": "hasSymlinkTraversalRisk",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 966379,
+              "declEnd": 967314,
+              "sha256": "8ee8aefd432f9df5a96f602adb4cb4cc7a2304a3eb6705cc408d170bfbfdb3e6"
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 965749,
+            "end": 966157,
+            "sha256": "0658a48294344886a7b7245c2fa2b3c74bc1c48a550e9a2c18c729127a5156ed"
+          },
+          "captures": [
+            {
+              "name": "Ua",
+              "as": "splitSubcommands",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 900715,
+              "declEnd": 901124,
+              "sha256": "3759b6281b613dcb2d975bc765999106b87a04f899ef0cea30996b1483edc0c6",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "rrn",
+              "as": "pathArgumentsFromCommand",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 965500,
+              "declEnd": 965749,
+              "sha256": "fa6c6fb2433040c6ee7eb265ce29961796eb0ccd37c692556f8a6df9764ab845",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "Db",
+              "as": "peelCommandPrefixes",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 942645,
+              "declEnd": 943599,
+              "sha256": "78a2430056bbdb255e0680ef75faa7af08ca814659ff2c3b143fb99a7a2a6c94",
+              "closure": [
+                {
+                  "name": "a_e",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 980878,
+                  "declEnd": 981375,
+                  "sha256": "8954de42957e31dd5714ee6df7d3216dd79b18aeb82aa32a2b51863075612fec",
+                  "declKind": "function"
+                },
+                {
+                  "name": "Nnn",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 942169,
+                  "declEnd": 942409,
+                  "sha256": "0eeff982a5761b3cdc115909425c28f8e03d7d0bae8b52a97b4103f04790166c",
+                  "declKind": "function"
+                },
+                {
+                  "name": "$nn",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 942409,
+                  "declEnd": 942645,
+                  "sha256": "e9c74fa79f26ca69d22ef209670a8bf82df00bd8fc20f2a743687357b6e5700f",
+                  "declKind": "function"
+                },
+                {
+                  "name": "v8e",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 980853,
+                  "declEnd": 980877,
+                  "sha256": "b83e250e94f73ea187519d7f4d6e134450193b43ecd6072a178e97d711f4601e",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "ru",
+              "as": "commandArgv",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 901637,
+              "declEnd": 901761,
+              "sha256": "4c278f4529dca2f30bf41b8787c0f3293cc85c0c6f68e4564ebaee3c65c4d199",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "c_e",
+              "as": "createsGitInternalPath",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 965286,
+              "declEnd": 965462,
+              "sha256": "f398bf7fed21a76168b785491d4bd78049055572221f83b996b7e6fa60ce8444",
+              "closure": [
+                {
+                  "name": "Unn",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 915372,
+                  "declEnd": 915384,
+                  "sha256": "102dd1371282ea06daf4da13430248d4f6cb621c80ba96b11fca58d828c6797f",
+                  "declKind": "import",
+                  "note": "resolves to Node builtin 'path', outside the extracted graph — no bundle bump can change it (the runtime pin does, §3.5). The import site is covered; there is no bundle-side far side to hash."
+                },
+                {
+                  "name": "m8e",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 965219,
+                  "declEnd": 965285,
+                  "sha256": "786f04582e4e60dd7b34780eb30a184466ab40bba88b95df1f0f44c9f2e88534",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "See",
+              "as": "analyzeOutputRedirections",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 905938,
+              "declEnd": 908388,
+              "sha256": "a8f74e58a5ff0d3d24ff179ab867f2b4ea2d7cd9ee83ee58c0ed18bb9f49dcb6",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 988898,
+            "end": 990128,
+            "sha256": "d8a4faa289926a72aafde430e1b1a34613127602ffc3d3f3d6d524f2a120530e"
+          },
+          "captures": [
+            {
+              "name": "ee",
+              "as": "currentWorkingDirectory",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 4844,
+              "declEnd": 4846,
+              "sha256": "27a84712e4b22c415fc544d55cdee82327a829f96d03329457f76ebf9af4dcaa",
+              "from": {
+                "chunk": "chunk-z9mp80s2.js",
+                "exportedAs": "ee",
+                "declStart": 1013,
+                "declEnd": 1063,
+                "sha256": "9dd4f005c82c20f1d7bf25cb5f32d05ed99415dacea87a7eda6c51e8d4b163c7"
+              }
+            },
+            {
+              "name": "aQ",
+              "as": "checkExactPermission",
+              "kind": "owned-binding",
+              "declKind": "variable",
+              "declStart": 988253,
+              "declEnd": 988893,
+              "sha256": "7a00fb7dc64045d11b3d248dc19894941c52f9630edef6499c53b29db3cecf23"
+            },
+            {
+              "name": "zw",
+              "as": "matchRules",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 986369,
+              "declEnd": 986786,
+              "sha256": "4fd2f9ffcf83592fca7da073539d50e12b057e45d5f41ad075d66a390dc2e785"
+            },
+            {
+              "name": "yi",
+              "as": "bashTool",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 3839118,
+              "declEnd": 3850985,
+              "sha256": "e3541e622bc74601d4efad6c4df8a8ebf1236c1503840e52c9ceaf207b2de782"
+            },
+            {
+              "name": "ql",
+              "as": "permissionMessage",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 1031335,
+              "declEnd": 1032707,
+              "sha256": "6af1f610482a67a5c6e24da1614479bc649044910eb9609bc27811081a562abb"
+            },
+            {
+              "name": "I8",
+              "as": "checkPathSafety",
+              "kind": "owned-binding",
+              "declKind": "function",
+              "declStart": 939072,
+              "declEnd": 941297,
+              "sha256": "ab21e2f3928ca6a5a51b13aa5b3ce500996d0965da3216ca8645c6bdc68e763f"
+            },
+            {
+              "name": "H9e",
+              "as": "checkSedSafety",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 920776,
+              "declEnd": 921326,
+              "sha256": "74e17d5897391d9bd416f17f9e45cbaf746b744b407295472c56bd671b0fc20a",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-9e2ns8ty.js",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 243672,
+                  "sha256": "53d260820b9f7af2d3d03096e1321b57dbd682bc79a5c755df7f396bfa52fe45",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "T8e",
+              "as": "checkModeCommands",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 976443,
+              "declEnd": 977077,
+              "sha256": "390f40c7f90c3521d421655177fd8d5ae78005fd94083dbd53c09ec7d7afd908",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "oW",
+              "as": "spawnEnvironmentKeys",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 909525,
+              "declEnd": 909566,
+              "sha256": "b787bf511e889fefb2b67e0d651d137f93c7c5005a227083c80d2956581e4431"
+            },
+            {
+              "name": "vrn",
+              "as": "hasUnsafeEnvironmentAssignment",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 981685,
+              "declEnd": 981996,
+              "sha256": "67a84efd57bd231ae5b72588c99cf1cecb87f4558ca610e6bc1e69da8731cbc5",
+              "closure": [
+                {
+                  "name": "Ww",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 979408,
+                  "declEnd": 979444,
+                  "sha256": "3b05ec85c096fc6c8cb43436f9b74efff4caa0efde19bcfb97c38d47e9c08654",
+                  "declKind": "function"
+                },
+                {
+                  "name": "cW",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 978884,
+                  "declEnd": 979407,
+                  "sha256": "f9d6988851c9cafee6465d8598a0a6477ae64b22b7c320bed80ee174ea6a59fd",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "Ww",
+              "as": "isSafeEnvironmentVariable",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 979408,
+              "declEnd": 979444,
+              "sha256": "3b05ec85c096fc6c8cb43436f9b74efff4caa0efde19bcfb97c38d47e9c08654",
+              "closure": [
+                {
+                  "name": "cW",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 978884,
+                  "declEnd": 979407,
+                  "sha256": "f9d6988851c9cafee6465d8598a0a6477ae64b22b7c320bed80ee174ea6a59fd",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "yTt",
+              "as": "readOnlyAllowReason",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 6785,
+              "declEnd": 6788,
+              "sha256": "e9167f15f054ad62cbd30c6a469a96b6da1690b80e59024cde4eec1d3be88879",
+              "from": {
+                "chunk": "chunk-af80z9sa.js",
+                "exportedAs": "yTt",
+                "declStart": 1847,
+                "declEnd": 1881,
+                "sha256": "83a596ed2769a1e97efbbb6c8aec65233ed7f2b5d12118e150a68c805c74bb05"
+              }
+            },
+            {
+              "name": "w3e",
+              "as": "permissionSuggestions",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 978197,
+              "declEnd": 978381,
+              "sha256": "2ac0e5fdaecbc69a56e1ecab4bce0697a1082a42be1bd58b232fd957b3505350",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-9e2ns8ty.js",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 243672,
+                  "sha256": "53d260820b9f7af2d3d03096e1321b57dbd682bc79a5c755df7f396bfa52fe45",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-04aem4bh.js",
+                  "chunk": "chunk-04aem4bh.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 5767,
+                  "sha256": "e8af93a4d91fae5ac8b9e5b62394d42fb9e5e4c802b5d6c4469370fb6cea1259",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-vb9my8xr.js",
+                  "chunk": "chunk-vb9my8xr.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 2638,
+                  "sha256": "457ca5a7b88ee46aed3e6c5092c5fa40d62dc7eb237913dd66dd3b369d9d9c4e",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-bsdtxcdc.js",
+                  "chunk": "chunk-bsdtxcdc.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 808595,
+                  "sha256": "911f3e76c42f483b2ee2db1166683d8964768f46766b9009adf4036107030935",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-bqw67h0a.js",
+                  "chunk": "chunk-bqw67h0a.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 751,
+                  "sha256": "d5ead4305f2c4c9bc581687467d172836314e26c111886425bc2e471870da636",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-38213y7h.js",
+                  "chunk": "chunk-38213y7h.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 94444,
+                  "sha256": "210dc834a30092805d6cd139337048efe5c1e01adf214be33adc3ccc19642a6b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-9mcb844f.js",
+                  "chunk": "chunk-9mcb844f.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 8375,
+                  "sha256": "4a73397f504e83f4983e256e433610571c191e4d649a2b22901f3511b491c438",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 990129,
+            "end": 990426,
+            "sha256": "43c011e69f93c0bee2f0d8c53b58c520fd9154c790f28c4f75f9ae652caf6820"
+          },
+          "captures": [
+            {
+              "name": "aQ",
+              "as": "checkExactPermission",
+              "kind": "owned-binding",
+              "declKind": "variable",
+              "declStart": 988253,
+              "declEnd": 988893,
+              "sha256": "7a00fb7dc64045d11b3d248dc19894941c52f9630edef6499c53b29db3cecf23"
+            },
+            {
+              "name": "j8e",
+              "as": "checkDirectCommand",
+              "kind": "owned-binding",
+              "declKind": "variable",
+              "declStart": 988894,
+              "declEnd": 990128,
+              "sha256": "63ba5a480f826c34c094ba75f0984ea84d96e5f25038618e3a92ab75c941c937"
+            },
+            {
+              "name": "wrn",
+              "as": "classifierPrefixSuggestion",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 978785,
+              "declEnd": 978823,
+              "sha256": "1e6feed87cc960f43b2b9a71b8efd7b44b9dbde9d12747dc1dc6aa639e059cf8",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-9e2ns8ty.js",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 243672,
+                  "sha256": "53d260820b9f7af2d3d03096e1321b57dbd682bc79a5c755df7f396bfa52fe45",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-vb9my8xr.js",
+                  "chunk": "chunk-vb9my8xr.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 2638,
+                  "sha256": "457ca5a7b88ee46aed3e6c5092c5fa40d62dc7eb237913dd66dd3b369d9d9c4e",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-bsdtxcdc.js",
+                  "chunk": "chunk-bsdtxcdc.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 808595,
+                  "sha256": "911f3e76c42f483b2ee2db1166683d8964768f46766b9009adf4036107030935",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-bqw67h0a.js",
+                  "chunk": "chunk-bqw67h0a.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 751,
+                  "sha256": "d5ead4305f2c4c9bc581687467d172836314e26c111886425bc2e471870da636",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-38213y7h.js",
+                  "chunk": "chunk-38213y7h.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 94444,
+                  "sha256": "210dc834a30092805d6cd139337048efe5c1e01adf214be33adc3ccc19642a6b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-9mcb844f.js",
+                  "chunk": "chunk-9mcb844f.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 8375,
+                  "sha256": "4a73397f504e83f4983e256e433610571c191e4d649a2b22901f3511b491c438",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "w3e",
+              "as": "permissionSuggestions",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 978197,
+              "declEnd": 978381,
+              "sha256": "2ac0e5fdaecbc69a56e1ecab4bce0697a1082a42be1bd58b232fd957b3505350",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-9e2ns8ty.js",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 243672,
+                  "sha256": "53d260820b9f7af2d3d03096e1321b57dbd682bc79a5c755df7f396bfa52fe45",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-04aem4bh.js",
+                  "chunk": "chunk-04aem4bh.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 5767,
+                  "sha256": "e8af93a4d91fae5ac8b9e5b62394d42fb9e5e4c802b5d6c4469370fb6cea1259",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-vb9my8xr.js",
+                  "chunk": "chunk-vb9my8xr.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 2638,
+                  "sha256": "457ca5a7b88ee46aed3e6c5092c5fa40d62dc7eb237913dd66dd3b369d9d9c4e",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-bsdtxcdc.js",
+                  "chunk": "chunk-bsdtxcdc.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 808595,
+                  "sha256": "911f3e76c42f483b2ee2db1166683d8964768f46766b9009adf4036107030935",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-bqw67h0a.js",
+                  "chunk": "chunk-bqw67h0a.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 751,
+                  "sha256": "d5ead4305f2c4c9bc581687467d172836314e26c111886425bc2e471870da636",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-38213y7h.js",
+                  "chunk": "chunk-38213y7h.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 94444,
+                  "sha256": "210dc834a30092805d6cd139337048efe5c1e01adf214be33adc3ccc19642a6b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-9mcb844f.js",
+                  "chunk": "chunk-9mcb844f.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 8375,
+                  "sha256": "4a73397f504e83f4983e256e433610571c191e4d649a2b22901f3511b491c438",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 998878,
+            "end": 999315,
+            "sha256": "1262dc233dbc1a49038c79d8b41019d4d0dd9af68eb039ff62cc5de5f8bc4a45"
+          },
+          "captures": [
+            {
+              "name": "zw",
+              "as": "matchRules",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 986369,
+              "declEnd": 986786,
+              "sha256": "4fd2f9ffcf83592fca7da073539d50e12b057e45d5f41ad075d66a390dc2e785"
+            },
+            {
+              "name": "yi",
+              "as": "bashTool",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 3839118,
+              "declEnd": 3850985,
+              "sha256": "e3541e622bc74601d4efad6c4df8a8ebf1236c1503840e52c9ceaf207b2de782"
+            },
+            {
+              "name": "aQ",
+              "as": "checkExactPermission",
+              "kind": "owned-binding",
+              "declKind": "variable",
+              "declStart": 988253,
+              "declEnd": 988893,
+              "sha256": "7a00fb7dc64045d11b3d248dc19894941c52f9630edef6499c53b29db3cecf23"
+            },
+            {
+              "name": "ql",
+              "as": "permissionMessage",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 1031335,
+              "declEnd": 1032707,
+              "sha256": "6af1f610482a67a5c6e24da1614479bc649044910eb9609bc27811081a562abb"
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 1000376,
+            "end": 1002348,
+            "sha256": "6760627ba90b8a4136a6c314cc3830b5afdcf1db1ceaca6d0faff677bc20a832"
+          },
+          "captures": [
+            {
+              "name": "Bw",
+              "as": "dangerousRemovalDecision",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 923829,
+              "declEnd": 924029,
+              "sha256": "dcccc5e71624a8930c948e8e3c267ede61dbbbb7ee88b8968b9b01423b0d3272",
+              "closure": []
+            },
+            {
+              "name": "fL",
+              "as": "hasNormalizedCdCommand",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 1011639,
+              "declEnd": 1011691,
+              "sha256": "9b1e24de60bffa8f2d63381e4e132e24c70577b6e3297c833f873522f06981e0",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "Ua",
+              "as": "splitSubcommands",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 900715,
+              "declEnd": 901124,
+              "sha256": "3759b6281b613dcb2d975bc765999106b87a04f899ef0cea30996b1483edc0c6",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "i_e",
+              "as": "findDangerousRemovalExpansion",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 926742,
+              "declEnd": 927532,
+              "sha256": "6fa0a7d5b5b298fa3c97f8adcf44737177a3eccad64b0857287c70f5c5e4735b",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "dde",
+              "as": "classifyCommandText",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 11345,
+              "declEnd": 11348,
+              "sha256": "d890670bbb8186a202e50b7c6de3278c8a8652d06c4eaa3167bb4c8cdfbdef9c",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "dde",
+                "declStart": 112242,
+                "declEnd": 112426,
+                "sha256": "69805e37d0d22d7a7d505183c2b1ef9a509fa73ee8ec3864fc9785f74ec6da68"
+              },
+              "closure": [
+                {
+                  "name": "chunk-9e2ns8ty.js",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 243672,
+                  "sha256": "53d260820b9f7af2d3d03096e1321b57dbd682bc79a5c755df7f396bfa52fe45",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-qw5jhqey.js",
+                  "chunk": "chunk-qw5jhqey.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 1627,
+                  "sha256": "4bd6ff7fe68065d561e41a97be51d2b6b3bbf43636bc6e384eb4bda7744f47c6",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "Db",
+              "as": "peelCommandPrefixes",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 942645,
+              "declEnd": 943599,
+              "sha256": "78a2430056bbdb255e0680ef75faa7af08ca814659ff2c3b143fb99a7a2a6c94",
+              "closure": [
+                {
+                  "name": "a_e",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 980878,
+                  "declEnd": 981375,
+                  "sha256": "8954de42957e31dd5714ee6df7d3216dd79b18aeb82aa32a2b51863075612fec",
+                  "declKind": "function"
+                },
+                {
+                  "name": "Nnn",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 942169,
+                  "declEnd": 942409,
+                  "sha256": "0eeff982a5761b3cdc115909425c28f8e03d7d0bae8b52a97b4103f04790166c",
+                  "declKind": "function"
+                },
+                {
+                  "name": "$nn",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 942409,
+                  "declEnd": 942645,
+                  "sha256": "e9c74fa79f26ca69d22ef209670a8bf82df00bd8fc20f2a743687357b6e5700f",
+                  "declKind": "function"
+                },
+                {
+                  "name": "v8e",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 980853,
+                  "declEnd": 980877,
+                  "sha256": "b83e250e94f73ea187519d7f4d6e134450193b43ecd6072a178e97d711f4601e",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "x8",
+              "as": "basenameCommand",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 937707,
+              "declEnd": 937801,
+              "sha256": "7707da9ee4869358c26c12886da84fb3d8feea676ec7a85446f9e8515d276f87",
+              "closure": []
+            },
+            {
+              "name": "dL",
+              "as": "checkDangerousRemoval",
+              "kind": "owned-binding",
+              "declKind": "function",
+              "declStart": 924029,
+              "declEnd": 926567,
+              "sha256": "f5c9494863eaf72422b3f063313bfb09536eb135198e1c401162cf40aafdeb9b"
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 994388,
+            "end": 995251,
+            "sha256": "d79e19db7fa684be8bcdff9079df10f51e155be76f1786ead8735c9bcedcaf9d"
+          },
+          "captures": [
+            {
+              "name": "zw",
+              "as": "matchRules",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 986369,
+              "declEnd": 986786,
+              "sha256": "4fd2f9ffcf83592fca7da073539d50e12b057e45d5f41ad075d66a390dc2e785"
+            },
+            {
+              "name": "yi",
+              "as": "bashTool",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 3839118,
+              "declEnd": 3850985,
+              "sha256": "e3541e622bc74601d4efad6c4df8a8ebf1236c1503840e52c9ceaf207b2de782"
+            },
+            {
+              "name": "ql",
+              "as": "permissionMessage",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 1031335,
+              "declEnd": 1032707,
+              "sha256": "6af1f610482a67a5c6e24da1614479bc649044910eb9609bc27811081a562abb"
+            },
+            {
+              "name": "JNe",
+              "as": "sandboxAutoAllowReason",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 6781,
+              "declEnd": 6784,
+              "sha256": "1ad643f5a48bba7d199decef11b8ead17f008f8aab2327eef6fc4e08b2c14abe",
+              "from": {
+                "chunk": "chunk-af80z9sa.js",
+                "exportedAs": "JNe",
+                "declStart": 1780,
+                "declEnd": 1846,
+                "sha256": "7ff914f81c5e0020efc867246a32784ce1e9750f4e44e7677793925258fff580"
+              }
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 996923,
+            "end": 997407,
+            "sha256": "d0eae04439a9855f5394b5dd1c4cbd0454b47ff4e199ea3715eda2bbf1353e05"
+          },
+          "captures": [
+            {
+              "name": "D",
+              "as": "platform",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 22853,
+              "declEnd": 22854,
+              "sha256": "3f39d5c348e5b79d06e842c114e6cc571583bbf44e4b0ebfda1a01ec05745d43",
+              "from": {
+                "chunk": "chunk-zyp65cht.js",
+                "exportedAs": "D",
+                "declStart": 3527,
+                "declEnd": 3565,
+                "sha256": "1e3f50096e8f681bca101a612e81f576341b9d33184d472fca548abbef3a5d60"
+              }
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 997496,
+            "end": 997993,
+            "sha256": "800c7785367828c745d152905c710936f3c19d351af5fa4b3e143c2a0e4bbc7d"
+          },
+          "captures": [
+            {
+              "name": "K8e",
+              "as": "isPathLike",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 997407,
+              "declEnd": 997496,
+              "sha256": "21032b8a8c9dda141e88e2fcac16f61186026fca2e2236edd7e2b96cc7a01624",
+              "closure": [
+                {
+                  "name": "lW",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 908448,
+                  "declEnd": 908464,
+                  "sha256": "7671b5e61274fbb5c2d3189ac35957ef2ba831377ffd24de2e9acd5ac1e5147f",
+                  "declKind": "import",
+                  "note": "resolves to Node builtin 'path', outside the extracted graph — no bundle bump can change it (the runtime pin does, §3.5). The import site is covered; there is no bundle-side far side to hash."
+                }
+              ]
+            },
+            {
+              "name": "D",
+              "as": "platform",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 22853,
+              "declEnd": 22854,
+              "sha256": "3f39d5c348e5b79d06e842c114e6cc571583bbf44e4b0ebfda1a01ec05745d43",
+              "from": {
+                "chunk": "chunk-zyp65cht.js",
+                "exportedAs": "D",
+                "declStart": 3527,
+                "declEnd": 3565,
+                "sha256": "1e3f50096e8f681bca101a612e81f576341b9d33184d472fca548abbef3a5d60"
+              }
+            },
+            {
+              "name": "S_",
+              "as": "isUncPath",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 11449,
+              "declEnd": 11451,
+              "sha256": "83236ec7ea73e9165af86bf92d17ff9c04421f34c58824b694cc815a9d80995b",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "S_",
+                "declStart": 196323,
+                "declEnd": 197291,
+                "sha256": "28c32ca3831b09aa867c6888dad726208cbb0a60de3482d8f21926507512733c"
+              }
+            },
+            {
+              "name": "X8e",
+              "as": "isSafeWindowsPath",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 997993,
+              "declEnd": 998475,
+              "sha256": "fba2ded302983b9eb664144788dd58537d85e8c4e260f58c203090602defea32",
+              "closure": []
+            },
+            {
+              "name": "lW",
+              "as": "isAbsolutePath",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 908448,
+              "declEnd": 908464,
+              "sha256": "7671b5e61274fbb5c2d3189ac35957ef2ba831377ffd24de2e9acd5ac1e5147f",
+              "note": "exporting module 'path' is not part of the graph — only the import site is covered"
+            },
+            {
+              "name": "F8e",
+              "as": "resolvePath",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 908481,
+              "declEnd": 908495,
+              "sha256": "6d8bc8db166151340d3857f62e70aa7f07e303b509932696ad66ca4a8e3cef5e",
+              "note": "exporting module 'path' is not part of the graph — only the import site is covered"
+            },
+            {
+              "name": "m_e",
+              "as": "directoryIdentity",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 998475,
+              "declEnd": 998878,
+              "sha256": "4541aafc94509a67db744eb51280359fcf5bfa4d44255c997437ee5ae9c2eb8c"
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 937801,
+            "end": 939072,
+            "sha256": "7603602395a8596eb697f3dfd30c5c8b7687919e11aec02aa870e1295767aabc"
+          },
+          "captures": [
+            {
+              "name": "Omt",
+              "as": "checkPathPolicy",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 16008,
+              "declEnd": 16011,
+              "sha256": "18cb0334b89ef89a62d06476533df68e04d9aa3d0bb7b16d1ab02b38cf45c6fb",
+              "from": {
+                "chunk": "chunk-2q90zhqs.js",
+                "exportedAs": "Omt",
+                "declStart": 4664,
+                "declEnd": 5980,
+                "sha256": "0727dc309e7c6b5c6f9cfa9a45ebae18fdc96a82a0245d13c6b9181c39888e47"
+              }
+            },
+            {
+              "name": "TT",
+              "as": "allowedDirectories",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 11552,
+              "declEnd": 11554,
+              "sha256": "9779469589f956f434b70b578302dcbaa084a5eabb0124ccd61b0ae58c596e70",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "TT",
+                "declStart": 223415,
+                "declEnd": 223494,
+                "sha256": "e8b8dcf1569150dda0a02415305149421c9861e60aba801e4a806989c1f40f7f"
+              }
+            },
+            {
+              "name": "Rpn",
+              "as": "formatAllowedDirectories",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 15993,
+              "declEnd": 15996,
+              "sha256": "a7b57c831d999a6c3e54c9164def7b481591189162f7a0ac48c0a4b300802202",
+              "from": {
+                "chunk": "chunk-2q90zhqs.js",
+                "exportedAs": "Rpn",
+                "declStart": 1626,
+                "declEnd": 1775,
+                "sha256": "3f0e268663d71766d9b646eb6905a85fee314237bc12c06da3b5a9d3129d9d39"
+              }
+            },
+            {
+              "name": "qN",
+              "as": "dirname",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 6229,
+              "declEnd": 6231,
+              "sha256": "eeb35777bf4c165e7d4d06b4b8c9c5d25bfe6d34bf38c18b93dd55195c4c5f67",
+              "from": {
+                "chunk": "chunk-vvj94wew.js",
+                "exportedAs": "qN",
+                "declStart": 4239,
+                "declEnd": 4353,
+                "sha256": "96ab7ac8e9ea3073dab7250dc9b141a1993a1e649d8178e20bc2edda34c08ddc"
+              }
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 937368,
+            "end": 937707,
+            "sha256": "7730eeb686b24aaa3b21810604e0988d2b9ce0cc9ab5ec27fc8b2cdd66ff0c50"
+          },
+          "captures": [
+            {
+              "name": "Db",
+              "as": "peelCommandPrefixes",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 942645,
+              "declEnd": 943599,
+              "sha256": "78a2430056bbdb255e0680ef75faa7af08ca814659ff2c3b143fb99a7a2a6c94",
+              "closure": [
+                {
+                  "name": "a_e",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 980878,
+                  "declEnd": 981375,
+                  "sha256": "8954de42957e31dd5714ee6df7d3216dd79b18aeb82aa32a2b51863075612fec",
+                  "declKind": "function"
+                },
+                {
+                  "name": "Nnn",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 942169,
+                  "declEnd": 942409,
+                  "sha256": "0eeff982a5761b3cdc115909425c28f8e03d7d0bae8b52a97b4103f04790166c",
+                  "declKind": "function"
+                },
+                {
+                  "name": "$nn",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 942409,
+                  "declEnd": 942645,
+                  "sha256": "e9c74fa79f26ca69d22ef209670a8bf82df00bd8fc20f2a743687357b6e5700f",
+                  "declKind": "function"
+                },
+                {
+                  "name": "v8e",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 980853,
+                  "declEnd": 980877,
+                  "sha256": "b83e250e94f73ea187519d7f4d6e134450193b43ecd6072a178e97d711f4601e",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "x8",
+              "as": "basenameCommand",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 937707,
+              "declEnd": 937801,
+              "sha256": "7707da9ee4869358c26c12886da84fb3d8feea676ec7a85446f9e8515d276f87",
+              "closure": []
+            },
+            {
+              "name": "s8e",
+              "as": "pathCommands",
+              "kind": "pure-helper",
+              "declKind": "variable",
+              "declStart": 932133,
+              "declEnd": 932152,
+              "sha256": "46d1f4cdab0e8791d1acea4fbadb49008dfe92e03aa9bd413adc1e23b9e6a2af",
+              "closure": [
+                {
+                  "name": "pL",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 928665,
+                  "declEnd": 932132,
+                  "sha256": "ca2a510b0e83837904b41995f19e64b0a56b21672335eb0e1f6298d57f46070a",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "Bc",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 927532,
+                  "declEnd": 927682,
+                  "sha256": "929a8f65430a86f98aa0569bbf51b5a13174f98d68c48947c8812063a5f3bf7a",
+                  "declKind": "function"
+                },
+                {
+                  "name": "vnn",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 915443,
+                  "declEnd": 915457,
+                  "sha256": "a5fda7491fecd6bcf45c731ee4e8b5fda5d5b156d6b8a924e1ba43cff4dd87a3",
+                  "declKind": "import",
+                  "note": "resolves to Node builtin 'os', outside the extracted graph — no bundle bump can change it (the runtime pin does, §3.5). The import site is covered; there is no bundle-side far side to hash."
+                },
+                {
+                  "name": "s_e",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 927682,
+                  "declEnd": 927923,
+                  "sha256": "6105bbc8a758a1ccc1a94552190987753e665dccef8ad681d125461fa99ce22c",
+                  "declKind": "function"
+                },
+                {
+                  "name": "o8e",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 928437,
+                  "declEnd": 928661,
+                  "sha256": "b5455d9804df35b3d8a34d19e3f3453e04ab0da043a1e4b3d27207af1078f66f",
+                  "declKind": "function"
+                },
+                {
+                  "name": "n8e",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 927923,
+                  "declEnd": 928437,
+                  "sha256": "0f5b50ce42f3378fad5bf7ce75789932dd171884e062ae5109ad2a21ab7c94ce",
+                  "declKind": "function"
+                }
+              ]
+            },
+            {
+              "name": "cL",
+              "as": "isSedReadOnly",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 916889,
+              "declEnd": 917811,
+              "sha256": "1122ed602fbb6607efbe86d28a67bdb64e5d84fee82291a2984f1c4ae5b6535a",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-9e2ns8ty.js",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 243672,
+                  "sha256": "53d260820b9f7af2d3d03096e1321b57dbd682bc79a5c755df7f396bfa52fe45",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "Ah",
+              "as": "normalizeCommandPrefix",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 979561,
+              "declEnd": 980849,
+              "sha256": "a43713bd473a0872b7c4d8f39e72ec24b6252011f041ef340896bfe6b868595b",
+              "closure": [
+                {
+                  "name": "nQ",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 979444,
+                  "declEnd": 979561,
+                  "sha256": "4b1b6e4ab86d3930e45d9ec5c0f92b301286c144db1836dd1911d69017c0f30e",
+                  "declKind": "function"
+                },
+                {
+                  "name": "cW",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 978884,
+                  "declEnd": 979407,
+                  "sha256": "f9d6988851c9cafee6465d8598a0a6477ae64b22b7c320bed80ee174ea6a59fd",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "i8e",
+              "as": "createPathCommandChecker",
+              "kind": "owned-binding",
+              "declKind": "function",
+              "declStart": 936257,
+              "declEnd": 937005,
+              "sha256": "f8e3c8dc2a7599b84ef49c1ee6265c3f2961070406fee6fa5478bb69dd70f0db"
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 937034,
+            "end": 937368,
+            "sha256": "7339bef71396c192095924d14417e3dfa7a7729a96cf8cfac73c486700043da2"
+          },
+          "captures": [
+            {
+              "name": "Ah",
+              "as": "normalizeCommandPrefix",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 979561,
+              "declEnd": 980849,
+              "sha256": "a43713bd473a0872b7c4d8f39e72ec24b6252011f041ef340896bfe6b868595b",
+              "closure": [
+                {
+                  "name": "nQ",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 979444,
+                  "declEnd": 979561,
+                  "sha256": "4b1b6e4ab86d3930e45d9ec5c0f92b301286c144db1836dd1911d69017c0f30e",
+                  "declKind": "function"
+                },
+                {
+                  "name": "cW",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 978884,
+                  "declEnd": 979407,
+                  "sha256": "f9d6988851c9cafee6465d8598a0a6477ae64b22b7c320bed80ee174ea6a59fd",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "Inn",
+              "as": "commandArgv",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 937005,
+              "declEnd": 937034,
+              "sha256": "201a0600b822f2acd490503ad02f3fcfbf16a9942458f7fe9386025a41e7a253",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "x8",
+              "as": "basenameCommand",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 937707,
+              "declEnd": 937801,
+              "sha256": "7707da9ee4869358c26c12886da84fb3d8feea676ec7a85446f9e8515d276f87",
+              "closure": []
+            },
+            {
+              "name": "s8e",
+              "as": "pathCommands",
+              "kind": "pure-helper",
+              "declKind": "variable",
+              "declStart": 932133,
+              "declEnd": 932152,
+              "sha256": "46d1f4cdab0e8791d1acea4fbadb49008dfe92e03aa9bd413adc1e23b9e6a2af",
+              "closure": [
+                {
+                  "name": "pL",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 928665,
+                  "declEnd": 932132,
+                  "sha256": "ca2a510b0e83837904b41995f19e64b0a56b21672335eb0e1f6298d57f46070a",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "Bc",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 927532,
+                  "declEnd": 927682,
+                  "sha256": "929a8f65430a86f98aa0569bbf51b5a13174f98d68c48947c8812063a5f3bf7a",
+                  "declKind": "function"
+                },
+                {
+                  "name": "vnn",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 915443,
+                  "declEnd": 915457,
+                  "sha256": "a5fda7491fecd6bcf45c731ee4e8b5fda5d5b156d6b8a924e1ba43cff4dd87a3",
+                  "declKind": "import",
+                  "note": "resolves to Node builtin 'os', outside the extracted graph — no bundle bump can change it (the runtime pin does, §3.5). The import site is covered; there is no bundle-side far side to hash."
+                },
+                {
+                  "name": "s_e",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 927682,
+                  "declEnd": 927923,
+                  "sha256": "6105bbc8a758a1ccc1a94552190987753e665dccef8ad681d125461fa99ce22c",
+                  "declKind": "function"
+                },
+                {
+                  "name": "o8e",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 928437,
+                  "declEnd": 928661,
+                  "sha256": "b5455d9804df35b3d8a34d19e3f3453e04ab0da043a1e4b3d27207af1078f66f",
+                  "declKind": "function"
+                },
+                {
+                  "name": "n8e",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 927923,
+                  "declEnd": 928437,
+                  "sha256": "0f5b50ce42f3378fad5bf7ce75789932dd171884e062ae5109ad2a21ab7c94ce",
+                  "declKind": "function"
+                }
+              ]
+            },
+            {
+              "name": "cL",
+              "as": "isSedReadOnly",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 916889,
+              "declEnd": 917811,
+              "sha256": "1122ed602fbb6607efbe86d28a67bdb64e5d84fee82291a2984f1c4ae5b6535a",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-fy12d89p.js",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 3995555,
+                  "sha256": "00d439a04b0746609faa44fef08f2d4c433965b5568a89275e0c28d17d836f8b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-9e2ns8ty.js",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 243672,
+                  "sha256": "53d260820b9f7af2d3d03096e1321b57dbd682bc79a5c755df7f396bfa52fe45",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-fgwne0fb.js",
+                  "chunk": "chunk-fgwne0fb.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 62907,
+                  "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            },
+            {
+              "name": "i8e",
+              "as": "createPathCommandChecker",
+              "kind": "owned-binding",
+              "declKind": "function",
+              "declStart": 936257,
+              "declEnd": 937005,
+              "sha256": "f8e3c8dc2a7599b84ef49c1ee6265c3f2961070406fee6fa5478bb69dd70f0db"
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 936257,
+            "end": 937005,
+            "sha256": "f8e3c8dc2a7599b84ef49c1ee6265c3f2961070406fee6fa5478bb69dd70f0db"
+          },
+          "captures": [
+            {
+              "name": "Mnn",
+              "as": "checkPathCommand",
+              "kind": "owned-binding",
+              "declKind": "function",
+              "declStart": 934014,
+              "declEnd": 936257,
+              "sha256": "632bf703e840e6dccfed1ef2dffb6a53635f22f5c98df058a51a9826d80ad322"
+            },
+            {
+              "name": "dL",
+              "as": "checkDangerousRemoval",
+              "kind": "owned-binding",
+              "declKind": "function",
+              "declStart": 924029,
+              "declEnd": 926567,
+              "sha256": "f5c9494863eaf72422b3f063313bfb09536eb135198e1c401162cf40aafdeb9b"
+            },
+            {
+              "name": "DP",
+              "as": "pathEffectKinds",
+              "kind": "owned-binding",
+              "declKind": "variable",
+              "declStart": 933350,
+              "declEnd": 933792,
+              "sha256": "0015a416e6a64a09080c59b2b13b0f5d427789e227fd036dab59f68a6498b5d0"
+            },
+            {
+              "name": "qN",
+              "as": "dirname",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 6229,
+              "declEnd": 6231,
+              "sha256": "eeb35777bf4c165e7d4d06b4b8c9c5d25bfe6d34bf38c18b93dd55195c4c5f67",
+              "from": {
+                "chunk": "chunk-vvj94wew.js",
+                "exportedAs": "qN",
+                "declStart": 4239,
+                "declEnd": 4353,
+                "sha256": "96ab7ac8e9ea3073dab7250dc9b141a1993a1e649d8178e20bc2edda34c08ddc"
+              }
+            },
+            {
+              "name": "YTe",
+              "as": "directoryRuleSuggestion",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 11485,
+              "declEnd": 11488,
+              "sha256": "272a4911076665454053abab443a452f5c9f925807374f3aed800a8d4802cf5c",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "YTe",
+                "declStart": 211288,
+                "declEnd": 211539,
+                "sha256": "0ccdc4572f88babf2bacc13b4df67b0430856315f7c7a49b1d0844fcb90f154c"
+              }
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 934014,
+            "end": 936257,
+            "sha256": "632bf703e840e6dccfed1ef2dffb6a53635f22f5c98df058a51a9826d80ad322"
+          },
+          "captures": [
+            {
+              "name": "pL",
+              "as": "pathArgumentExtractors",
+              "kind": "owned-binding",
+              "declKind": "variable",
+              "declStart": 928665,
+              "declEnd": 932132,
+              "sha256": "ca2a510b0e83837904b41995f19e64b0a56b21672335eb0e1f6298d57f46070a"
+            },
+            {
+              "name": "DP",
+              "as": "pathEffectKinds",
+              "kind": "owned-binding",
+              "declKind": "variable",
+              "declStart": 933350,
+              "declEnd": 933792,
+              "sha256": "0015a416e6a64a09080c59b2b13b0f5d427789e227fd036dab59f68a6498b5d0"
+            },
+            {
+              "name": "Qa",
+              "as": "hasUnknownTrackedValue",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 11306,
+              "declEnd": 11308,
+              "sha256": "18b68dd0be6488243208af5bdfec9ad801a8ff4b796e148dfc3eaf751acb6dd7",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "Qa",
+                "declStart": 109282,
+                "declEnd": 109334,
+                "sha256": "0efe916dda3cc66bc1c3b5f4ef4d2d93c15fb2e4abba643be86ea5a13c712b3a"
+              },
+              "closure": [
+                {
+                  "name": "Me",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 109239,
+                  "declEnd": 109261,
+                  "sha256": "233cc5fb4ea708e96c0fa5c67b36a622a3d4b3605aeaf4d6d4ef355f7952e96b",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "z",
+                  "chunk": "chunk-9e2ns8ty.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 109262,
+                  "declEnd": 109281,
+                  "sha256": "fc3dc77b6831251dfdb8d8d07d12af2f57ac8cfafe09e2df14f1b0bb48fe1e4d",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "xnn",
+              "as": "pathFlagValidators",
+              "kind": "owned-binding",
+              "declKind": "variable",
+              "declStart": 933793,
+              "declEnd": 934013,
+              "sha256": "302775feb4407547c07c05808f59df1490acebbfef85b1a838d903508483ac7a"
+            },
+            {
+              "name": "Omt",
+              "as": "checkPathPolicy",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 16008,
+              "declEnd": 16011,
+              "sha256": "18cb0334b89ef89a62d06476533df68e04d9aa3d0bb7b16d1ab02b38cf45c6fb",
+              "from": {
+                "chunk": "chunk-2q90zhqs.js",
+                "exportedAs": "Omt",
+                "declStart": 4664,
+                "declEnd": 5980,
+                "sha256": "0727dc309e7c6b5c6f9cfa9a45ebae18fdc96a82a0245d13c6b9181c39888e47"
+              }
+            },
+            {
+              "name": "TT",
+              "as": "allowedDirectories",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 11552,
+              "declEnd": 11554,
+              "sha256": "9779469589f956f434b70b578302dcbaa084a5eabb0124ccd61b0ae58c596e70",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "TT",
+                "declStart": 223415,
+                "declEnd": 223494,
+                "sha256": "e8b8dcf1569150dda0a02415305149421c9861e60aba801e4a806989c1f40f7f"
+              }
+            },
+            {
+              "name": "Rpn",
+              "as": "formatAllowedDirectories",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 15993,
+              "declEnd": 15996,
+              "sha256": "a7b57c831d999a6c3e54c9164def7b481591189162f7a0ac48c0a4b300802202",
+              "from": {
+                "chunk": "chunk-2q90zhqs.js",
+                "exportedAs": "Rpn",
+                "declStart": 1626,
+                "declEnd": 1775,
+                "sha256": "3f0e268663d71766d9b646eb6905a85fee314237bc12c06da3b5a9d3129d9d39"
+              }
+            },
+            {
+              "name": "Pnn",
+              "as": "pathEffectDescriptions",
+              "kind": "owned-binding",
+              "declKind": "variable",
+              "declStart": 932153,
+              "declEnd": 933349,
+              "sha256": "ebc807274fb2dca376dab6be9a7440caaa765f7b8acdc1d021b860f918320c97"
+            }
+          ]
         }
       ],
       "evidence": [
@@ -10159,9 +14271,13 @@
         "strangle/bash-compound-safety-captures.ts",
         "strangle/bash-compound-safety-corpus.ts",
         "strangle/bash-compound-safety-parity.test.ts",
-        "strangle/bash-compound-safety-coverage.ts"
+        "strangle/bash-compound-safety-coverage.ts",
+        "strangle/manifest.ts:bash-decision-*",
+        "strangle/modules/bash-compound-safety.js",
+        "strangle/bash-compound-safety-adapters.test.ts",
+        "scenario:bash-dangerous-removal"
       ],
-      "note": "C13a/W10a owns ONE unit of this row outright: chunk-fgwne0fb.js, the bash tokenizer and parser, as the campaign's third whole-chunk replacement (62,907 upstream bytes, 105 declarations at 99.8 % density, seven exports, one import, four named importers and 294 bare ones -- enumerated from the artifact in research/fixtures/shell-parser-2.1.251.json, which corrected the scout's declaration count and found a reader no static import scan sees). It is the SUBSTRATE of the row rather than a slice of it: the command-safety chain, the destructive classifier, the read-only classifier, the redirection analysis and the per-subcommand permission aggregate all begin with a tree this module built. `spliced`, and a long way from closing. The executor itself is untouched -- the ShellCommand handle, the TaskOutput buffer, the spawn, the shell snapshot, the cwd write-back, the sandbox wrap and the four backgrounding arms are all still upstream's, and are C13b through C13e's. The 179 KB of pure, unblocked surface the W10 scout measured is what this child took the first 63 KB of. EDGES stay empty, deliberately: the owned unit has exactly ONE port -- the telemetry function it calls on an abort -- and no ledger row owns telemetry. The subsystem's real edges (permissions for canUseTool, sandboxing for the seatbelt wrap, session-storage for output persistence, subagent-dispatch for the task registry) are consumed by the executor, which this child did not touch; recording them here would be claiming a cut C13a did not make. WHAT GRADES IT: the corpus observes this module through exactly one door. Measured, per export, with a twin built for each: only `parseOrAbort` reddens a scenario, because `dde` -> `KTe` turns its abort sentinel into a `too-complex` verdict that the recorded permission decision carries. The other six exports feed analyses whose fallbacks the corpus's commands (`echo REFORGE_TOOL_OK`, `chmod 600 perm.txt`, `mkdir -p`, `cd`, `pwd`, `sleep`) cannot distinguish from their real answers. That is a fact about the corpus, not about the exports, and it is why this unit shipped with a contract test rather than with more scenarios: strangle/parser-parity.test.ts evaluates the PINNED CHUNK'S OWN BYTES and compares the two parse trees node for node over sixteen partitions of the input domain.\n\nC13c/W10c adds no splice and four EDGES, each of which is a typed port into a subsystem this row does not own and cannot close without. -> subsystem/permissions: a compound Bash command is decided per SUBCOMMAND and aggregated (`drn`), so every Bash denial the corpus carries is really a permission answer about a parse this row produced; `bash-compound-safety` is the recording that exercises the aggregate, and C13b consumes it. -> subsystem/control-protocol: `background_tasks` is a control_request subtype whose handler reaches into the shell registry, so backgrounding a running command is an act of the control protocol performed on this row's state; W7 fired the ARM against an EMPTY registry (answered success without touching a shell) and `bash-background-control` is the EFFECT. -> subsystem/hook-dispatch: the hook runner calls `B2` and `jx` directly and never touches `LG`, so the process-handle and output-sink ports are SHARED and the shell-provider layer above them is not -- C13d's port cut is that sentence, and the edge is what records it. -> subsystem/moat-tools: a backgrounded command's completion notification is composed here (`x$e`/`M$e`, prefix `Background command `) and DELIVERED by C11c's queue and task store, so this row owns what the notification says and when, and not where it is kept.\n\nThe machinery those edges are graded through is this child's, and it is oracle machinery rather than ownership: a scripted child whose behaviour is its argv (no clock in the bytes, so the same argv is byte-identical on every engine), a build-time rewrite of the six shell deadlines derived by the SHAPE OF EACH USE rather than by a minified name, and a third member of the state snapshot that sees what a run left RUNNING -- the blind spot W9 named as its carry-over and the one W10 cannot be graded without.\n\nC13b/W10b owns the command-admission leaf without claiming the executor: five anchored runtime roots (KTe, _8e, $ct, jrn, XNt), five pure folds beneath them (w8e, mrn, drn, hrn, bQn), and eleven asserted table declarators. The direct table population is 22,674 pinned bytes and its fixture accounts for 27 additional declaration dependencies. jrn remains its own splice rather than being folded into $ct: $ct has 13 direct free variables, while jrn has 53 and directly reaches permission, sandbox, path, filesystem, cwd, and rule-store state that cannot honestly be forwarded through a caller that does not capture them. The aggregate contract executes pinned upstream declaration bytes and requires exact decisions, insertion-ordered Map overwrite behavior, and subcommandResults. The registered bash-compound-safety replay exercises the owned chain but, as two exact throwing probes proved, reaches neither Fy call site; direct pinned-byte cases grade both the multi-cd safety preservation and duplicate-subcommand tie-break instead. No live recording was added. The subsystem stays spliced: shell process execution, timeout/background control, output persistence, sandbox wrapping, and notification delivery remain later C13 children."
+      "note": "C13a/W10a owns ONE unit of this row outright: chunk-fgwne0fb.js, the bash tokenizer and parser, as the campaign's third whole-chunk replacement (62,907 upstream bytes, 105 declarations at 99.8 % density, seven exports, one import, four named importers and 294 bare ones -- enumerated from the artifact in research/fixtures/shell-parser-2.1.251.json, which corrected the scout's declaration count and found a reader no static import scan sees). It is the SUBSTRATE of the row rather than a slice of it: the command-safety chain, the destructive classifier, the read-only classifier, the redirection analysis and the per-subcommand permission aggregate all begin with a tree this module built. `spliced`, and a long way from closing. The executor itself is untouched -- the ShellCommand handle, the TaskOutput buffer, the spawn, the shell snapshot, the cwd write-back, the sandbox wrap and the four backgrounding arms are all still upstream's, and are C13b through C13e's. The 179 KB of pure, unblocked surface the W10 scout measured is what this child took the first 63 KB of. EDGES stay empty, deliberately: the owned unit has exactly ONE port -- the telemetry function it calls on an abort -- and no ledger row owns telemetry. The subsystem's real edges (permissions for canUseTool, sandboxing for the seatbelt wrap, session-storage for output persistence, subagent-dispatch for the task registry) are consumed by the executor, which this child did not touch; recording them here would be claiming a cut C13a did not make. WHAT GRADES IT: the corpus observes this module through exactly one door. Measured, per export, with a twin built for each: only `parseOrAbort` reddens a scenario, because `dde` -> `KTe` turns its abort sentinel into a `too-complex` verdict that the recorded permission decision carries. The other six exports feed analyses whose fallbacks the corpus's commands (`echo REFORGE_TOOL_OK`, `chmod 600 perm.txt`, `mkdir -p`, `cd`, `pwd`, `sleep`) cannot distinguish from their real answers. That is a fact about the corpus, not about the exports, and it is why this unit shipped with a contract test rather than with more scenarios: strangle/parser-parity.test.ts evaluates the PINNED CHUNK'S OWN BYTES and compares the two parse trees node for node over sixteen partitions of the input domain.\n\nC13c/W10c adds no splice and four EDGES, each of which is a typed port into a subsystem this row does not own and cannot close without. -> subsystem/permissions: a compound Bash command is decided per SUBCOMMAND and aggregated (`drn`), so every Bash denial the corpus carries is really a permission answer about a parse this row produced; `bash-compound-safety` is the recording that exercises the aggregate, and C13b consumes it. -> subsystem/control-protocol: `background_tasks` is a control_request subtype whose handler reaches into the shell registry, so backgrounding a running command is an act of the control protocol performed on this row's state; W7 fired the ARM against an EMPTY registry (answered success without touching a shell) and `bash-background-control` is the EFFECT. -> subsystem/hook-dispatch: the hook runner calls `B2` and `jx` directly and never touches `LG`, so the process-handle and output-sink ports are SHARED and the shell-provider layer above them is not -- C13d's port cut is that sentence, and the edge is what records it. -> subsystem/moat-tools: a backgrounded command's completion notification is composed here (`x$e`/`M$e`, prefix `Background command `) and DELIVERED by C11c's queue and task store, so this row owns what the notification says and when, and not where it is kept.\n\nThe machinery those edges are graded through is this child's, and it is oracle machinery rather than ownership: a scripted child whose behaviour is its argv (no clock in the bytes, so the same argv is byte-identical on every engine), a build-time rewrite of the six shell deadlines derived by the SHAPE OF EACH USE rather than by a minified name, and a third member of the state snapshot that sees what a run left RUNNING -- the blind spot W9 named as its carry-over and the one W10 cannot be graded without.\n\nC13b/W10b owns the command-admission leaf without claiming the executor: 30 anchored runtime splices (KTe, _8e, $ct, jrn, XNt, and 25 child decision roots), eleven folded production declarations (w8e, mrn, drn, bQn, hrn, Ua, ru, Ah, Db, H9e, T8e), and eleven asserted table declarators. The direct table declarators occupy 22,674 pinned bytes; their initializers occupy 22,632. The fixture accounts for the complete 59-declaration table dependency closure plus the external node:os homedir read and the pinned St table dependency, and partitions all 370 declarations and 191,360 bytes in the approved regions exactly once. jrn remains its own splice rather than being folded into $ct: $ct has 13 direct free variables, while jrn has 53 and directly reaches permission, sandbox, path, filesystem, cwd, and rule-store state that cannot honestly be forwarded through a caller that does not capture them. The aggregate contract executes pinned upstream declaration bytes and requires exact decisions, insertion-ordered Map overwrite behavior, and subcommandResults. A separate first-take bash-dangerous-removal recording now reaches the drn/Fy multi-cd preservation edge with fixed absent relative paths and a denying broker; an Fy-blind targeted mutant changes its broker-visible reason to the generic multi-cd refusal and makes that scenario RED. The occurrence-sensitive jrn duplicate-subcommand tie-break remains direct-contract evidence only and is not claimed closed by a recording. The subsystem stays spliced: shell process execution, timeout/background control, output persistence, sandbox wrapping, and notification delivery remain later C13 children."
     },
     {
       "id": "subsystem/mcp-adapter",

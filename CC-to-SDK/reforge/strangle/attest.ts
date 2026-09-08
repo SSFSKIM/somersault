@@ -31,7 +31,7 @@ import { join } from "node:path";
 import { ENGINE_VERSION } from "../src/pin.js";
 import { REFORGE_ROOT } from "../src/runTurn.js";
 import { branchSites, type BranchSite } from "./branches.js";
-import { adjudicate, coverageLinesSince } from "./adjudicate.js";
+import { adjudicate, contractEvidenceForDriver, coverageLinesSince } from "./adjudicate.js";
 import { ATTESTED, EXCLUSIONS } from "./attestation.js";
 import { COVERAGE_DIR, SOURCE_MODULES } from "./instrument.js";
 import { runnerFor } from "./runners.js";
@@ -166,7 +166,7 @@ const beforeContract = coverageFiles();
 const executed = new Set<string>();
 for (const text of beforeContract.values()) for (const line of linesOf(text)) executed.add(line);
 
-const contract = new Set<string>();
+const contract = new Map<string, string>();
 let contractSnapshot = beforeContract;
 const contractSuites = ATTESTED.filter((a) => a.contract !== undefined);
 for (const a of contractSuites) {
@@ -183,12 +183,27 @@ for (const a of contractSuites) {
     process.exit(1);
   }
   const afterDriver = coverageFiles();
-  for (const line of coverageLinesSince(contractSnapshot, afterDriver, executed)) contract.add(line);
+  const delta = coverageLinesSince(contractSnapshot, afterDriver, executed);
   contractSnapshot = afterDriver;
-}
-if (contractSuites.length > 0 && contract.size === 0) {
-  console.log("FAIL — the contract drivers recorded no branch outcome at all; they ran against something that is not the instrumented build");
-  process.exit(1);
+  const ownInventory = new Set(
+    inventory.filter((branch) => branch.startsWith(`${a.module}#`)),
+  );
+  const attributed = contractEvidenceForDriver(
+    a.module,
+    driver,
+    delta,
+    ownInventory,
+  );
+  if (attributed.size === 0) {
+    console.log(
+      `FAIL — the contract driver for '${a.module}' recorded ${delta.size} new non-corpus outcome(s), but none belongs to its declared module; dependency-only or empty output is not contract evidence`,
+    );
+    process.exit(1);
+  }
+  for (const [branch, producer] of attributed) contract.set(branch, producer);
+  console.log(
+    `    accepted ${attributed.size} ${a.module} outcome(s); ignored ${delta.size - attributed.size} dependency outcome(s)`,
+  );
 }
 
 // ---- 4. adjudicate -----------------------------------------------------------
@@ -224,18 +239,18 @@ const lines: string[] = [
   "| branch | kind | condition | outcome | state | adjudication |",
   "|---|---|---|---|---|---|",
 ];
-// Which contract suite covers which module, so a `contract` row's adjudication
-// column names the suite that ran it rather than repeating one sentence a
-// thousand times. The reason a reader needs per row is WHICH oracle; the reason
-// they need once is why that oracle counts, and that is the section below.
-const contractDriver = new Map(ATTESTED.filter((a) => a.contract).map((a) => [a.module, a.contract!.driver]));
-const moduleOf = (branch: string): string => branch.slice(0, branch.indexOf("#"));
+// A `contract` row carries the exact driver that produced that outcome. The
+// producer was recorded while that driver ran and was filtered to its declared
+// module before adjudication; static module configuration is not provenance.
 for (const r of rows) {
+  if (r.state === "contract" && r.contractDriver === undefined) {
+    throw new Error(`contract row '${r.branch}' has no producing driver`);
+  }
   const adjudication =
     r.state === "executed"
       ? "—"
       : r.state === "contract"
-        ? `\`${contractDriver.get(moduleOf(r.branch)) ?? "?"}\``
+        ? `\`${r.contractDriver}\``
         : (r.reason ?? "**MISSING**");
   lines.push(
     `| \`${r.branch}\` | ${r.site.kind} | \`${r.site.text.replaceAll("|", "\\|")}\` | ${r.outcome} | ${r.state} | ${adjudication} |`,
@@ -254,21 +269,25 @@ lines.push(
   "UPSTREAM'S OWN implementation of it and required the outputs to be identical, where a scenario could",
   "only ever have compared what its transcript happened to show.",
   "",
-  "An `excluded` row was not executed at all, and carries a reviewed reason. Five earlier",
-  "upstream-differential suites are the oracle behind those reasons, one per wave's modules:",
+  "An `excluded` row was not executed at all and carries a reviewed reason; exclusion is adjudication,",
+  "not coverage. The reason states which of three evidence classes applies: a source or production-caller",
+  "invariant; a deliberately ungraded corpus gap such as `OMITTED VALID INPUT` or omitted effect-port",
+  "state; or a separately established differential result whose exact suite is named in that row.",
+  "Valid omitted inputs remain gaps — they are not relabelled unreachable or credited to a sibling module.",
+  "",
+  "The earlier pinned-byte suites remain evidence only where an exclusion reason actually cites their",
+  "specific result:",
   "",
   "- `strangle/description-parity.test.ts` — the four tool descriptions (W2);",
   "- `strangle/prompt-parity.test.ts` — the prompt-assembly pipeline and the compaction prompt (W3);",
   "- `strangle/compaction-parity.test.ts` — the compaction trigger, boundary and continuation (W4);",
   "- `strangle/hooks-parity.test.ts` — the twenty per-event hook dispatchers (W5);",
   "- `strangle/permissions-parity.test.ts` — the permission decision chain, the mode axis and the",
-  "  headless broker seam (W6). This one also compares the PORT TRACE, because two refusals that",
-  "  return the same value can differ in nothing but which ports ran.",
+  "  headless broker seam (W6), including its compared port traces.",
   "",
-  "All five extract the upstream body from the PINNED BUNDLE, evaluate it with stubbed ports, and require",
-  "identity with the owned module over the full cross-product of these same branches — so each excluded",
-  "arm is graded against upstream directly rather than against a scenario's rendering of it. None of",
-  "them hand-writes an expectation, so none of them can encode a transcription error.",
+  "Those suites extract pinned declarations and compare them with owned behavior, but their existence does",
+  "not grade every excluded outcome. The table's per-row reason is authoritative about what was proved and",
+  "what remains intentionally unexecuted.",
   "",
   ...(contractSuites.length > 0
     ? [

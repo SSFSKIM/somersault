@@ -487,3 +487,29 @@ export function resolveExport(sf: ts.SourceFile, name: string): Declaration | nu
   }
   return scanStatements(sf.statements, local, sf, true);
 }
+
+export type OwnedBindingCapture = {
+  owner: string;
+  path: string;
+  identifier: string;
+};
+
+/**
+ * Refuse an `owned-binding` unless its declaration is another splice in the
+ * same graph module. Minified bindings are module-local: a same-named splice in
+ * another chunk is not the declaration this caller will resolve at runtime.
+ */
+export function ownedBindingViolations(
+  spliceBindings: ReadonlySet<string>,
+  captures: readonly OwnedBindingCapture[],
+): string[] {
+  const violations: string[] = [];
+  for (const capture of captures) {
+    if (!spliceBindings.has(`${capture.path}\0${capture.identifier}`)) {
+      violations.push(
+        `${capture.owner}: owned-binding capture '${capture.identifier}' is not a registered splice in the same graph module`,
+      );
+    }
+  }
+  return violations;
+}

@@ -60,7 +60,10 @@ import { classifyReplay, darkVerdict } from "./runners.js";
 import { assertSignature, chunkAst, excise, formatSignature, gradeDeclaratorValue, literalStringValue, selectExcision } from "./ast.js";
 import { spliceFootprint } from "./footprint.js";
 import { REFORGE_ROOT } from "../src/runTurn.js";
-import { assertCaptureInventory } from "./scope.js";
+import {
+  assertCaptureInventory,
+  ownedBindingViolations,
+} from "./scope.js";
 
 let pass = 0;
 const failures: string[] = [];
@@ -773,6 +776,36 @@ function footprintOf(owner: string, helper: string) {
       "value NOT literal — UNGRADED, adjudicated: graded by the W4 differential; see the row's note");
   check("…and neither path ever read the owned value — an ungraded row makes no comparison to fake",
     readOwnedCalls === 0, `readOwned called ${readOwnedCalls}×`);
+}
+
+// ---- owned-binding resolution, including chunk-local identity -------------
+// A forwarded child binding resolves to owned code only when the declaration
+// itself is a splice in the caller's module. Watch both failure directions: no
+// splice at all, and a misleading same minified name in another chunk.
+{
+  const captures = [
+    { owner: "parent", path: "/graph/chunk-a.js", identifier: "child" },
+  ];
+  check(
+    "an owned-binding resolves to a registered splice in the same module",
+    ownedBindingViolations(
+      new Set(["/graph/chunk-a.js\0child"]),
+      captures,
+    ).length === 0,
+  );
+  check(
+    "an owned-binding with no child splice is refused",
+    ownedBindingViolations(new Set(), captures)[0]?.includes(
+      "not a registered splice in the same graph module",
+    ) === true,
+  );
+  check(
+    "a same-named splice in another module cannot satisfy an owned-binding",
+    ownedBindingViolations(
+      new Set(["/graph/chunk-b.js\0child"]),
+      captures,
+    ).length === 1,
+  );
 }
 
 // ---- the manifest's own adjudication guard, both directions ---------------

@@ -435,6 +435,9 @@ for (const fixture of [
   reviewed.clampWildcard,
   reviewed.clampPrefixThroughXargs,
   reviewed.clampStarOnly,
+  reviewed.clampDisplayDoubleQuote,
+  reviewed.clampDisplayBackslash,
+  reviewed.clampDisplayControlCharacters,
   reviewed.clampEscapedLiteral,
   reviewed.clampNestedRedirectAssignment,
 ]) {
@@ -756,11 +759,11 @@ const invariantOutcomes = new Set([
 ]);
 const impossibleOutcomes = new Set([
   "bash-compound-safety#splitSubcommands@5:T",
-  "bash-compound-safety#createCommandAnalysis@3:T",
   "bash-compound-safety#peelCommandPrefixes@0:F",
   "bash-compound-safety#aggregateSubcommandPermissions@4:F",
 ]);
 const callerOutsideDomainOutcomes = new Set([
+  "bash-compound-safety#createCommandAnalysis@3:T",
   "bash-compound-safety#getPipeSegments@2:F",
   "bash-compound-safety#checkParsedPipeSafety@0:F",
 ]);
@@ -804,16 +807,16 @@ for (const outcome of missing) {
 }
 
 const expected = {
-  sites: 907,
-  outcomes: 1_771,
-  observed: 1_093,
+  sites: 1_592,
+  outcomes: 3_087,
+  observed: 1_103,
   missingByReason: {
     "INVARIANT: pinned and owned parser child-array producers cannot emit falsy entries": 4,
-    "IMPOSSIBLE: the pinned and owned control-flow contracts cannot select this outcome": 4,
-    "CALLER-OUTSIDE-DOMAIN: only a foreign or mismatched analysis shape can select this outcome": 2,
+    "IMPOSSIBLE: the pinned and owned control-flow contracts cannot select this outcome": 3,
+    "CALLER-OUTSIDE-DOMAIN: only a foreign or mismatched analysis shape can select this outcome": 3,
     "RESOURCE-SENSITIVE: only a fresh segment reparse deadline race can select this outcome": 2,
-    "OPEN-INPUT: no input in the shared differential corpus selects this pure outcome; no exclusion is claimed": 393,
-    "PORT-STATE: the shared contract does not select this adapter/settings/filesystem outcome": 4,
+    "OPEN-INPUT: no input in the shared differential corpus selects this pure outcome; no exclusion is claimed": 1_701,
+    "PORT-STATE: the shared contract does not select this adapter/settings/filesystem outcome": 2,
     "VALIDATOR-DOMAIN: no simple KTe result in the shared parser partition selects this outcome": 269,
   },
 };

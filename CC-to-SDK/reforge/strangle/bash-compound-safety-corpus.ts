@@ -468,6 +468,27 @@ export const SAFETY_REGRESSION_CASES = {
       bashCommandClamps: [["Bash(*)"]],
     },
   },
+  clampDisplayDoubleQuote: {
+    input: { command: `printf '%s' 'say "hello"'` },
+    permissionContext: {
+      mode: "default",
+      bashCommandClamps: [["Bash(definitely-not-this-command)"]],
+    },
+  },
+  clampDisplayBackslash: {
+    input: { command: String.raw`printf '%s' 'C:\tmp\file'` },
+    permissionContext: {
+      mode: "default",
+      bashCommandClamps: [["Bash(definitely-not-this-command)"]],
+    },
+  },
+  clampDisplayControlCharacters: {
+    input: { command: "printf '%s' 'line\nbreak\tend'" },
+    permissionContext: {
+      mode: "default",
+      bashCommandClamps: [["Bash(definitely-not-this-command)"]],
+    },
+  },
   clampEscapedLiteral: {
     input: { command: String.raw`echo '(a\b)'` },
     permissionContext: {

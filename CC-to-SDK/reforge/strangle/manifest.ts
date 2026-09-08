@@ -41,6 +41,10 @@
 //                    yet owned. It stays an explicitly typed delegation
 //                    argument documented in the owned module's header, and is a
 //                    ledger edge to the wave that will own it.
+//   `owned-binding` a graph identifier whose declaration is another registered
+//                    splice in this same module. It is forwarded so that child
+//                    splice can receive its own captures, but its implementation
+//                    resolves through the owned adapter rather than graph logic.
 //
 // Classification and WIRING both follow from the class, and they are NOT the
 // same rule for the two owned classes (C4 / W1 completed this retrofit):
@@ -58,15 +62,18 @@
 //                    target hash, so this assertion is the only cheap thing that
 //                    can see it. `owned` therefore stays UNSET on a primitive.
 //   `effectful-port` is forwarded and stays a typed delegation argument.
+//   `owned-binding` is forwarded, and the build refuses it unless the same
+//                   graph module contains a registered splice for that binding.
 import type { TargetSignature } from "./ast.js";
 import {
+  BASH_DECISION_ROOTS,
   BASH_SAFETY_ROOTS,
   COPY_READY_BASH_SAFETY_CAPTURES,
 } from "./bash-compound-safety-capture-specs.js";
 
 export type TargetShape = "sibling-method" | "free-function" | "class-method" | "switch-case" | "arrow-initializer" | "variable-declarator" | "asserted-variable-declarator";
 
-export type CaptureClass = "primitive" | "pure-helper" | "effectful-port";
+export type CaptureClass = "primitive" | "pure-helper" | "effectful-port" | "owned-binding";
 
 export interface Capture {
   /** the owned module's parameter name — the documented contract for this value */
@@ -319,6 +326,93 @@ const ID = "[A-Za-z_$][\\w$]*";
 
 const SIBLING_METHOD: TargetSignature = { params: 2, ancestry: ["ObjectLiteralExpression", "SourceFile"] };
 
+type BashDecisionRootName =
+  (typeof BASH_DECISION_ROOTS)[keyof typeof BASH_DECISION_ROOTS]["name"];
+type BashDecisionLiveness = Pick<
+  Splice,
+  "coverage" | "darkReason" | "darkOver"
+>;
+
+// Result-shape-preserving semantic twins were built one at a time against the
+// named offline cassettes below. A live row names the cassette that went RED.
+// A dark row names every cassette in the focused population that stayed GREEN;
+// its reason also records the caller condition that population did not expose.
+const BASH_DECISION_LIVENESS: Record<
+  BashDecisionRootName,
+  BashDecisionLiveness
+> = {
+  "bash-decision-decorator": { coverage: ["perm-rule-deny"] },
+  "bash-too-complex-rules": { coverage: ["bash-compound-safety"] },
+  "bash-too-complex-sandbox": { coverage: ["bash-compound-safety"] },
+  "bash-invalid-semantics-rules": {
+    coverage: [],
+    darkReason:
+      "the result-shape-preserving decision twin stayed GREEN over bash-compound-safety and perm-auto-classifier-deny. Those focused Bash scenarios exercise the too-complex and ordinary valid-semantics callers but never produce the invalid semantic record this rule decision requires. The exact pinned body and its dropped-node negative control remain graded by strangle/bash-compound-safety-parity.test.ts.",
+    darkOver: ["bash-compound-safety", "perm-auto-classifier-deny"],
+  },
+  "bash-sandbox-auto-allow": { coverage: ["perm-auto-classifier-deny"] },
+  "bash-exact-permission": { coverage: ["perm-auto-classifier-deny"] },
+  "bash-cd-git-sequence": {
+    coverage: [],
+    darkReason:
+      "the asynchronous boolean-negating twin stayed GREEN over bash-compound-safety and bash-prespawn-error. Both scenarios exercise directory-changing Bash, but neither combines a directory change with Git, so the aggregate cd/Git caller guard never observes this result. Pinned-body structural parity and its mutation control grade the implementation outside that replay surface.",
+    darkOver: ["bash-compound-safety", "bash-prespawn-error"],
+  },
+  "bash-path-safety": { coverage: ["perm-auto-classifier-deny"] },
+  "bash-dangerous-removal": { coverage: ["bash-dangerous-removal"] },
+  "bash-leading-directory": { coverage: ["bash-dangerous-removal"] },
+  "bash-cd-git-ast-sequence": {
+    coverage: [],
+    darkReason:
+      "the asynchronous boolean-negating twin stayed GREEN over bash-compound-safety and bash-prespawn-error. Their parsed commands contain directory changes but no Git command, so the AST cd/Git caller guard does not expose this result. Pinned-body structural parity and its mutation control grade the dark implementation.",
+    darkOver: ["bash-compound-safety", "bash-prespawn-error"],
+  },
+  "bash-git-structure-analysis": {
+    coverage: [],
+    darkReason:
+      "the boolean-negating twin stayed GREEN over bash-compound-safety and bash-prespawn-error. Neither focused command has the Git analysis shape that calls this path-risk decision, while strangle/bash-compound-safety-parity.test.ts compares the complete pinned body and proves a dropped-node mutant is visible.",
+    darkOver: ["bash-compound-safety", "bash-prespawn-error"],
+  },
+  "bash-git-structure-command": {
+    coverage: [],
+    darkReason:
+      "the boolean-negating twin stayed GREEN over bash-compound-safety and bash-prespawn-error. Neither focused command contains Git, so the text fallback's Git-structure result cannot affect the replay; pinned-body parity and its negative control grade the implementation.",
+    darkOver: ["bash-compound-safety", "bash-prespawn-error"],
+  },
+  "bash-direct-command": { coverage: ["perm-auto-classifier-deny"] },
+  "bash-subcommand-permission": { coverage: ["perm-auto-classifier-deny"] },
+  "bash-prefix-exact-rules": { coverage: ["bash-compound-safety"] },
+  "bash-nested-dangerous-removal": { coverage: ["bash-compound-safety"] },
+  "bash-sandbox-rules": {
+    coverage: [],
+    darkReason:
+      "the decision-inverting twin stayed GREEN over perm-auto-classifier-deny. That scenario reaches the sandbox-auto-allow decision but its sandbox eligibility and auto-allow state stop before the nested sandbox-rule result is observable. Pinned-body parity and its dropped-node control grade the dark root.",
+    darkOver: ["perm-auto-classifier-deny"],
+  },
+  "bash-cd-target": {
+    coverage: [],
+    darkReason:
+      "the nullable parse-result twin stayed GREEN over bash-compound-safety and bash-prespawn-error. Both contain cd text, but neither passes the enclosing cd/Git sequence guard that consumes this parser, so no model-visible or state surface changes. The exact pinned body remains structurally graded with a mutation control.",
+    darkOver: ["bash-compound-safety", "bash-prespawn-error"],
+  },
+  "bash-same-directory-cd": {
+    coverage: [],
+    darkReason:
+      "the asynchronous boolean-negating twin stayed GREEN over bash-compound-safety and bash-prespawn-error. The same-directory identity check is subordinate to the cd/Git sequence guard, and neither focused scenario contains Git. Pinned-body parity and its dropped-node control grade the implementation.",
+    darkOver: ["bash-compound-safety", "bash-prespawn-error"],
+  },
+  "bash-output-redirections": { coverage: ["perm-auto-classifier-deny"] },
+  "bash-ast-path-command": { coverage: ["perm-auto-classifier-deny"] },
+  "bash-text-path-command": {
+    coverage: [],
+    darkReason:
+      "the decision-inverting twin stayed GREEN over perm-broker-updates and bash-prespawn-error. Both exercise path-command admission through parsed AST analyses, so the text-only fallback is not selected. The exact pinned body and its dropped-node mutant remain graded by the differential contract.",
+    darkOver: ["perm-broker-updates", "bash-prespawn-error"],
+  },
+  "bash-path-command-checker": { coverage: ["perm-broker-updates"] },
+  "bash-path-command": { coverage: ["perm-broker-updates"] },
+};
+
 export const SPLICES: Splice[] = [
   // ---- C13b / W10b: Bash command admission --------------------------------
   // KTe is the shared parse-tree classifier. Its 86-declaration pure closure
@@ -386,10 +480,10 @@ export const SPLICES: Splice[] = [
     coverage: ["perm-accept-edits"],
   },
 
-  // The three runtime roots complete C13b's command-admission cut. Their
+  // The three aggregate roots begin C13b's command-admission cut. Their
   // semantic capture specifications live in one pure module shared with the
-  // independent pinned-AST checker, so manifest wiring cannot drift from the
-  // 13 / 53 / 2 exhaustive free-variable populations it verifies.
+  // independent pinned-AST checker; the 25 child decisions below complete the
+  // runtime boundary rather than remaining graph callbacks.
   {
     name: "bash-permission-entry",
     target: "free-function",
@@ -432,6 +526,26 @@ export const SPLICES: Splice[] = [
       "the fail-closed root runs only when a Bash permission check throws while the agent also carries a non-empty per-spawn bashCommandClamp. No recorded scenario creates that conjunction: bash-compound-safety exercises compound command admission without a clamp or an internal crash. The strongest decision-inverting twin is therefore measured dark there, while strangle/bash-compound-safety-parity.test.ts executes both clamp states against the pinned declaration bytes and requires the exact denial, reason, and undefined fallthrough.",
     darkOver: ["bash-compound-safety"],
   },
+
+  // Decision roots reached by `$ct` and `jrn`. `owned-binding` captures are
+  // forwarded only because the callee needs its own direct low-level captures;
+  // the build proves each such identifier is itself replaced by a registered
+  // owned splice rather than leaving graph decision logic behind.
+  ...Object.values(BASH_DECISION_ROOTS).map((root) => ({
+    name: root.name,
+    target: root.target,
+    signature: {
+      params: root.params,
+      ancestry: ["SourceFile"],
+      ...(root.target === "arrow-initializer"
+        ? { declarator: root.binding === "j8e" ? 1 : 0 }
+        : {}),
+    },
+    anchor: root.anchor,
+    fn: root.adapter,
+    captures: [...root.captures],
+    ...BASH_DECISION_LIVENESS[root.name],
+  })),
 
   // The eleven flag/effect tables are values rather than callables. Each
   // asserted-variable-declarator evaluates upstream's initializer once, hands

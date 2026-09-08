@@ -49,11 +49,22 @@ import {
 import { permissionMessage } from "../shared/permission-message.js";
 import { findSafetyCheckReason } from "../shared/safety-check-reason.js";
 import { createCommandClassifier } from "../command-classifier/reference.js";
-export { PARSE_ABORTED };
+import { isSedReadOnly } from "../bash-read-only/reference.js";
+import {
+  FILE_ARGUMENT_SAFETY,
+  FILE_EFFECT_KINDS,
+  FILE_EFFECT_PHRASES,
+  createFileArgumentExtractors,
+} from "../bash-safety-tables/reference.js";
+import { homedir } from "node:os";
+export { PARSE_ABORTED, isSedReadOnly };
 export const BASH_TOOL_NAME = "Bash";
 import {
+  basename as pathBasename,
+  dirname as pathDirname,
   isAbsolute as isAbsolutePath,
   normalize as normalizePath,
+  posix as posixPath,
   resolve as resolvePath,
   sep as pathSeparator,
 } from "node:path";
@@ -866,6 +877,46 @@ export function checkModeCommand(command, permissionContext) {
   };
 }
 
+export function checkModeCommands(input, permissionContext) {
+  if (permissionContext.mode === "bypassPermissions") {
+    return {
+      behavior: "passthrough",
+      message: "Bypass mode is handled in main permission flow",
+    };
+  }
+  if (permissionContext.mode === "dontAsk") {
+    return {
+      behavior: "passthrough",
+      message: "DontAsk mode is handled in main permission flow",
+    };
+  }
+  let allowed = false;
+  for (const command of splitSubcommands(input.command)) {
+    const decision = checkModeCommand(command, permissionContext);
+    if (decision.behavior === "ask" || decision.behavior === "deny") {
+      return decision;
+    }
+    if (decision.behavior === "passthrough") {
+      return {
+        behavior: "passthrough",
+        message: "No mode-specific validation required",
+      };
+    }
+    allowed = true;
+  }
+  if (allowed) {
+    return {
+      behavior: "allow",
+      updatedInput: input,
+      decisionReason: { type: "mode", mode: permissionContext.mode },
+    };
+  }
+  return {
+    behavior: "passthrough",
+    message: "No mode-specific validation required",
+  };
+}
+
 export const CLAMP_FAILURE_REASON =
   "bashCommandClamp fail-closed: permission check crashed";
 
@@ -1111,7 +1162,7 @@ const COMMAND_WRAPPERS = new Set([
   "unshare",
   "nsenter",
 ]);
-function hasUnknownTrackedValue(value) {
+export function hasUnknownTrackedValue(value) {
   return (
     value.includes(COMMAND_SUBSTITUTION_VALUE) ||
     value.includes(UNKNOWN_TRACKED_VALUE)
@@ -2031,7 +2082,7 @@ function matchesClampRule(span, group) {
 }
 
 
-function splitClampCommands(command) {
+export function splitClampCommands(command) {
   if (!command || command.length > MAX_COMMAND_LENGTH) return null;
   const root = getParser().parse(command);
   if (!root) return null;
@@ -2107,7 +2158,7 @@ async function findClampMismatch(input, groups, effects) {
 }
 
 function displaySpan(span) {
-  return `\`${span}\``;
+  return JSON.stringify(span);
 }
 
 function treeContainsUnsafeBackgroundOperator(root) {
@@ -2261,7 +2312,7 @@ function heredocSuggestionPrefix(command) {
   return argv.slice(index, index + 2).join(" ") || null;
 }
 
-function permissionSuggestions(command) {
+export function permissionSuggestions(command) {
   const heredocPrefix = heredocSuggestionPrefix(command);
   if (heredocPrefix) return suggestion(heredocPrefix, true);
   if (command.includes("\n")) {
@@ -2272,8 +2323,1128 @@ function permissionSuggestions(command) {
   return prefix ? suggestion(prefix, true) : suggestion(command);
 }
 
+export const READ_ONLY_ALLOW_REASON = "Read-only command is allowed";
+export const SANDBOX_BLOCKED_COMMANDS = new Set([
+  "time", "nohup", "timeout", "nice", "stdbuf", "env", "command",
+  "builtin", "noglob",
+]);
+export const SANDBOX_DYNAMIC_COMMANDS = new Set([
+  "printf", "test", "read", "wait", "unset", ...ASSIGNMENT_COMMANDS,
+]);
+export const SANDBOX_UNSUPPORTED_COMMANDS = new Set([
+  "awk", "gawk", "mawk", "nawk",
+]);
+export const FIND_VALUE_OPTIONS = new Set([
+  "-name", "-iname", "-path", "-ipath", "-lname", "-ilname", "-regex",
+  "-iregex", "-wholename", "-iwholename", "-samefile", "-newer",
+  "-anewer", "-cnewer", "-mnewer", "-perm", "-user", "-group", "-uid",
+  "-gid", "-size", "-type", "-xtype", "-fstype", "-inum", "-links",
+  "-used", "-context", "-amin", "-cmin", "-mmin", "-atime", "-ctime",
+  "-mtime", "-mindepth", "-maxdepth", "-printf", "-regextype", "-D", "-f",
+  "-flags", "-Bnewer", "-Btime", "-Bmin", "-files0-from", "-xattrname",
+]);
+export const FIND_QUOTED_VALUE_OPTION = /^-newer[aBcm][aBcmt]$/;
+export const READ_REDIRECT_OPERATORS = new Set(["<", "<<", "<<<", "<&"]);
+export const GIT_RISK_EXCLUDED_COMMANDS = new Set(["rm", "rmdir", "sed"]);
+export {
+  ARITHMETIC_COMPARISON_OPERATORS,
+  FIND_ACTIONS,
+  SAFE_SET_O_OPTIONS,
+  SAFE_SET_SHORT_OPTIONS,
+};
+
+const DANGEROUS_ENVIRONMENT_NAMES = new Set([
+  "path", "home", "tmpprefix", "bash_env", "env", "cdpath", "globignore",
+  "shell", "fpath", "bash_loadables_path", "module_path", "manpath",
+  "mailpath", "readnullcmd", "nullcmd", "histfile", "zdotdir", "functions",
+  "commands", "aliases", "galiases", "saliases", "lang", "language",
+  "lc_all", "lc_ctype", "lc_collate", "lc_messages", "lc_numeric",
+  "lc_time", "histchars", "textdomain", "textdomaindir",
+]);
+const DANGEROUS_SHELL_VARIABLES = new Set([
+  "RANDOM", "SECONDS", "LINENO", "OPTIND", "MAILCHECK", "HISTCMD",
+  "SRANDOM", "EPOCHSECONDS", "EPOCHREALTIME", "COLUMNS", "LINES", "SHLVL",
+  "ERRNO", "TMOUT", "HISTSIZE", "SAVEHIST", "TRY_BLOCK_ERROR",
+  "TRY_BLOCK_INTERRUPT", "KEYTIMEOUT", "LISTMAX", "LOGCHECK", "PERIOD",
+  "FUNCNEST", "UID", "EUID", "GID", "EGID", "ZLE_RPROMPT_INDENT",
+  "MBEGIN", "MEND", "PPID", "ARGC", "ZSH_SUBSHELL", "TTYIDLE", "status",
+]);
+const SANDBOX_ALWAYS_EXCLUDED = new Set([
+  "eval", "source", ".", "exec", "nocorrect", "fc", "coproc", "trap",
+  "enable", "mapfile", "readarray", "hash", "bind", "complete", "compgen",
+  "alias", "let",
+]);
+const SANDBOX_ZSH_EXCLUDED = new Set([
+  "zmodload", "emulate", "sysopen", "sysread", "syswrite", "sysseek",
+  "zpty", "ztcp", "zsocket", "zf_rm", "zf_mv", "zf_ln", "zf_chmod",
+  "zf_chown", "zf_mkdir", "zf_rmdir", "zf_chgrp", "repeat", "foreach",
+  "zcompile", "setopt", "unsetopt", "disable", "shopt", "autoload",
+  "functions",
+]);
+const SANDBOX_WRAPPER_EXCLUDED = new Set([
+  "watch", "ionice", "chrt", "setsid", "taskset", "strace", "ltrace",
+  "script", "flock", "unshare", "nsenter",
+]);
+const DANGEROUS_REMOVAL_COMMAND =
+  /^(?:[A-Za-z_][A-Za-z0-9_]*\+?=[^\s]*\s+)*\\?(?:[^\s=]*\/)?(rm|rmdir)(?:\s|$)/;
+const POSSIBLY_EMPTY_REMOVAL_TARGET =
+  /^"?\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)"?\/(?:\*|\$|\/|["']|$)/;
+const GIT_INTERNAL_PATHS = [
+  /^head$/,
+  /^objects(?:\/|$)/,
+  /^refs(?:\/|$)/,
+  /^hooks(?:\/|$)/,
+];
+const ownedPathArgumentExtractors = createFileArgumentExtractors(() => homedir());
+const OWNED_PATH_COMMANDS = Object.keys(FILE_EFFECT_KINDS);
+
+export function isSafeEnvironmentVariable(name) {
+  return PREFIX_ENVIRONMENT_NAMES.has(name) || false;
+}
+
+export function isDangerousEnvironmentVariable(name) {
+  const normalized = name.toLowerCase();
+  return (
+    DANGEROUS_ENVIRONMENT_NAMES.has(normalized) ||
+    normalized.startsWith("ld_") ||
+    normalized.startsWith("dyld_") ||
+    normalized.startsWith("bash_func_") ||
+    name === "IFS" ||
+    name === "PS4" ||
+    name === "PROMPT4" ||
+    DANGEROUS_SHELL_VARIABLES.has(name)
+  );
+}
+
+export function isSandboxExcludedCommand(command) {
+  const basename = command.replace(/^.*[\\/]/, "");
+  return (
+    SANDBOX_ALWAYS_EXCLUDED.has(command) ||
+    SANDBOX_ZSH_EXCLUDED.has(command) ||
+    SANDBOX_WRAPPER_EXCLUDED.has(command) ||
+    SANDBOX_WRAPPER_EXCLUDED.has(basename) ||
+    basename === "rm" ||
+    basename === "rmdir"
+  );
+}
+
+export function stripEnvironmentAssignments(words) {
+  let index = 0;
+  while (index < words.length) {
+    const assignment = words[index].match(
+      /^([A-Za-z_][A-Za-z0-9_]*)\+?=(.*)$/,
+    );
+    if (assignment === null) break;
+    if (isDangerousEnvironmentVariable(assignment[1])) return null;
+    if(/["'`$\\(){}|;&<>*?[\]]/.test(assignment[2])) return null;
+    index++;
+  }
+  return index === 0 ? words : words.slice(index);
+}
+
+export function dangerousRemovalDecision(command, message, suffix) {
+  return {
+    behavior: "ask",
+    message,
+    decisionReason: {
+      type: "safetyCheck",
+      reason: `Dangerous ${command} operation ${suffix}`,
+      classifierApprovable: false,
+      circuitBreaker: "dangerousRemoval",
+    },
+    suggestions: [],
+  };
+}
+
+export function findDangerousRemovalExpansion(command) {
+  if (!command.includes("$") || !/\brm(?:dir)?\b/.test(command)) return null;
+  for (const part of splitSubcommands(command)) {
+    let text = part
+      .replace(/\\\r?\n/g, " ")
+      .replace(/`[^`]*`/g, " ")
+      .trimStart();
+    while (text.startsWith("(") || text.startsWith("{")) {
+      text = text.slice(1).trimStart();
+    }
+    for (let previous = ""; previous !== text;) {
+      previous = text;
+      text = text
+        .replace(/\$\([^()]*\)/g, " ")
+        .replace(/(?<!\$)\([^()]*\)/g, " ");
+    }
+    text = text.replace(/(?<![<>&])&(?![<>&])/g, ";");
+    for (const segment of text.split(/[;|\n\r]|&&/)) {
+      const candidate = segment.trimStart();
+      const match = candidate.match(DANGEROUS_REMOVAL_COMMAND);
+      if (match === null) continue;
+      const removal = match[1] === "rmdir" ? "rmdir" : "rm";
+      const words = candidate.slice(match[0].length).split(/\s+/);
+      for (let index = 0; index < words.length; index++) {
+        const word = words[index].replace(/[)\]}]+$/, "");
+        if (word === "" || word.startsWith("-") || word.startsWith("'")) {
+          continue;
+        }
+        if (/^[\d&]*[<>]/.test(word)) {
+          if (/^(?:[0-9]+|&)?(?:>>?[|&]?|<<?<?|<>)$/.test(word)) index++;
+          continue;
+        }
+        if (POSSIBLY_EMPTY_REMOVAL_TARGET.test(word)) {
+          return { command: removal, target: word };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+export function isPathLike(path) {
+  return (
+    isAbsolutePath(path) ||
+    path.startsWith("./") ||
+    path.startsWith("../") ||
+    path === "." ||
+    path === ".."
+  );
+}
+
+export function isSafeWindowsPath(path, cwd) {
+  let remaining = path;
+  let depth;
+  let absolute = /^[A-Za-z]:[\\/]/.exec(path);
+  if (absolute) {
+    remaining = path.slice(absolute[0].length);
+    depth = 0;
+  } else if (/^[\\/]/.test(path) || path.includes("\\")) {
+    return false;
+  } else {
+    if (/^[\\/]{2}/.test(cwd)) return false;
+    depth = 0;
+    for (const part of cwd.replace(/^[A-Za-z]:/, "").split(/[\\/]/)) {
+      if (part === "" || part === ".") continue;
+      depth += part === ".." ? -1 : 1;
+    }
+  }
+  const relative = !absolute;
+  let climbed = false;
+  for (const part of remaining.split(/[\\/]/)) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      if (depth === 0) return false;
+      depth--;
+      climbed = true;
+      continue;
+    }
+    if (relative && climbed) return false;
+    if (part.includes(":") || /[ .]$/.test(part)) return false;
+    depth++;
+  }
+  return true;
+}
+
+function decodeRedirectNode(node) {
+  switch (node.type) {
+    case "raw_string":
+      return node.text.slice(1, -1);
+    case "string":
+      return node.text
+        .slice(1, -1)
+        .replace(/\\([$`"\\\n])/g, (_match, value) => value === "\n" ? "" : value);
+    case "word":
+      return node.text.replace(
+        /\\([\s\S])/g,
+        (_match, value) => value === "\n" ? "" : value,
+      );
+    default:
+      return node.text;
+  }
+}
+
+export function analyzeAstRedirections(redirects) {
+  const redirections = [];
+  const denyCheckOutputRedirections = [];
+  let hasDangerousRedirection = false;
+  let dangerousRedirectionReason;
+  for (const redirect of redirects) {
+    if (/^\/dev\/(tcp|udp)\//.test(redirect.target)) {
+      hasDangerousRedirection = true;
+      dangerousRedirectionReason = "network_device";
+      continue;
+    }
+    if (/^(?:\\\\|\/\/)/.test(redirect.target.replace(/\\/g, "/"))) {
+      hasDangerousRedirection = true;
+      if (dangerousRedirectionReason !== "network_device") {
+        dangerousRedirectionReason = "unc_path";
+      }
+      continue;
+    }
+    if (
+      [">", ">|", "&>", ">>", "&>>", ">&"].includes(redirect.op) &&
+      (redirect.target.startsWith("~") || /[$`]/.test(redirect.target))
+    ) {
+      hasDangerousRedirection = true;
+      if (
+        dangerousRedirectionReason !== "network_device" &&
+        dangerousRedirectionReason !== "unc_path"
+      ) {
+        dangerousRedirectionReason = "shell_expansion";
+      }
+      denyCheckOutputRedirections.push({
+        target: redirect.target,
+        operator: redirect.op === ">>" || redirect.op === "&>>" ? ">>" : ">",
+      });
+      continue;
+    }
+    switch (redirect.op) {
+      case ">": case ">|": case "&>":
+        redirections.push({ target: redirect.target, operator: ">" });
+        break;
+      case ">>": case "&>>":
+        redirections.push({ target: redirect.target, operator: ">>" });
+        break;
+      case ">&":
+        if (!/^\d+$/.test(redirect.target)) {
+          redirections.push({ target: redirect.target, operator: ">" });
+        }
+        break;
+      default:
+        break;
+    }
+  }
+  return {
+    redirections,
+    hasDangerousRedirection,
+    dangerousRedirectionReason,
+    denyCheckOutputRedirections,
+  };
+}
+
+export function analyzeOutputRedirections(command) {
+  const fallback = {
+    commandWithoutRedirections: command,
+    redirections: [],
+    hasDangerousRedirection: false,
+    dangerousRedirectionReason: undefined,
+  };
+  if (!command || command.length > MAX_COMMAND_LENGTH) return fallback;
+  const root = getParser().parse(command);
+  if (!root) return fallback;
+  const redirections = [];
+  let hasDangerousRedirection = false;
+  let dangerousRedirectionReason;
+  const visitRedirects = (node) => {
+    if (node.type === "file_redirect") {
+      let operator = null;
+      let target = null;
+      let descriptor = false;
+      let parts = 0;
+      for (const child of node.children) {
+        if ([">", "&>", ">|"].includes(child.type)) operator = ">";
+        else if ([">>", "&>>", ">>|"].includes(child.type)) operator = ">>";
+        else if (child.type === ">&") {
+          operator = ">";
+          descriptor = true;
+        } else if (child.type === "<&") {
+          const values = node.children.filter(
+            (candidate) => candidate !== child && candidate.type !== "file_descriptor",
+          );
+          if (
+            values.length > 1 ||
+            values.some((candidate) => decodeRedirectNode(candidate).startsWith("-"))
+          ) {
+            hasDangerousRedirection = true;
+            if (dangerousRedirectionReason !== "network_device") {
+              dangerousRedirectionReason = "shell_expansion";
+            }
+          }
+          return;
+        } else if (child.type === ">&-" || child.type === "<&-") {
+          if (
+            node.children.filter(
+              (candidate) => candidate !== child && candidate.type !== "file_descriptor",
+            ).length > 0
+          ) {
+            hasDangerousRedirection = true;
+            if (dangerousRedirectionReason !== "network_device") {
+              dangerousRedirectionReason = "shell_expansion";
+            }
+          }
+          return;
+        } else if (child.type === "<") {
+          const values = node.children.filter(
+            (candidate) => candidate !== child && candidate.type !== "file_descriptor",
+          );
+          if (values.length > 1) {
+            hasDangerousRedirection = true;
+            if (dangerousRedirectionReason !== "network_device") {
+              dangerousRedirectionReason = "shell_expansion";
+            }
+            return;
+          }
+          const value = values[0];
+          if (value && /^\/dev\/(tcp|udp)\//.test(decodeRedirectNode(value))) {
+            hasDangerousRedirection = true;
+            dangerousRedirectionReason = "network_device";
+          }
+          return;
+        } else if (child.type !== "file_descriptor") {
+          target = child;
+          parts++;
+        }
+      }
+      if (!operator || !target) return;
+      if (parts > 1) {
+        hasDangerousRedirection = true;
+        if (dangerousRedirectionReason !== "network_device") {
+          dangerousRedirectionReason = "shell_expansion";
+        }
+        return;
+      }
+      if (descriptor && decodeRedirectNode(target).startsWith("-")) {
+        hasDangerousRedirection = true;
+        if (dangerousRedirectionReason !== "network_device") {
+          dangerousRedirectionReason = "shell_expansion";
+        }
+        return;
+      }
+      if (target.type === "number" && target.children.length === 0 && descriptor) {
+        return;
+      }
+      const staticTarget =
+        (target.type === "word" && target.children.length === 0) ||
+        (target.type === "number" && target.children.length === 0) ||
+        target.type === "raw_string" ||
+        (target.type === "string" &&
+          !target.children.some(
+            (child) => child.type !== "string_content" && child.type !== '"',
+          ));
+      if (!staticTarget) {
+        hasDangerousRedirection = true;
+        if (dangerousRedirectionReason !== "network_device") {
+          dangerousRedirectionReason = "shell_expansion";
+        }
+        return;
+      }
+      const text = decodeRedirectNode(target);
+      if (/^~|[*?[\]]/.test(text) || text.startsWith("!") || text.startsWith("=")) {
+        hasDangerousRedirection = true;
+        if (dangerousRedirectionReason !== "network_device") {
+          dangerousRedirectionReason = "shell_expansion";
+        }
+        return;
+      }
+      if (descriptor && !/^[A-Za-z0-9./_-]+$/.test(text)) {
+        hasDangerousRedirection = true;
+        if (dangerousRedirectionReason !== "network_device") {
+          dangerousRedirectionReason = "shell_expansion";
+        }
+        return;
+      }
+      if (/^\/dev\/(tcp|udp)\//.test(text)) {
+        hasDangerousRedirection = true;
+        dangerousRedirectionReason = "network_device";
+        return;
+      }
+      redirections.push({ target: text, operator });
+      return;
+    }
+    for (const child of node.children) {
+      visitRedirects(child);
+    }
+  };
+  visitRedirects(root);
+  const commands = [];
+  const visitCommands = (node) => {
+    if (node.type === "comment") return;
+    if (node.type === "redirected_statement") {
+      for (const child of node.children) {
+        if (!child.type.endsWith("_redirect")) visitCommands(child);
+      }
+      return;
+    }
+    if (SPLIT_CONTAINER_TYPES.has(node.type)) {
+      for (const child of node.children) {
+        visitCommands(child);
+      }
+      return;
+    }
+    commands.push(node.text);
+  };
+  visitCommands(
+    root.type === "ERROR" && root.children[0]?.type === "program"
+      ? root.children[0]
+      : root,
+  );
+  return {
+    commandWithoutRedirections: commands.length > 0 ? commands.join(" ") : command,
+    redirections,
+    hasDangerousRedirection,
+    dangerousRedirectionReason,
+  };
+}
+
+export function hasUnsafeEnvironmentAssignment(input, analysis) {
+  if (analysis) {
+    return analysis.envVars.some(({ name }) => !isSafeEnvironmentVariable(name));
+  }
+  const assignment = /^([A-Za-z_][A-Za-z0-9_]*)\+?=/;
+  const complete =
+    /^[A-Za-z_][A-Za-z0-9_]*\+?=(?:"[^"$`\\]*"|'[^']*'|[A-Za-z0-9_./:+-]*)[ \t]+/;
+  let command = input.command;
+  while (true) {
+    const match = command.match(assignment);
+    if (!match) return false;
+    if (!isSafeEnvironmentVariable(match[1])) return true;
+    const prefix = command.match(complete);
+    if (!prefix) return true;
+    command = command.slice(prefix[0].length);
+  }
+}
+
+export function basenameCommand(command) {
+  if (!command) return command;
+  const basename = command.replace(/^.*[\\/]/, "");
+  return basename === "rm" || basename === "rmdir" ? basename : command;
+}
+
+export function classifierPrefixSuggestion(prefix) {
+  return suggestion(prefix);
+}
+
+export async function classifyCommandText(command) {
+  if (command === "") {
+    return { kind: "simple", commands: [], bareAssignmentNames: [] };
+  }
+  const root = await parseOrAbort(command, () => undefined);
+  return root === null
+    ? { kind: "simple", commands: [], bareAssignmentNames: [] }
+    : createCommandClassifier(() => false)(command, root);
+}
+
+export function pathArgumentsFromCommand(command) {
+  const argv = peelCommandPrefixes(commandArgv(command));
+  if (argv.length === 0) return [];
+  const name = argv[0]?.replace(/[\\'\"]/g, "");
+  if (!name || !Object.hasOwn(FILE_EFFECT_KINDS, name)) return [];
+  const effect = FILE_EFFECT_KINDS[name];
+  if (!(["write", "create"].includes(effect)) || ["rm", "rmdir", "sed"].includes(name)) {
+    return [];
+  }
+  const extract = ownedPathArgumentExtractors[name];
+  return extract ? extract(argv.slice(1)) : [];
+}
+
+export function createsGitInternalPath(path) {
+  let normalized = posixPath.normalize(path.replace(/\/+/g, "/"));
+  normalized = normalized
+    .replace(/^\.?\//, "")
+    .toLowerCase()
+    .replace(/ı/g, "i")
+    .replace(/ſ/g, "s");
+  return GIT_INTERNAL_PATHS.some((pattern) => pattern.test(normalized));
+}
+
+export function pathCommands() {
+  return OWNED_PATH_COMMANDS;
+}
+
+// Decision roots copied from the pinned C13b admission region.
+// Free graph values cross only through each root's explicit `ports` object.
+
+export function decorateBashAskDecision(e, t, r, ports) { const { isAutoOrActivePlanMode: Tyt, findSafetyCheckReason: Fy, isClassifierRoutedSafetyCheck: _Tt, splitSubcommands: Ua, matchRules: zw } = ports; if (e.behavior !== "ask" || e.matchedAskRule !== void 0 || !Tyt(r))
+    return e; if (Fy(e.decisionReason, _Tt) === void 0)
+    return e; let u = new Set([t.command]); for (let d of Ua(t.command)) {
+    u.add(d);
+} if (e.decisionReason?.type === "subcommandResults")
+    for (let d of e.decisionReason.reasons.keys()) {
+        u.add(d);
+    } for (let d of u) {
+    let { matchingAskRules: _ } = zw({ ...t, command: d }, r, "prefix"), C = _[0];
+    if (C !== void 0)
+        return { ...e, matchedAskRule: C };
+} return e; }
+
+export async function checkBashTooComplexRules(e, t, r, ports) {
+    const { checkPrefixAndExactRules: J8e, splitSubcommands: Ua, matchRules: zw, bashTool: yi, findDangerousRemovalExpansion: i_e, emitTelemetry: s, dangerousRemovalDecision: Bw, parseAborted: w3, checkNestedDangerousRemoval: Brn, currentWorkingDirectory: ee } = ports;
+    let o = J8e(e, t);
+    if (o?.behavior === "deny")
+        return o;
+    for (let _ of Ua(e.command)) {
+        let C = zw({ ...e, command: _ }, t, "prefix").matchingDenyRules[0];
+        if (C !== void 0)
+            return { behavior: "deny", message: `Permission to use ${yi.name} with command ${e.command} has been denied.`, decisionReason: { type: "rule", rule: C } };
+    }
+    let u = i_e(e.command);
+    if (u !== null) {
+        s("tengu_bash_dangerous_rm_too_complex", {});
+        let { command: _, target: C } = u;
+        return Bw(_, `Dangerous ${_} operation detected: '${C}'
+
+This target is a shell variable expansion that points at the filesystem ` + "root (or a top-level directory) when the variable is unset or empty \u2014 " + "e.g. `rm -rf $UNSET/*` becomes `rm -rf /*`. This requires explicit approval and cannot be auto-allowed by permission rules.", `on possibly-empty variable path: ${C}`);
+    }
+    if (r && r !== w3) {
+        let _ = await Brn(r, ee(), t);
+        if (_ !== null)
+            return s("tengu_bash_dangerous_rm_too_complex", {}), _;
+    }
+    if (o === null || o.behavior !== "allow")
+        return o;
+    return (o.decisionReason?.type === "rule" ? o.decisionReason.rule.ruleValue.ruleContent : void 0) === e.command.trim() ? o : null;
+}
+
+export function checkBashTooComplexSandbox(e, t, r, ports) { const { sandbox: pt, isSandboxEligible: bv, isSandboxAutoAllowSuspended: Q8e, splitClampCommands: rW, matchRules: zw, bashTool: yi, stripEnvironmentAssignments: Irn, peelCommandPrefixes: Db, isDangerousEnvironmentVariable: XTe, isSandboxExcludedCommand: SQn, sandboxBlockedCommands: R8e, sandboxDynamicCommands: Mrn, arithmeticComparisonOperators: mKe, sandboxUnsupportedCommands: uWt, findActions: o_n, findValueOptionPattern: J_t, findQuotedValuePattern: Q_t, safeSetLongOptions: a_n, safeSetShortOptions: l_n, permissionMessage: ql, sandboxAutoAllowReason: JNe } = ports; if (!pt.isSandboxingEnabled() || !pt.isAutoAllowBashIfSandboxedEnabled() || !bv(e) || Q8e(t))
+    return null; if (r === void 0 || r === "PARSE_ABORT" || r === "ERROR")
+    return null; if (/(?<!<)<<(?!<)/.test(e.command))
+    return null; if (/\$\{[\s|]/.test(e.command.replace(/['"\\]/g, "")))
+    return null; if (/\$\{![A-Za-z_0-9]/.test(e.command.replace(/['"\\]/g, "")))
+    return null; if (/\/proc\/.*\/environ/.test(e.command.replace(/['"\\]/g, "")))
+    return null; let o = rW(e.command); if (o === null || o.length === 0)
+    return null; let u; for (let d of o) {
+    let { matchingDenyRules: _, matchingAskRules: C } = zw({ ...e, command: d }, t, "prefix");
+    if (_[0] !== void 0)
+        return { behavior: "deny", message: `Permission to use ${yi.name} with command ${e.command.trim()} has been denied.`, decisionReason: { type: "rule", rule: _[0] } };
+    u ??= C[0];
+} for (let d of o) {
+    let _ = d.trim().split(/\s+/).filter(Boolean), C = Irn(_);
+    if (C === null)
+        return null;
+    if (C.length === 0)
+        continue;
+    let A = Db(C), x = C.slice(0, C.length - A.length);
+    if (x.some((W) => /["'`$\\(){}|;&<>*?[\]]/.test(W)))
+        return null;
+    if (x.some((W) => { let z = W.match(/^([A-Za-z_]\w*)\+?=/); return z !== null && XTe(z[1]); }))
+        return null;
+    let M = A.map((W) => W.replace(/['"\\]/g, ""));
+    if (M.some((W) => { let z = W.match(/^([A-Za-z_]\w*)\+?=/); return z !== null && XTe(z[1]); }))
+        return null;
+    let F = A.some((W, z) => { if (z === 0)
+        return !1; if (W.includes("$'") && !/^'[^']*\$'$/.test(W) || W.includes('$"') && !/^"[^"]*\$"$/.test(W))
+        return !0; let me = M[z]; return me.includes("`") || /\$\((?!\()/.test(me) || /\$[^(\s]/.test(me) && me.includes("-") || /\$\{[^}]*:?[+=]/.test(me) || /\{[^\s]*(,|\.\.)/.test(W) || (me.match(/\{/g) ?? []).length !== (me.match(/\}/g) ?? []).length; }), U = M.some((W, z) => z > 0 && W.includes("$")), B = A[0];
+    if (B === void 0 || !/^[A-Za-z0-9._/~+][A-Za-z0-9._/~+-]*$/.test(B) || SQn(B) || R8e.has(B) || R8e.has(B.replace(/^.*[\\/]/, "")) || Mrn.has(B) && (F || M.some((W) => W.includes("[") && /[$`]/.test(W))) || B === "test" && (F || M.some((W) => W === "-t" || mKe.has(W))) || B === "jq" || uWt.has(B) || B === "find" && (F || (() => { for (let W = 1; W < M.length; W++) {
+        let z = M[W];
+        if (o_n.has(z))
+            return !0;
+        if (J_t.has(A[W]) || Q_t.test(A[W])) {
+            let me = M[W + 1];
+            if (me !== void 0 && (!me.includes("$") || /^["'].*["']$/.test(A[W + 1]) && /^\$\{?[A-Za-z_]\w*\}?$/.test(me))) {
+                W++;
+                continue;
+            }
+        }
+        if (z.includes("$") || /[[\]*?]/.test(z))
+            return !0;
+    } return !1; })()) || B === "jobs" && (F || U || M.some((W) => /^-[^-]*x/.test(W))) || B === "set" && (F || (() => { for (let W = 1; W < M.length; W++) {
+        let z = M[W];
+        if (z === "--")
+            return !1;
+        if (z.includes("$"))
+            return !0;
+        if (!/^[-+]/.test(z))
+            continue;
+        for (let me = 1; me < z.length; me++) {
+            let fe = z[me];
+            if (fe === "o") {
+                let pe = me < z.length - 1 ? z.slice(me + 1) : M[W + 1];
+                if (pe !== void 0 && pe !== "" && !a_n.has(pe.toLowerCase().replace(/[_-]/g, "")))
+                    return !0;
+                break;
+            }
+            if (fe === "A")
+                break;
+            if (!l_n.has(fe))
+                return !0;
+        }
+    } return !1; })()))
+        return null;
+} if (u)
+    return { behavior: "ask", message: ql(yi.name), decisionReason: { type: "rule", rule: u } }; return { behavior: "allow", updatedInput: e, decisionReason: { type: "other", reason: JNe } }; }
+
+export function checkBashInvalidSemanticsRules(e, t, r, ports) { const { checkPrefixAndExactRules: J8e, matchRules: zw, bashTool: yi } = ports; let o = J8e(e, t); if (o?.behavior === "deny")
+    return o; for (let u of r) {
+    let d = zw({ ...e, command: u.text }, t, "prefix", { astCommand: u }).matchingDenyRules[0];
+    if (d !== void 0)
+        return { behavior: "deny", message: `Permission to use ${yi.name} with command ${e.command} has been denied.`, decisionReason: { type: "rule", rule: d } };
+} if (o?.behavior === "allow") {
+    if ((o.decisionReason?.type === "rule" ? o.decisionReason.rule.ruleValue.ruleContent : void 0) === e.command.trim())
+        return o;
+} if (o?.behavior === "ask")
+    return o; return null; }
+
+export function checkBashSandboxAutoAllow(e, t, r, o, ports) { const { sandbox: pt, isSandboxEligible: bv, isSandboxAutoAllowSuspended: Q8e, checkSandboxRules: Orn, spawnEnvironmentKeys: oW, isSafeEnvironmentVariable: Ww, peelCommandPrefixes: Db, checkDangerousRemoval: dL, currentWorkingDirectory: ee } = ports; if (!pt.isSandboxingEnabled() || !pt.isAutoAllowBashIfSandboxedEnabled() || !bv(e) || Q8e(t))
+    return null; let u = Orn(e, t, r); if (u.behavior === "passthrough")
+    return null; let d = oW(), _ = o.some((M) => !Ww(M) && (d === null || d.has(M))) || r.some((M) => M.envVars.some((F) => !Ww(F.name)) || M.argv.some((F) => { if (!F.includes("=") || F.startsWith("-"))
+    return !1; let U = F.indexOf("="), B = F[U - 1] === "+" ? F.slice(0, U - 1) : F.slice(0, U); return !Ww(B); })), C = r.some((M) => M.redirects.some((F) => /^\/dev\/(tcp|udp)\//.test(F.target))); if (_ || C)
+    return null; let A = !1, x = !1; for (let M of r) {
+    let [F, ...U] = Db(M.argv), B = F?.replace(/^.*[\\/]/, "");
+    if (B === "cd" || B === "pushd" || B === "popd" || B === "chdir") {
+        A = !0;
+        continue;
+    }
+    if (B !== "rm" && B !== "rmdir")
+        continue;
+    if (x = !0, dL(B, U, ee(), t).behavior !== "passthrough")
+        return null;
+} if (A && x)
+    return null; return u; }
+
+export function checkBashExactPermission(e, t, ports) { const { matchRules: zw, bashTool: yi, permissionMessage: ql, permissionSuggestions: w3e } = ports; let r = e.command.trim(), { matchingDenyRules: o, matchingAskRules: u, matchingAllowRules: d } = zw(e, t, "exact"); if (o[0] !== void 0)
+    return { behavior: "deny", message: `Permission to use ${yi.name} with command ${r} has been denied.`, decisionReason: { type: "rule", rule: o[0] } }; if (u[0] !== void 0)
+    return { behavior: "ask", message: ql(yi.name), decisionReason: { type: "rule", rule: u[0] } }; if (d[0] !== void 0)
+    return { behavior: "allow", updatedInput: e, decisionReason: { type: "rule", rule: d[0] } }; let _ = { type: "other", reason: "This command requires approval", bashMissKind: "no-rule-match" }; return { behavior: "passthrough", message: ql(yi.name, _), decisionReason: _, suggestions: w3e(r) }; }
+
+export async function checkBashCdGitSequence(e, t, ports) { const { directoryIdentity: m_e, countMatching: Q, isNormalizedCdCommand: Lb, parseCdTarget: z8e, checkSameDirectoryCd: V8e } = ports; let r = await m_e(t); if (r === null)
+    return !1; if (Q(e, (d) => Lb(d.trim())) > 1)
+    return !1; let u = !1; for (let d of e) {
+    let _ = d.trim();
+    if (!Lb(_))
+        continue;
+    u = !0;
+    let C = z8e(_);
+    if (C === null)
+        return !1;
+    if (!await V8e(C, t, r))
+        return !1;
+} return u; }
+
+export function checkBashPathSafety(e, t, r, o, u, d, ports) { const { analyzeAstRedirections: Fnn, analyzeOutputRedirections: See, expandHomePath: Rm, resolvePath: r8e, isAbsolutePath: uL, resolvePathVariants: ao, matchPathRule: fa, checkSuspiciousPath: oY, checkOutputRedirections: Lnn, checkAstPathCommand: Dnn, splitSubcommands: Ua, checkTextPathCommand: Onn } = ports; if (!d && />>\s*>\s*\(|>\s*>\s*\(|<\s*\(/.test(e.command))
+    return { behavior: "ask", message: "Process substitution (>(...) or <(...)) can execute arbitrary commands and requires manual approval", decisionReason: { type: "other", reason: "Process substitution requires manual approval", bashMissKind: "process-substitution" } }; let _ = u ? Fnn(u) : void 0, { redirections: C, hasDangerousRedirection: A, dangerousRedirectionReason: x } = _ ?? See(e.command); if (A) {
+    let W;
+    if (_ !== void 0) {
+        let me = [..._.denyCheckOutputRedirections, ...C];
+        for (let fe of me) {
+            let pe = [], ge = Rm(fe.target);
+            if (ge !== fe.target)
+                pe.push({ path: ge, cwdIndependent: !0 });
+            if (!fe.target.startsWith("~"))
+                pe.push({ path: r8e(t, fe.target), cwdIndependent: uL(fe.target) });
+            for (let Ce of pe) {
+                let Oe = ao(Ce.path);
+                for (let Ee of Oe) {
+                    let Pe = fa(Ee, r, "edit", "deny");
+                    if (Pe !== null) {
+                        if (Ce.cwdIndependent || !o)
+                            return { behavior: "deny", message: `Output redirection to '${Ee}' was blocked by a deny rule.`, decisionReason: { type: "rule", rule: Pe } };
+                    }
+                }
+                if (W === void 0 || W.decisionReason?.type === "safetyCheck" && W.decisionReason.classifierApprovable) {
+                    let Ee = oY(Ce.path, Oe);
+                    if (!Ee.safe && (W === void 0 || !Ee.classifierApprovable))
+                        W = { behavior: "ask", message: Ee.message, decisionReason: { type: "safetyCheck", reason: Ee.message, ...r.restricted ? { classifierApprovable: !1, circuitBreaker: "restrictedMode" } : { classifierApprovable: Ee.classifierApprovable, circuitBreaker: Ee.circuitBreaker } } };
+                }
+            }
+        }
+    }
+    if (W !== void 0)
+        return W;
+    let z = x === "network_device" ? "Redirect involving /dev/tcp or /dev/udp opens a network connection" : x === "unc_path" ? "Redirect target is a Windows UNC path \u2014 opening it triggers an SMB connection" : "Shell expansion syntax in paths requires manual approval";
+    return { behavior: "ask", message: z, decisionReason: { type: "other", reason: z, bashMissKind: x === "network_device" || x === "unc_path" ? "net-redirect" : "shell-expansion" } };
+} let M; function F(W) { if (W.behavior === "deny")
+    return W; if (W.behavior === "ask") {
+    if (W.bashAllowRuleOverridable) {
+        M ??= W;
+        return;
+    }
+    return W;
+} return; } let U = Lnn(C, t, r, o), B = F(U); if (B)
+    return B; if (d)
+    for (let W of d) {
+        let z = F(Dnn(W, t, r, o));
+        if (z)
+            return z;
+    }
+else {
+    let W = Ua(e.command);
+    for (let z of W) {
+        let me = F(Onn(z, t, r, o));
+        if (me)
+            return me;
+    }
+} if (M)
+    return M; return { behavior: "passthrough", message: "All path commands validated successfully" }; }
+
+export function checkBashDangerousRemoval(e, t, r, o, u, ports) {
+    const { pathArgumentExtractors: pL, resolvePathPolicy: Qo, filesystem: le, uniqueValues: te, allowedDirectories: TT, expandHomePath: Rm, isAbsolutePath: uL, resolvePath: r8e, normalizePath: Enn, dangerousRemovalDecision: Bw, pathSeparator: Cnn, hasUnsafeGlobRoot: kze, hasUnknownTrackedValue: Qa, hasBlockedPathShape: Bn, isCriticalPath: pwe, pathContains: nf, countMatching: Q } = ports;
+    let d = pL[e], _ = d(t), { resolvedPath: C } = Qo(le(), r), A = C === r ? [r] : [r, C], x = te([...A, ...o ? TT(o) : []].flatMap((M) => { let { resolvedPath: F } = Qo(le(), M); return F === M ? [M] : [M, F]; }));
+    for (let M of _) {
+        let F = Rm(M), U = uL(F) ? F : r8e(r, F), B = U;
+        for (let me = ""; me !== B;) {
+            me = B;
+            let fe = B.replace(/([\\/]\*+)+[\\/]*$/, "") || "/";
+            if (fe !== B)
+                B = /[\\/]/.test(fe) ? Enn(fe) : fe;
+        }
+        let W = B !== U;
+        if (u && W && !uL(F) && /[\\/]\*$/.test(U))
+            return Bw(e, `Dangerous ${e} operation detected: '${U}'
+
+This command changes directories before the removal, so the relative glob target cannot be statically resolved. This requires explicit approval and cannot be auto-allowed by permission rules.`, `on statically-unresolvable target: ${U}`);
+        let z = B;
+        if (!uL(F)) {
+            let me = /[\\/]$/.test(r) ? r : r + Cnn;
+            if (B.startsWith(me))
+                z = B.slice(me.length);
+            else if (B === r)
+                z = "";
+        }
+        if (W && (kze(F) || Qa(U) || F.startsWith("~") || Bn(F) || !uL(F) && /(^|[\\/])\.\.([\\/]|$)/.test(F) && /[\\/]\*$/.test(U) || e === "rmdir" && /[\\/]\*$/.test(U) && t.some((me) => /^--p/.test(me) || /^-[a-z]*p/.test(me)) || !uL(F) && /\*[\\/]+$/.test(F) && /[\\/]\*$/.test(U)))
+            return Bw(e, `Dangerous ${e} operation detected: '${U}'
+
+This command's removal target cannot be statically resolved to a directory. This requires explicit approval and cannot be auto-allowed by permission rules.`, `on statically-unresolvable target: ${U}`);
+        if (!W || !/[*?[]/.test(z)) {
+            let me = [B];
+            if (B !== U) {
+                let { resolvedPath: fe } = Qo(le(), B);
+                if (fe !== B)
+                    me.push(fe);
+            }
+            for (let fe of me) {
+                if (pwe(fe))
+                    return Bw(e, `Dangerous ${e} operation detected: '${U}'
+
+This command would remove a critical system directory. This requires explicit approval and cannot be auto-allowed by permission rules.`, `on critical path: ${U}`);
+                if ((W ? x : A).some((ge) => nf(ge, fe)))
+                    return Bw(e, `Dangerous ${e} operation detected: '${U}'
+
+This command would remove a workspace directory (the working directory, an additional working directory, or one of their parent directories). This requires explicit approval and cannot be auto-allowed by permission rules.`, `on working directory or its ancestor: ${U}`);
+            }
+        }
+        if (W && /[\\/]\*$/.test(U)) {
+            let me = Q(U.split(/[\\/]+/), (pe) => pe && pe !== ".") - Q(B.split(/[\\/]+/), (pe) => pe && pe !== "."), fe = Q(z.split(/[\\/]+/), (pe) => /[*?[]/.test(pe));
+            if (me + fe > 1)
+                return Bw(e, `Dangerous ${e} operation detected: '${U}'
+
+This command's glob pattern traverses directories that cannot be statically enumerated. This requires explicit approval and cannot be auto-allowed by permission rules.`, `on statically-unresolvable target: ${U}`);
+        }
+    }
+    return { behavior: "passthrough", message: `No dangerous removals detected for ${e} command` };
+}
+
+export function resolveBashLeadingDirectoryChange(e, t, r, ports) { const { hasUnknownTrackedValue: Qa, isPathLike: K8e, isAbsolutePath: lW, platform: D, isSafeWindowsPath: X8e, checkPathPolicy: Omt, isPathAllowed: Xy } = ports; if (!e)
+    return null; if (e.envVars.length > 0 || e.redirects.length > 0)
+    return null; if (e.argv.length !== 2 || e.argv[0] !== "cd")
+    return null; let o = e.argv[1]; if (Qa(o))
+    return null; if (o.startsWith("-"))
+    return null; if (!K8e(o))
+    return null; if (!lW(o) && o.split(/[\\/]/).includes(".."))
+    return null; if (D() === "windows" && !X8e(o, t))
+    return null; if (/[*?[\]]/.test(o))
+    return null; let { allowed: u, resolvedPath: d } = Omt(o, t, r, "read"); if (!u)
+    return null; if (!Xy(d, r, [d]))
+    return null; return d; }
+
+export async function checkBashCdGitAstSequence(e, t, r, ports) { const { directoryIdentity: m_e, countMatching: Q, isNormalizedCdCommand: Lb, hasUnknownTrackedValue: Qa, platform: D, parseCdTarget: z8e, checkSameDirectoryCd: V8e } = ports; let o = await m_e(r); if (o === null)
+    return !1; if (Q(t, (_) => Lb(_)) > 1)
+    return !1; let d = !1; for (let _ = 0; _ < t.length; _++) {
+    if (!Lb(t[_]))
+        continue;
+    d = !0;
+    let C = e[_];
+    if (!C)
+        return !1;
+    if (C.envVars.length > 0 || C.redirects.length > 0)
+        return !1;
+    if (C.argv.length !== 2 || C.argv[0] !== "cd")
+        return !1;
+    if (Qa(C.argv[1]))
+        return !1;
+    let A = D() === "windows" ? z8e(t[_]) : C.argv[1];
+    if (A === null)
+        return !1;
+    if (!await V8e(A, r, o))
+        return !1;
+} return d; }
+
+export function hasUnsafeBashGitStructureFromAnalysis(e, t, ports) { const { readRedirectOperators: orn, hasUnknownTrackedValue: Qa, hasUnsafePath: eQ, peelCommandPrefixes: Db, pathEffectKinds: DP, gitRiskExcludedCommands: f8e, pathArgumentExtractors: pL, hasUnsafeMkdirPath: srn, expandHomePath: Rm, filesystem: le, realpath: ex, resolvePath: u_e, resolveExistingPath: g8e, isPathAncestor: irn, shellExpansionIndex: DU, basename: a8e, hasSymlinkTraversalRisk: mL } = ports; for (let r of e) {
+    if (!r)
+        continue;
+    for (let A of r.redirects) {
+        if (orn.has(A.op))
+            continue;
+        if (Qa(A.target))
+            return !0;
+        if (eQ(A.target, t))
+            return !0;
+    }
+    let o = Db(r.argv), u = o[0];
+    if (u !== void 0 && Qa(u))
+        return !0;
+    if (!u || !Object.hasOwn(DP, u))
+        continue;
+    let d = DP[u];
+    if (d !== "write" && d !== "create" || f8e.has(u))
+        continue;
+    let _ = pL[u](o.slice(1)), C = u === "mkdir" && o.slice(1).some((A) => /^-[^-]*p/.test(A) || A.startsWith("--p") && "--parents".startsWith(A));
+    for (let A of _) {
+        if (Qa(A))
+            return !0;
+        if (C ? srn(A, t) : eQ(A, t))
+            return !0;
+    }
+    if ((u === "cp" || u === "mv") && _.length >= 1) {
+        let A = o.slice(1), x = A.some((U) => { if (/^-[^-]*t/.test(U))
+            return !0; let B = U.indexOf("="), W = B >= 0 ? U.slice(0, B) : U; return W.startsWith("--t") && "--target-directory".startsWith(W); }), M = A.some((U) => /^-[^-]*T/.test(U) || U.startsWith("--n") && "--no-target-directory".startsWith(U)), F = !1;
+        if (!x && _.length >= 2) {
+            let U = _.at(-1), B = [U];
+            if (U.startsWith("~")) {
+                let W = Rm(U);
+                if (W.startsWith("~"))
+                    F = !0;
+                else
+                    B.push(W);
+            }
+            if (!F) {
+                let W = le(), z = (ex(W, t) ?? t).normalize("NFC");
+                for (let me of B) {
+                    let fe = u_e(t, me), pe = g8e(W, fe).normalize("NFC");
+                    if (irn(pe, z)) {
+                        F = !0;
+                        break;
+                    }
+                }
+            }
+        }
+        if (x || F) {
+            let U = x ? _ : _.slice(0, -1);
+            if (M)
+                return !0;
+            for (let B of U) {
+                if (DU(B) !== -1 || Qa(B))
+                    return !0;
+                let W = a8e(B);
+                if (W === "." || W === "..")
+                    return !0;
+                if (B.startsWith("~")) {
+                    let z = Rm(B);
+                    if (z.startsWith("~"))
+                        return !0;
+                    if (mL(a8e(z), t) || mL(W, t))
+                        return !0;
+                }
+                else if (mL(W, t))
+                    return !0;
+            }
+        }
+    }
+} return !1; }
+
+export function hasUnsafeBashGitStructureFromCommand(e, ports) { const { splitSubcommands: Ua, pathArgumentsFromCommand: rrn, peelCommandPrefixes: Db, commandArgv: ru, createsGitInternalPath: c_e, analyzeOutputRedirections: See } = ports; let t = Ua(e); for (let o of t) {
+    let u = o.trim(), d = rrn(u), C = Db(ru(u))[0]?.replace(/[\\'"]/g, ""), A = C === "cp" || C === "mv", x = d.at(-1), M = x !== void 0 && (x === "." || x === "./" || x === "" || /^(?:\.\.\/)*\.\.\/?$/.test(x));
+    for (let F of d) {
+        if (c_e(F))
+            return !0;
+        if (A && M && F !== x) {
+            let U = F.replace(/\/+$/, "").split("/").pop() ?? "";
+            if (c_e(U))
+                return !0;
+        }
+    }
+} let { redirections: r } = See(e); for (let { target: o } of r) {
+    if (c_e(o))
+        return !0;
+} return !1; }
+
+export function checkBashDirectCommand(e, t, r, o, u, d, ports) { const { currentWorkingDirectory: ee, checkExactPermission: aQ, matchRules: zw, bashTool: yi, permissionMessage: ql, checkPathSafety: I8, checkSedSafety: H9e, checkModeCommands: T8e, spawnEnvironmentKeys: oW, hasUnsafeEnvironmentAssignment: vrn, isSafeEnvironmentVariable: Ww, readOnlyAllowReason: yTt, permissionSuggestions: w3e } = ports; if (u === undefined) u = ee(); if (d === undefined) d = []; let _ = e.command.trim(), C = aQ(e, t); if (C.behavior === "deny" || C.behavior === "ask")
+    return C; let { matchingDenyRules: A, matchingAskRules: x, matchingAllowRules: M } = zw(e, t, "prefix", { skipCompoundCheck: o !== void 0, astCommand: o }); if (A[0] !== void 0)
+    return { behavior: "deny", message: `Permission to use ${yi.name} with command ${_} has been denied.`, decisionReason: { type: "rule", rule: A[0] } }; if (x[0] !== void 0)
+    return { behavior: "ask", message: ql(yi.name), decisionReason: { type: "rule", rule: x[0] } }; let F = I8(e, u, t, r, o?.redirects, o ? [o] : void 0); if (F.behavior === "deny" || F.behavior === "ask" && !F.bashAllowRuleOverridable)
+    return F; if (C.behavior === "allow")
+    return C; if (M[0] !== void 0)
+    return { behavior: "allow", updatedInput: e, decisionReason: { type: "rule", rule: M[0] } }; if (F.behavior === "ask")
+    return F; let U = H9e(e, t); if (U.behavior !== "passthrough")
+    return U; let B = T8e(e, t); if (B.behavior !== "passthrough")
+    return B; let W = oW(); if (yi.isReadOnly(e) && !vrn(e, o) && !d.some((me) => !Ww(me) && (W === null || W.has(me))))
+    return { behavior: "allow", updatedInput: e, decisionReason: { type: "other", reason: yTt } }; let z = { type: "other", reason: "This command requires approval", bashMissKind: "no-rule-match" }; return { behavior: "passthrough", message: ql(yi.name, z), decisionReason: z, suggestions: w3e(_) }; }
+
+export async function checkBashSubcommandPermission(e, t, r, o, u, d, _ = [], ports) { const { checkExactPermission: aQ, checkDirectCommand: j8e, classifierPrefixSuggestion: wrn, permissionSuggestions: w3e } = ports; let C = aQ(e, t); if (C.behavior === "deny" || C.behavior === "ask")
+    return C; let A = j8e(e, t, o, u, d, _); if (A.behavior === "deny" || A.behavior === "ask")
+    return A; if (A.behavior === "allow")
+    return A; let x = r?.commandPrefix ? wrn(r.commandPrefix) : w3e(e.command); return { ...A, suggestions: x }; }
+
+export function checkBashPrefixAndExactRules(e, t, ports) { const { matchRules: zw, bashTool: yi, checkExactPermission: aQ, permissionMessage: ql } = ports; let { matchingDenyRules: r, matchingAskRules: o } = zw(e, t, "prefix"); if (r[0] !== void 0)
+    return { behavior: "deny", message: `Permission to use ${yi.name} with command ${e.command} has been denied.`, decisionReason: { type: "rule", rule: r[0] } }; let u = aQ(e, t); if (u.behavior === "deny")
+    return u; if (o[0] !== void 0)
+    return { behavior: "ask", message: ql(yi.name), decisionReason: { type: "rule", rule: o[0] } }; if (u.behavior !== "passthrough")
+    return u; return null; }
+
+export async function checkNestedDangerousRemoval(e, t, r, ports) {
+    const { dangerousRemovalDecision: Bw, hasNormalizedCdCommand: fL, splitSubcommands: Ua, findDangerousRemovalExpansion: i_e, classifyCommandText: dde, peelCommandPrefixes: Db, basenameCommand: x8, checkDangerousRemoval: dL } = ports;
+    let o = [], u = (_) => { let C = _.text, A = (_.type === "expansion" || _.type === "ERROR") && /^\$\{[ \t\n|]/.test(C); if (_.type === "command_substitution" || _.type === "process_substitution" || A) {
+        let M = C.startsWith("$(") || C.startsWith("<(") || C.startsWith(">(") || C.startsWith("${") ? 2 : C.startsWith("`") ? 1 : 0, F = C.endsWith(")") || C.endsWith("`") || C.endsWith("}") ? C.length - 1 : C.length, U = C.slice(M, F).trim();
+        if (A)
+            U = U.replace(/^\|/, "").replace(/;$/, "").trim();
+        o.push(U);
+    } for (let x of _.children) {
+        if (x)
+            u(x);
+    } };
+    if (u(e), o.length > 64) {
+        if (/\brm(?:dir)?\b/.test(e.text))
+            return Bw("rm", `This command contains ${o.length} command substitutions \u2014 too many to analyze for catastrophic removals. This requires explicit approval.`, `\u2014 too many command substitutions to analyze (${o.length})`);
+        return null;
+    }
+    let d = fL(e.text) || o.some((_) => fL(_));
+    for (let _ of [e.text, ...o]) {
+        let C;
+        try {
+            C = Ua(_);
+        }
+        catch {
+            C = [_];
+        }
+        for (let A of C) {
+            let x = A.trim();
+            if (x.startsWith("{") && /;?\s*\}$/.test(x) || x.startsWith("(") && x.endsWith(")"))
+                x = x.slice(1).replace(/;?\s*[)}]$/, "").trim();
+            let M = i_e(x);
+            if (M !== null)
+                return Bw(M.command, `Dangerous ${M.command} operation detected inside command substitution: '${M.target}'
+
+This target is a shell variable expansion that points at the filesystem root (or a top-level directory) when the variable is unset or empty. This requires explicit approval and cannot be auto-allowed by permission rules.`, `on possibly-empty variable path inside command substitution: ${M.target}`);
+            let F = x.replace(/`[^`]*`/g, "__CMDSUB__");
+            for (let W = "", z = 0; W !== F && z < 16; z++) {
+                W = F, F = F.replace(/\$\([^()]*\)/g, "__CMDSUB__");
+            }
+            let U = F !== x, B = await dde(F);
+            if (B.kind === "simple")
+                for (let W of B.commands) {
+                    let z = Db(W.argv), me = x8(z[0]);
+                    if (me !== "rm" && me !== "rmdir")
+                        continue;
+                    let fe = z.slice(1), pe = dL(me, fe, t, r, d);
+                    if (pe.behavior === "ask")
+                        return pe;
+                    if (U && fe.some((ge) => /.__CMDSUB__\/?\*?$/.test(ge))) {
+                        let ge = fe.map((Oe) => Oe.replace(/(.)__CMDSUB__\/?\*?$/, "$1")), Ce = dL(me, ge, t, r, d);
+                        if (Ce.behavior === "ask")
+                            return Ce;
+                    }
+                }
+        }
+    }
+    return null;
+}
+
+export function checkSandboxRules(e, t, r, ports) { const { matchRules: zw, bashTool: yi, permissionMessage: ql, sandboxAutoAllowReason: JNe } = ports; let o = e.command.trim(), { matchingDenyRules: u, matchingAskRules: d } = zw(e, t, "prefix", { astCommand: r.length === 1 ? r[0] : void 0 }); if (u[0] !== void 0)
+    return { behavior: "deny", message: `Permission to use ${yi.name} with command ${o} has been denied.`, decisionReason: { type: "rule", rule: u[0] } }; if (r.length > 1) {
+    let _;
+    for (let C of r) {
+        let A = zw({ command: C.text }, t, "prefix", { astCommand: C });
+        if (A.matchingDenyRules[0] !== void 0)
+            return { behavior: "deny", message: `Permission to use ${yi.name} with command ${o} has been denied.`, decisionReason: { type: "rule", rule: A.matchingDenyRules[0] } };
+        _ ??= A.matchingAskRules[0];
+    }
+    if (_)
+        return { behavior: "ask", message: ql(yi.name), decisionReason: { type: "rule", rule: _ } };
+} if (d[0] !== void 0)
+    return { behavior: "ask", message: ql(yi.name), decisionReason: { type: "rule", rule: d[0] } }; return { behavior: "allow", updatedInput: e, decisionReason: { type: "other", reason: JNe } }; }
+
+export function parseCdTarget(e, ports) { const { platform: D } = ports; let t = e.trim(); if (!t.startsWith("cd "))
+    return null; let r = t.slice(3).trim(); if (r.length === 0)
+    return null; let o = r[0]; if (o === '"' || o === "'") {
+    if (r.length < 2 || r.at(-1) !== o)
+        return null;
+    let u = r.slice(1, -1);
+    if (u.includes(o))
+        return null;
+    if (o === '"' && u.includes("\\") && D() !== "windows")
+        return null;
+    if (/[\x00-\x1f\x7f]/.test(u))
+        return null;
+    return u;
+} if (/\s/.test(r))
+    return null; if (/['"]/.test(r))
+    return null; if (r.includes("\\"))
+    return null; if (/[<>|&;(){}]/.test(r))
+    return null; return r; }
+
+export async function checkSameDirectoryCd(e, t, r, ports) { const { isPathLike: K8e, platform: D, isUncPath: S_, isSafeWindowsPath: X8e, isAbsolutePath: lW, resolvePath: F8e, directoryIdentity: m_e } = ports; if (e.startsWith("-"))
+    return !1; if (!K8e(e))
+    return !1; if (e.includes("$") || e.includes("`") || /[*?[]/.test(e) || D() !== "windows" && e.includes("\\") || D() === "windows" && e.includes("%"))
+    return !1; if (S_(e) || D() === "windows" && /^[\\/]{2}/.test(e))
+    return !1; if (D() === "windows" && !X8e(e, t))
+    return !1; {
+    let d = lW(e), _ = !1;
+    for (let C of e.split(/[\\/]/)) {
+        if (C === "" || C === ".")
+            continue;
+        if (C === "..") {
+            if (!d || _)
+                return !1;
+            continue;
+        }
+        _ = !0;
+    }
+} let o = lW(e) ? e : F8e(t, e), u = await m_e(o); if (u === null)
+    return !1; return u === r; }
+
+export function checkOutputRedirections(e, t, r, o, ports) { const { checkPathPolicy: Omt, allowedDirectories: TT, formatAllowedDirectories: Rpn, dirname: qN } = ports; if (o && e.some((u) => u.target !== "/dev/null"))
+    return { behavior: "ask", message: "Commands that change directories and write via output redirection require explicit approval to ensure paths are evaluated correctly. For security, Claude Code cannot automatically determine the final working directory when 'cd' is used in compound commands.", decisionReason: { type: "other", reason: "Compound command contains cd with output redirection - manual approval required to prevent path resolution bypass", bashMissKind: "cd-compound-redirect" } }; for (let { target: u } of e) {
+    if (u === "/dev/null")
+        continue;
+    let { allowed: d, resolvedPath: _, decisionReason: C } = Omt(u, t, r, "create");
+    if (!d) {
+        let A = Array.from(TT(r)), x = Rpn(A), M = C?.type === "other" || C?.type === "safetyCheck" ? C.reason : C?.type === "rule" ? `Output redirection to '${_}' was blocked by a deny rule.` : `Output redirection to '${_}' was blocked. For security, Claude Code may only write to files in the allowed working directories for this session: ${x}.`;
+        if (C?.type === "rule")
+            return { behavior: "deny", message: M, decisionReason: C };
+        return { behavior: "ask", message: M, blockedPath: _, decisionReason: C, suggestions: [{ type: "addDirectories", directories: [qN(_)], destination: "session" }] };
+    }
+} return { behavior: "passthrough", message: "No unsafe redirections found" }; }
+
+export function checkAstPathCommand(e, t, r, o, ports) { const { peelCommandPrefixes: Db, basenameCommand: x8, pathCommands: s8e, isSedReadOnly: cL, normalizeCommandPrefix: Ah, createPathCommandChecker: i8e } = ports; let u = Db(e.argv); if (u.length === 0)
+    return { behavior: "passthrough", message: "Empty command - no paths to validate" }; let [d, ..._] = u, C = x8(d); if (!C || !s8e.includes(C))
+    return { behavior: "passthrough", message: `Command '${C}' is not a path-restricted command` }; let A = C === "sed" && cL(Ah(e.text)) ? "read" : void 0; return i8e(C, A)(_, t, r, o); }
+
+export function checkTextPathCommand(e, t, r, o, ports) { const { normalizeCommandPrefix: Ah, commandArgv: Inn, basenameCommand: x8, pathCommands: s8e, isSedReadOnly: cL, createPathCommandChecker: i8e } = ports; let u = Ah(e), d = Inn(u); if (d.length === 0)
+    return { behavior: "passthrough", message: "Empty command - no paths to validate" }; let [_, ...C] = d, A = x8(_); if (!A || !s8e.includes(A))
+    return { behavior: "passthrough", message: `Command '${A}' is not a path-restricted command` }; let x = A === "sed" && cL(u) ? "read" : void 0; return i8e(A, x)(C, t, r, o); }
+
+export function createPathCommandChecker(e, t, ports) { const { checkPathCommand: Mnn, checkDangerousRemoval: dL, pathEffectKinds: DP, dirname: qN, directoryRuleSuggestion: YTe } = ports; return (r, o, u, d) => { let _ = Mnn(e, r, o, u, d, t); if (_.behavior === "deny")
+    return _; if (e === "rm" || e === "rmdir") {
+    let C = dL(e, r, o, u, d);
+    if (C.behavior !== "passthrough")
+        return C;
+} if (_.behavior === "passthrough")
+    return _; if (_.behavior === "ask") {
+    let C = t ?? DP[e], A = [];
+    if (_.blockedPath)
+        if (C === "read") {
+            let M = qN(_.blockedPath), F = YTe(M, "session");
+            if (F)
+                A.push(F);
+        }
+        else
+            A.push({ type: "addDirectories", directories: [qN(_.blockedPath)], destination: "session" });
+    let x = u.mode === "plan" && (u.prePlanMode === "auto" || u.prePlanMode === "bypassPermissions" || u.prePlanMode === "acceptEdits" || u.prePlanMode === "dontAsk");
+    if ((C === "write" || C === "create") && (u.mode === "default" || u.mode === "plan") && !x)
+        A.push({ type: "setMode", mode: "acceptEdits", destination: "session" });
+    _.suggestions = A;
+} return _; }; }
+
+export function checkPathCommand(e, t, r, o, u, d, ports) { const { pathArgumentExtractors: pL, pathEffectKinds: DP, hasUnknownTrackedValue: Qa, pathFlagValidators: xnn, checkPathPolicy: Omt, allowedDirectories: TT, formatAllowedDirectories: Rpn, pathEffectDescriptions: Pnn } = ports; let _ = pL[e], C = _(t), A = d ?? DP[e]; if (A !== "read" && C.some((F) => Qa(F)))
+    return { behavior: "ask", message: `${e} target contains command-substitution or untracked-variable output \u2014 the path is runtime-determined and cannot be validated`, decisionReason: { type: "other", reason: `${e} path argument is runtime-determined`, bashMissKind: "shell-expansion" } }; let x = xnn[e]; if (x && !x(t)) {
+    if (e === "cd")
+        return { behavior: "ask", message: `cd with two or more directory arguments requires manual approval. zsh's "cd OLD NEW" form substitutes OLD\u2192NEW in $PWD, producing a target path that cannot be statically validated.`, decisionReason: { type: "other", reason: "cd with two or more directory arguments", bashMissKind: "cd-multi-positional" } };
+    return { behavior: "ask", message: `${e} with flags requires manual approval to ensure path safety. For security, Claude Code cannot automatically validate ${e} commands that use flags, as some flags like --target-directory=PATH can bypass path validation.`, decisionReason: { type: "other", reason: `${e} command with flags requires manual approval`, bashMissKind: "flag-validation" } };
+} if (u && A !== "read")
+    return { behavior: "ask", message: "Commands that change directories and perform write operations require explicit approval to ensure paths are evaluated correctly. For security, Claude Code cannot automatically determine the final working directory when 'cd' is used in compound commands.", decisionReason: { type: "other", reason: "Compound command contains cd with write operation - manual approval required to prevent path resolution bypass", bashMissKind: "cd-compound-write" } }; let M; for (let F of C) {
+    let { allowed: U, resolvedPath: B, decisionReason: W, isInWorkingDir: z } = Omt(F, r, o, A);
+    if (!U) {
+        let me = Array.from(TT(o)), fe = Rpn(me), pe = W?.type === "other" || W?.type === "safetyCheck" ? W.reason : `${e} in '${B}' was blocked. For security, Claude Code may only ${Pnn[e]} the allowed working directories for this session: ${fe}.`;
+        if (W?.type === "rule")
+            return { behavior: "deny", message: pe, decisionReason: W };
+        let ge = z === !0 && W === void 0, Ce = { behavior: "ask", message: pe, blockedPath: B, decisionReason: W, bashAllowRuleOverridable: ge };
+        if (ge) {
+            M ??= Ce;
+            continue;
+        }
+        return Ce;
+    }
+} if (M)
+    return M; return { behavior: "passthrough", message: `Path validation passed for ${e} command` }; }
+
+
 function exactRuleDecision(input, permissionContext, runtime) {
-  return runtime.effects.checkExactPermission(input, permissionContext);
+  return (runtime.decisions ?? runtime.effects).checkExactPermission(input, permissionContext);
 }
 
 function isNormalizedGitCommand(command) {
@@ -2283,12 +3454,12 @@ function isNormalizedGitCommand(command) {
   return argv[0] === "xargs" && argv.includes("git");
 }
 
-function isNormalizedCdCommand(command) {
+export function isNormalizedCdCommand(command) {
   const name = commandArgv(normalizeCommandPrefix(command))[0];
   return ["cd", "pushd", "popd", "chdir"].includes(name);
 }
 
-function hasNormalizedCdCommand(command) {
+export function hasNormalizedCdCommand(command) {
   return splitSubcommands(command).some((part) =>
     isNormalizedCdCommand(part.trim()),
   );
@@ -2329,7 +3500,7 @@ function checkPathSafety(
   commandAnalyses,
   runtime,
 ) {
-  return runtime.effects.checkPathSafety(
+  return (runtime.decisions ?? runtime.effects).checkPathSafety(
     input,
     cwd,
     permissionContext,
@@ -2346,7 +3517,7 @@ function sandboxAutoAllow(
   bareAssignmentNames,
   runtime,
 ) {
-  return runtime.effects.checkSandboxAutoAllow(
+  return (runtime.decisions ?? runtime.effects).checkSandboxAutoAllow(
     input,
     permissionContext,
     commandAnalyses,
@@ -2388,7 +3559,7 @@ function sandboxTooComplexDecision(
   nodeType,
   runtime,
 ) {
-  return runtime.effects.checkTooComplexSandbox(
+  return (runtime.decisions ?? runtime.effects).checkTooComplexSandbox(
     input,
     permissionContext,
     nodeType,
@@ -2834,6 +4005,37 @@ function checkRedirectSedRisk(input, _permissionContext, allowedRuleCommands) {
 }
 
 
+export function checkSedSafety(input, permissionContext) {
+  let redirectDecision;
+  for (const command of splitSubcommands(input.command)) {
+    const sed = sedCommandText(command);
+    if (sed === null) continue;
+    redirectDecision ??= checkRedirectSedRisk(input, permissionContext);
+    if (redirectDecision.behavior === "ask") return redirectDecision;
+    if (
+      !isSedReadOnly(sed, {
+        allowFileWrites: permissionContext.mode === "acceptEdits",
+      })
+    ) {
+      return {
+        behavior: "ask",
+        message:
+          "sed command requires approval (contains potentially dangerous operations)",
+        decisionReason: {
+          type: "other",
+          reason:
+            "sed command contains operations that require explicit approval (e.g., write commands, execute commands)",
+          bashMissKind: "sed-dangerous",
+        },
+      };
+    }
+  }
+  return {
+    behavior: "passthrough",
+    message: "No dangerous sed operations detected",
+  };
+}
+
 function directCommandDecision(
   input,
   permissionContext,
@@ -2843,7 +4045,7 @@ function directCommandDecision(
   bareAssignmentNames,
   runtime,
 ) {
-  return runtime.effects.checkDirectCommand(
+  return (runtime.decisions ?? runtime.effects).checkDirectCommand(
     input,
     permissionContext,
     hasCd,
@@ -2863,7 +4065,7 @@ async function finalSubcommandDecision(
   bareAssignmentNames,
   runtime,
 ) {
-  return await runtime.effects.checkSubcommandPermission(
+  return await (runtime.decisions ?? runtime.effects).checkSubcommandPermission(
     input,
     permissionContext,
     classifierPrefix,
@@ -2948,7 +4150,7 @@ function mergeDuplicateSubcommandResults(commands, decisions) {
 }
 
 async function tooComplexRuleDecision(input, permissionContext, root, runtime) {
-  return await runtime.effects.checkTooComplexSafety(
+  return await (runtime.decisions ?? runtime.effects).checkTooComplexSafety(
     input,
     permissionContext,
     root,
@@ -2961,7 +4163,7 @@ function invalidSemanticsRuleDecision(
   commandAnalyses,
   runtime,
 ) {
-  return runtime.effects.checkInvalidSemanticsRules(
+  return (runtime.decisions ?? runtime.effects).checkInvalidSemanticsRules(
     input,
     permissionContext,
     commandAnalyses,
@@ -2976,6 +4178,7 @@ export async function checkBashPermissionCore(
   runtime,
 ) {
   const effects = runtime.effects;
+  const decisions = runtime.decisions ?? effects;
   let permissionContext = effects.readPermissionContext(context);
   const sessionEnvironment = context.sessionEnvVars;
   effects.replaceSessionEnvironmentKeys(
@@ -3092,11 +4295,11 @@ export async function checkBashPermissionCore(
     effects: {
       currentWorkingDirectory: effects.currentWorkingDirectory,
       hasUnsafeGitStructureFromAnalysis:
-        effects.hasUnsafeGitStructureFromAnalysis,
+        decisions.hasUnsafeGitStructureFromAnalysis,
       hasUnsafeGitStructureFromCommand:
-        effects.hasUnsafeGitStructureFromCommand,
+        decisions.hasUnsafeGitStructureFromCommand,
       isCdGitSequenceSafe: (commands) =>
-        effects.isCdGitSequenceSafe(
+        decisions.isCdGitSequenceSafe(
           commands,
           effects.currentWorkingDirectory(),
         ),
@@ -3221,7 +4424,7 @@ export async function checkBashPermissionCore(
         continue;
       }
       if (name !== "rm" && name !== "rmdir") continue;
-      const removal = effects.checkDangerousRemoval(
+      const removal = decisions.checkDangerousRemoval(
         name,
         args,
         cwd,
@@ -3253,7 +4456,7 @@ export async function checkBashPermissionCore(
     isNormalizedCdCommand(subcommands[0]) &&
     isSafeCdSequence(input.command)
   ) {
-    const resolved = effects.resolveLeadingDirectoryChange(
+    const resolved = decisions.resolveLeadingDirectoryChange(
       astCommandsByIdx[0],
       cwd,
       permissionContext,
@@ -3269,7 +4472,7 @@ export async function checkBashPermissionCore(
   if (
     hasCd &&
     subcommands.some((command) => isNormalizedGitCommand(command.trim())) &&
-    !(await effects.isCdGitAstSequenceSafe(
+    !(await decisions.isCdGitAstSequenceSafe(
       astCommandsByIdx,
       subcommands,
       cwd,
@@ -3290,10 +4493,10 @@ export async function checkBashPermissionCore(
   let gitStructureDecision;
   if (
     subcommands.some((command) => isNormalizedGitCommand(command.trim())) &&
-    (effects.hasUnsafeGitStructureFromAnalysis(
+    (decisions.hasUnsafeGitStructureFromAnalysis(
       astCommandsByIdx,
       effectiveCwd,
-    ) || effects.hasUnsafeGitStructureFromCommand(input.command))
+    ) || decisions.hasUnsafeGitStructureFromCommand(input.command))
   ) {
     const reason = {
       type: "other",
@@ -3558,7 +4761,7 @@ export async function checkBashPermission(
 
   let decision = await runtime.checkCore(input, context, modelClassifier);
   if (decision.behavior !== "allow" || !input.command.includes("&")) {
-    return effects.decorateDecision(
+    return (runtime.decisions ?? effects).decorateDecision(
       decision,
       input,
       effects.readPermissionContext(context),
@@ -3592,7 +4795,7 @@ export async function checkBashPermission(
     decisionReason: reason,
     message: shellPermissionMessage(reason),
   };
-  return effects.decorateDecision(
+  return (runtime.decisions ?? effects).decorateDecision(
     decision,
     input,
     effects.readPermissionContext(context),

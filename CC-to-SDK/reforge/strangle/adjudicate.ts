@@ -80,6 +80,29 @@ export interface Adjudication {
   outcome: string;
   state: "executed" | "contract" | "excluded" | "UNADJUDICATED";
   reason?: string;
+  /** Present only when the exact outcome was produced by this registered driver. */
+  contractDriver?: string;
+}
+
+/**
+ * Keep only outcomes that belong to the module a contract driver is registered
+ * to grade. Instrumented dependencies may record alongside the target, but
+ * executing a dependency is not oracle provenance for that dependency.
+ */
+export function contractEvidenceForDriver(
+  module: string,
+  driver: string,
+  recorded: ReadonlySet<string>,
+  inventory: ReadonlySet<string>,
+): Map<string, string> {
+  const attributed = new Map<string, string>();
+  const prefix = `${module}#`;
+  for (const branch of recorded) {
+    if (branch.startsWith(prefix) && inventory.has(branch)) {
+      attributed.set(branch, driver);
+    }
+  }
+  return attributed;
 }
 
 export interface StaleExclusion {
@@ -110,7 +133,7 @@ export function adjudicate(
    * Defaults to empty, so every attested module that has no such suite is
    * adjudicated exactly as it was before this channel existed.
    */
-  contract: ReadonlySet<string> = new Set(),
+  contract: ReadonlyMap<string, string> = new Map(),
 ): AttestationVerdict {
   const inventory = sites.flatMap(outcomesOf);
   const excluded = new Map(exclusions.map((e) => [e.branch, e.reason]));
@@ -122,14 +145,22 @@ export function adjudicate(
       // replay executed is reported as such even when a contract suite also ran
       // it, because end-to-end evidence is the stronger claim and the report
       // should say the strongest true thing about each branch.
+      const driver = contract.get(branch);
       const state = executed.has(branch)
         ? "executed"
-        : contract.has(branch)
+        : driver !== undefined
           ? "contract"
           : excluded.has(branch)
             ? "excluded"
             : "UNADJUDICATED";
-      rows.push({ branch, site, outcome: branch.slice(branch.lastIndexOf(":") + 1), state, reason: excluded.get(branch) });
+      rows.push({
+        branch,
+        site,
+        outcome: branch.slice(branch.lastIndexOf(":") + 1),
+        state,
+        reason: excluded.get(branch),
+        contractDriver: state === "contract" ? driver : undefined,
+      });
     }
   }
 

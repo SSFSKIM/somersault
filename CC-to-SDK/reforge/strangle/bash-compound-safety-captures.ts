@@ -1,4 +1,4 @@
-// Copy-ready capture inventory for C13b's three engine-chunk runtime roots.
+// Copy-ready capture inventory for C13b's aggregate and child decision roots.
 // This file does not mutate the shared manifest. It derives every identifier
 // from the pinned AST and refuses an omitted or extra semantic mapping.
 import { readFileSync, readdirSync } from "node:fs";
@@ -9,8 +9,10 @@ import { assertSignature, chunkAst, selectExcision } from "./ast.js";
 import { freeIdentifiers } from "./scope.js";
 
 import {
+  BASH_DECISION_ROOTS,
   BASH_SAFETY_ROOTS,
   COPY_READY_BASH_SAFETY_CAPTURES,
+  expectedDecisionCaptureIdentifier,
 } from "./bash-compound-safety-capture-specs.js";
 
 const modules = new Map<string, string>();
@@ -87,6 +89,59 @@ for (const [name, spec] of Object.entries(BASH_SAFETY_ROOTS)) {
     }
     perturbationChecks += 2;
   }
+}
+
+for (const root of Object.values(BASH_DECISION_ROOTS)) {
+  const resolved = resolveAnchor(
+    modules,
+    { name: root.name, anchor: root.anchor },
+    basename,
+  );
+  const sourceFile = chunkAst(resolved.path, resolved.source);
+  const signature = {
+    params: root.params,
+    ancestry: ["SourceFile"],
+    ...(root.target === "arrow-initializer"
+      ? { declarator: root.binding === "j8e" ? 1 : 0 }
+      : {}),
+  };
+  const cut = selectExcision(
+    root.name,
+    sourceFile,
+    resolved.offsets,
+    root.target,
+    signature,
+  );
+  assertSignature(root.name, cut, signature);
+  const actual = freeIdentifiers(cut.node);
+  const declared = root.captures.map(({ derive }) => derive(cut.original));
+  const expected = root.captures.map(expectedDecisionCaptureIdentifier);
+  if (
+    actual.length !== declared.length ||
+    actual.some((identifier, index) => identifier !== declared[index]) ||
+    actual.some((identifier, index) => identifier !== expected[index])
+  ) {
+    throw new Error(
+      `${root.name}: ordered capture mapping differs from pinned AST; actual [${actual.join(", ")}], declared [${declared.join(", ")}], expected [${expected.join(", ")}]`,
+    );
+  }
+  if (new Set(root.captures.map(({ as }) => as)).size !== root.captures.length) {
+    throw new Error(`${root.name}: capture mapping repeats a semantic name`);
+  }
+  for (const capture of root.captures) {
+    const identifier = capture.derive(cut.original);
+    let failedLoudly = false;
+    try {
+      capture.derive(retoken(cut.original, identifier, "1"));
+    } catch {
+      failedLoudly = true;
+    }
+    if (!failedLoudly) {
+      throw new Error(`${root.name}.${capture.as}: destroyed capture did not fail loudly`);
+    }
+    perturbationChecks++;
+  }
+  found[root.name] = actual;
 }
 
 export const DERIVED_BASH_SAFETY_CAPTURES = found;

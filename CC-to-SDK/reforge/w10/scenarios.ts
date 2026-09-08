@@ -1,10 +1,10 @@
 // W10 corpus scenarios — the executor's unreached surface, recorded.
 //
-// The corpus has 63 scenarios and its Bash calls are `echo`, `mkdir`, `chmod`,
+// The corpus has 64 scenarios and its Bash calls are `echo`, `mkdir`, `chmod`,
 // `cd`, `pwd` and `sleep`. That reaches ONE of `dZe`'s six result arms, no truncation, no
 // backgrounding, no timeout, no compound command and no cwd recovery
 // (scout §4.2; the scout called that last one a pre-spawn REFUSAL — measured, it
-// is the silent recovery arm, see `prespawnError`). These are the six recordings
+// is the silent recovery arm, see `prespawnError`). These are the seven recordings
 // that buy the rest of it, plus the
 // two that need C13c's machinery.
 //
@@ -109,7 +109,7 @@ const taskNotifications = (msgs: unknown[]): { tool_use_id?: string; status?: st
     return mm.type === "system" && mm.subtype === "task_notification";
   }) as { tool_use_id?: string; status?: string; summary?: string }[];
 
-// ---- the six that need no machinery -----------------------------------------
+// ---- the seven that need no machinery -----------------------------------------
 
 /**
  * THE MOAT SCENARIO (scout §4.5 #1). `run_in_background: true` is presented
@@ -460,10 +460,11 @@ const largeOutput: Scenario = {
 
 /**
  * The compound-safety chain (scout §4.5 #5), which C13b consumes: one command
- * carrying a pipe, a redirect, a subshell and TWO `cd`s, so `drn`'s aggregate,
- * `KTe`'s too-complex arms and the two live-but-dark `Fy` callers W6 left OPEN
- * — the multi-`cd` aggregator and the subcommand merge tie-break — are all on
- * the path at once.
+ * carrying a pipe, a redirect, a subshell and TWO `cd`s. It reaches `KTe`'s
+ * too-complex handling, but that earlier subshell refusal stops before `drn`;
+ * contrary to the original claim, this cassette reaches neither `Fy` caller.
+ * The separate `bash-dangerous-removal` scenario below reaches the multi-`cd`
+ * preservation edge. The occurrence-sensitive merge tie-break remains open.
  *
  * Everything it touches is created by the command itself, so the sandbox state
  * it leaves is a function of the command rather than of what a previous
@@ -535,6 +536,150 @@ const compoundSafety: Scenario = {
  * ordinary command in a subdirectory, the scenario removes that directory
  * between turns, and the second command meets a cwd that is gone.
  */
+const DANGEROUS_REMOVAL_CD_A = "__c13b_missing_a__";
+const DANGEROUS_REMOVAL_TARGET = "__c13b_missing_target__";
+const DANGEROUS_REMOVAL_CD_B = "__c13b_missing_b__";
+const DANGEROUS_REMOVAL_PATHS = [
+  DANGEROUS_REMOVAL_CD_A,
+  DANGEROUS_REMOVAL_TARGET,
+  DANGEROUS_REMOVAL_CD_B,
+] as const;
+const DANGEROUS_REMOVAL_COMMAND =
+  `cd ${DANGEROUS_REMOVAL_CD_A} && rm -rf ${DANGEROUS_REMOVAL_TARGET}/* | cd ${DANGEROUS_REMOVAL_CD_B}`;
+const GENERIC_MULTI_CD_REASON =
+  "Multiple directory changes in one command require approval for clarity";
+
+/**
+ * The aggregate `drn` / `Fy` preservation edge the older compound cassette
+ * never reached. All three path names are fixed, relative, and absent below the
+ * canonical sandbox. The missing first `cd` short-circuits the entire pipeline;
+ * independently, the host broker always denies the Bash call. The removal
+ * target is never created by the scenario.
+ *
+ * The substance is the broker-visible reason. The real dangerous-removal
+ * decision names the static removal target; an `Fy`-blind aggregate falls back
+ * to the generic multi-cd refusal. Those disjoint strings make this recording a
+ * semantic oracle rather than merely another denied `rm` transcript.
+ */
+const dangerousRemoval: Scenario = {
+  tag: "bash-dangerous-removal",
+  title:
+    "a denied multi-cd removal preserves the bypass-immune dangerous-removal reason",
+  detachedChildren: [],
+  run: async (ctx) => {
+    for (const name of DANGEROUS_REMOVAL_PATHS) {
+      if (existsSync(join(SANDBOX, name))) {
+        throw new Error(
+          `ABORT: ${name} exists in the canonical sandbox; the dangerous-removal scenario requires all fixed paths to be absent`,
+        );
+      }
+    }
+    ctx.collect("dangerous-removal-paths-before", {
+      names: [...DANGEROUS_REMOVAL_PATHS],
+      allAbsent: true,
+    });
+    const messages = await drive(
+      `Use the Bash tool exactly once to run exactly this command, as a single call, and do not use any other tool:
+` +
+        `${DANGEROUS_REMOVAL_COMMAND}
+` +
+        "If the tool is denied, do not retry and do not try another approach; reply with exactly DENIED.",
+      {
+        ...baseOptions(ctx),
+        maxTurns: 4,
+        permissionMode: "default",
+        // Do not add allowedTools: a Bash allow entry would bypass canUseTool
+        // and erase the decision reason this scenario exists to observe.
+        canUseTool: async (
+          toolName: string,
+          input: Record<string, unknown>,
+          opts: Record<string, unknown>,
+        ) => {
+          ctx.collect("dangerous-removal-consult", {
+            toolName,
+            command: input.command ?? null,
+            decisionReason: opts.decisionReason ?? null,
+            suggestions: Array.isArray(opts.suggestions)
+              ? opts.suggestions.length
+              : 0,
+          });
+          return {
+            behavior: "deny" as const,
+            message: "reforge: refused by the harness broker",
+          };
+        },
+      },
+    );
+    ctx.collect("dangerous-removal-paths-after", {
+      names: [...DANGEROUS_REMOVAL_PATHS],
+      allAbsent: DANGEROUS_REMOVAL_PATHS.every(
+        (name) => !existsSync(join(SANDBOX, name)),
+      ),
+    });
+    return messages;
+  },
+  check: (msgs, events) => {
+    const before = events.find(
+      (event) =>
+        (event as { event?: string }).event ===
+        "dangerous-removal-paths-before",
+    ) as { payload?: { allAbsent?: unknown } } | undefined;
+    if (before?.payload?.allAbsent !== true) {
+      return "the three fixed relative paths were not all proven absent before the run";
+    }
+    const uses = toolUses(msgs, "Bash");
+    if (uses.length !== 1) {
+      return `expected exactly one Bash tool use, saw ${uses.length}`;
+    }
+    const command = String(uses[0].input?.command ?? "");
+    if (command !== DANGEROUS_REMOVAL_COMMAND) {
+      return `the model changed the fixed dangerous-removal command: ${JSON.stringify(command)}`;
+    }
+    const consult = events.find(
+      (event) =>
+        (event as { event?: string }).event === "dangerous-removal-consult",
+    ) as {
+      payload?: {
+        toolName?: unknown;
+        command?: unknown;
+        decisionReason?: unknown;
+      };
+    } | undefined;
+    if (consult?.payload?.toolName !== "Bash") {
+      return "the Bash request never reached the denying host broker";
+    }
+    if (consult.payload.command !== DANGEROUS_REMOVAL_COMMAND) {
+      return `the broker saw a different command: ${JSON.stringify(consult.payload.command)}`;
+    }
+    const reason = String(consult.payload.decisionReason ?? "");
+    if (
+      !reason.includes("Dangerous rm operation") ||
+      !reason.includes(DANGEROUS_REMOVAL_TARGET)
+    ) {
+      return `the broker-visible reason does not preserve dangerousRemoval: ${JSON.stringify(reason)}`;
+    }
+    if (reason.includes(GENERIC_MULTI_CD_REASON)) {
+      return `the dangerousRemoval reason was replaced by the generic multi-cd refusal: ${JSON.stringify(reason)}`;
+    }
+    const after = events.find(
+      (event) =>
+        (event as { event?: string }).event ===
+        "dangerous-removal-paths-after",
+    ) as { payload?: { allAbsent?: unknown } } | undefined;
+    if (after?.payload?.allAbsent !== true) {
+      return "one of the fixed paths exists after the denied call";
+    }
+    if (
+      DANGEROUS_REMOVAL_PATHS.some((name) =>
+        existsSync(join(SANDBOX, name)),
+      )
+    ) {
+      return "the canonical sandbox contains a fixed dangerous-removal path after the run";
+    }
+    return null;
+  },
+};
+
 const DOOMED = "doomed";
 
 const prespawnError: Scenario = {
@@ -592,6 +737,7 @@ export const W10_SCENARIOS: Scenario[] = [
   timeoutBackground,
   largeOutput,
   compoundSafety,
+  dangerousRemoval,
   prespawnError,
 ];
 

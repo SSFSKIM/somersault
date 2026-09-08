@@ -2,14 +2,21 @@
 //
 //   npx tsx strangle/bash-compound-safety-parity.test.ts
 //
-// Seven engine-chunk declarations (three runtime roots plus four folds) are
-// found from graph-unique prose and evaluated from Claude Code 2.1.251's own
+// The aggregate roots, child decision roots, and production folds are
+// found from stable anchors and evaluated from Claude Code 2.1.251's own
 // bytes; cross-chunk bQn is anchored and graded separately. Unanchorable helpers
 // are reached from those bodies' captured identifiers; no minified name is an
 // owned interface. Full decisions preserve Map insertion order.
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
-import { basename, join } from "node:path";
+import {
+  basename,
+  isAbsolute,
+  join,
+  normalize,
+  resolve,
+  sep,
+} from "node:path";
 import ts from "typescript";
 import { BUNDLE_MODULES, ENGINE_VERSION } from "../src/pin.js";
 import { PARTITIONS } from "./parser-corpus.js";
@@ -27,6 +34,7 @@ import {
 } from "./bash-compound-safety-corpus.js";
 import { createCommandClassifier } from "./modules/command-classifier/reference.js";
 import { resolveAnchor } from "./anchor.js";
+import { BASH_DECISION_ROOTS } from "./bash-compound-safety-capture-specs.js";
 import { assertSignature, chunkAst, selectExcision, type Excision } from "./ast.js";
 import {
   PARSE_ABORTED,
@@ -39,6 +47,7 @@ import { permissionMessage } from "./modules/shared/permission-message.js";
 import { findSafetyCheckReason } from "./modules/shared/safety-check-reason.js";
 import {
   aggregateSubcommandPermissions,
+  checkBashDangerousRemoval,
   checkBashPermission,
   checkBashPermissionCore,
   permissionCheckFailureDecision,
@@ -192,6 +201,162 @@ function initializerSource(name: string): string {
   throw new Error(`derived helper constant '${name}' has no initializer`);
 }
 
+function functionBody(node: ts.Node): ts.Block {
+  if (ts.isFunctionDeclaration(node) && node.body) return node.body;
+  if (
+    (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) &&
+    ts.isBlock(node.body)
+  ) {
+    return node.body;
+  }
+  throw new Error(`expected a block-bodied function, got ${ts.SyntaxKind[node.kind]}`);
+}
+
+function canonicalBody(
+  statements: readonly ts.Statement[],
+  source: ts.SourceFile,
+): string {
+  const factory = ts.factory;
+  const ensureBlock = (statement: ts.Statement): ts.Block =>
+    ts.isBlock(statement) ? statement : factory.createBlock([statement], true);
+  const braceLoops: ts.TransformerFactory<ts.Node> = (context) => {
+    const visit: ts.Visitor = (node) => {
+      const visited = ts.visitEachChild(node, visit, context);
+      if (ts.isForStatement(visited)) {
+        return factory.updateForStatement(
+          visited,
+          visited.initializer,
+          visited.condition,
+          visited.incrementor,
+          ensureBlock(visited.statement),
+        );
+      }
+      if (ts.isForInStatement(visited)) {
+        return factory.updateForInStatement(
+          visited,
+          visited.initializer,
+          visited.expression,
+          ensureBlock(visited.statement),
+        );
+      }
+      if (ts.isForOfStatement(visited)) {
+        return factory.updateForOfStatement(
+          visited,
+          visited.awaitModifier,
+          visited.initializer,
+          visited.expression,
+          ensureBlock(visited.statement),
+        );
+      }
+      if (ts.isWhileStatement(visited)) {
+        return factory.updateWhileStatement(
+          visited,
+          visited.expression,
+          ensureBlock(visited.statement),
+        );
+      }
+      if (ts.isDoStatement(visited)) {
+        return factory.updateDoStatement(
+          visited,
+          ensureBlock(visited.statement),
+          visited.expression,
+        );
+      }
+      return visited;
+    };
+    return (node) => ts.visitNode(node, visit) as ts.Node;
+  };
+  const wrapper = factory.createFunctionDeclaration(
+    undefined,
+    undefined,
+    "canonical",
+    undefined,
+    [],
+    undefined,
+    factory.createBlock([...statements], true),
+  );
+  const transformed = ts.transform(wrapper, [braceLoops]).transformed[0];
+  const shape = (node: ts.Node): unknown => {
+    let value: string | undefined;
+    if (ts.isIdentifier(node) || ts.isPrivateIdentifier(node)) {
+      value = node.text;
+    } else if (
+      ts.isStringLiteral(node) ||
+      ts.isNoSubstitutionTemplateLiteral(node) ||
+      ts.isNumericLiteral(node) ||
+      ts.isBigIntLiteral(node) ||
+      ts.isRegularExpressionLiteral(node) ||
+      ts.isTemplateHead(node) ||
+      ts.isTemplateMiddle(node) ||
+      ts.isTemplateTail(node)
+    ) {
+      value = node.text;
+    }
+    const children: unknown[] = [];
+    ts.forEachChild(node, (child) => {
+      children.push(shape(child));
+    });
+    return value === undefined
+      ? [node.kind, children]
+      : [node.kind, value, children];
+  };
+  return JSON.stringify(shape(transformed));
+}
+
+const ownedAggregatePath = new URL(
+  "./modules/bash-compound-safety/reference.js",
+  import.meta.url,
+);
+const ownedAggregateSource = readFileSync(ownedAggregatePath, "utf8");
+const ownedAggregateAst = chunkAst(
+  ownedAggregatePath.pathname,
+  ownedAggregateSource,
+);
+for (const root of Object.values(BASH_DECISION_ROOTS)) {
+  const resolved = resolveAnchor(
+    MODULES,
+    { name: root.name, anchor: root.anchor },
+    basename,
+  );
+  const pinnedAst = chunkAst(resolved.path, resolved.source);
+  const signature = {
+    params: root.params,
+    ancestry: ["SourceFile"],
+    ...(root.target === "arrow-initializer"
+      ? { declarator: root.binding === "j8e" ? 1 : 0 }
+      : {}),
+  };
+  const cut = selectExcision(
+    root.name,
+    pinnedAst,
+    resolved.offsets,
+    root.target,
+    signature,
+  );
+  assertSignature(root.name, cut, signature);
+  const owned = ownedAggregateAst.statements.find(
+    (statement) =>
+      ts.isFunctionDeclaration(statement) &&
+      statement.name?.text === root.adapter,
+  );
+  if (!owned || !ts.isFunctionDeclaration(owned) || !owned.body) {
+    throw new Error(`owned decision root '${root.adapter}' is missing`);
+  }
+  const pinned = functionBody(cut.node);
+  const preludeStatements = root.binding === "j8e" ? 3 : 1;
+  const pinnedCanonical = canonicalBody(pinned.statements, pinnedAst);
+  const ownedCanonical = canonicalBody(
+    owned.body.statements.slice(preludeStatements),
+    ownedAggregateAst,
+  );
+  eq(`${root.name} owned body matches pinned AST`, ownedCanonical, pinnedCanonical);
+  mustDiffer(
+    `${root.name} body comparator rejects a dropped-node mutant`,
+    pinnedCanonical,
+    pinnedCanonical.slice(0, -1),
+  );
+}
+
 function evaluateFunction(
   source: string,
   label: string,
@@ -199,9 +364,34 @@ function evaluateFunction(
 ): AnyFn {
   const names = Object.keys(bindings);
   // The input is the local checksum-pinned extraction, as in the existing
-  // reforge differential contracts.
+  // reforge differential contracts. Lower syntax only: Node 22 cannot parse
+  // the pinned helper's `using` declaration inside Function(), while the
+  // TypeScript runner can lower that declaration without changing its body.
+  let executable = source;
+  if (/\b(?:await\s+)?using\s/.test(source)) {
+    const lowered = ts.transpileModule(source, {
+      compilerOptions: {
+        module: ts.ModuleKind.ESNext,
+        target: ts.ScriptTarget.ES2022,
+      },
+      reportDiagnostics: true,
+    });
+    const errors = (lowered.diagnostics ?? []).filter(
+      ({ category }) => category === ts.DiagnosticCategory.Error,
+    );
+    if (errors.length > 0) {
+      throw new Error(
+        `${label}: pinned declaration syntax lowering failed: ${errors
+          .map((diagnostic) =>
+            ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"),
+          )
+          .join("; ")}`,
+      );
+    }
+    executable = lowered.outputText;
+  }
   // eslint-disable-next-line no-new-func
-  return Function(...names, `${source}\nreturn ${label};`)(
+  return Function(...names, `${executable}\nreturn ${label};`)(
     ...names.map((name) => bindings[name]),
   ) as AnyFn;
 }
@@ -243,6 +433,41 @@ function evaluateScoped(
 
 const targetText = (name: TargetName): string => cuts.get(name)!.cut.original;
 const targetLabel = (name: TargetName): string => cuts.get(name)!.cut.label;
+
+const displaySpanName = mustMatch(
+  targetText("checkBashPermission"),
+  /the span \$\{([A-Za-z_$][\w$]*)\([A-Za-z_$][\w$]*\.span\)\} matches none/,
+  1,
+  "root display-span helper",
+);
+const displaySpanPath = [...MODULES.keys()].find(
+  (path) => basename(path) === "chunk-ynzt0fm1.js",
+);
+if (!displaySpanPath) throw new Error("JSON serialization helper chunk is missing");
+const displaySpanSourceFile = chunkAst(
+  displaySpanPath,
+  MODULES.get(displaySpanPath)!,
+);
+let displaySpanSource: string | undefined;
+for (const statement of displaySpanSourceFile.statements) {
+  if (
+    ts.isFunctionDeclaration(statement) &&
+    statement.name?.text === displaySpanName
+  ) {
+    displaySpanSource = statement.getText(displaySpanSourceFile);
+    break;
+  }
+}
+if (!displaySpanSource) {
+  throw new Error(`derived display-span helper '${displaySpanName}' is missing`);
+}
+const pinnedDisplaySpan = evaluateFunction(
+  displaySpanSource,
+  displaySpanName,
+  {
+    Jd: () => ({ [Symbol.dispose]() {} }),
+  },
+);
 
 // Direct captures from the anchored callers, then the argv/peeler pair reached
 // through the aggregate's derived command-hazard helper.
@@ -412,6 +637,20 @@ function shellMessage(tool: string, reason: unknown): string {
   );
 }
 
+function clampMismatchMessage(
+  command: string,
+  group: readonly string[],
+  span = command.trim(),
+): string {
+  return (
+    `Permission to use Bash with command ${command.trim()} has been denied: ` +
+    "this agent's Bash use is clamped to a fixed set of command forms " +
+    "(per-spawn bashCommandClamp), and " +
+    `the span ${JSON.stringify(span)} matches none of them. ` +
+    `Allowed forms: ${group.join(", ")}`
+  );
+}
+
 function bypassImmuneSafety(reason: { circuitBreaker?: string }): boolean {
   return (
     reason.circuitBreaker === "dangerousRemoval" ||
@@ -503,7 +742,10 @@ function buildUpstreamAggregate(
   });
 }
 
-function buildUpstreamParsed(side: Side): AnyFn {
+function buildUpstreamParsed(
+  side: Side,
+  findSafety: AnyFn = findSafetyCheckReason,
+): AnyFn {
   const source = targetText("checkParsedPipeSafety");
   const message = mustMatch(
     source,
@@ -535,11 +777,14 @@ function buildUpstreamParsed(side: Side): AnyFn {
     [tool]: { name: "Bash" },
     [strip]: async (command: string) =>
       splitOutputRedirections(command).commandWithoutRedirections,
-    [aggregate]: buildUpstreamAggregate(side),
+    [aggregate]: buildUpstreamAggregate(side, findSafety),
   });
 }
 
-function buildUpstreamPipe(side: Side): AnyFn {
+function buildUpstreamPipe(
+  side: Side,
+  findSafety: AnyFn = findSafetyCheckReason,
+): AnyFn {
   const source = targetText("checkPipeSafety");
   const sentinel = mustMatch(
     source,
@@ -569,7 +814,7 @@ function buildUpstreamPipe(side: Side): AnyFn {
     [sentinel]: PARSE_ABORTED,
     [fromRoot]: createCommandAnalysis,
     [parser]: { parse: async (command: string) => createCommandAnalysis(command) },
-    [parsed]: buildUpstreamParsed(side),
+    [parsed]: buildUpstreamParsed(side, findSafety),
   });
 }
 
@@ -1016,6 +1261,124 @@ eq("drn Fy-blind mutant outcome", drnFyBlindMutant, {
   message: "Multiple directory changes in one command require approval for clarity",
 });
 mustDiffer("drn multi-cd Fy-blind mutant", upstreamMultiCd, drnFyBlindMutant);
+// A strings-only production-shape candidate reaches the same drn/Fy edge
+// through the real parser and every preceding compound check. The first `cd`
+// would short-circuit the shell command if it were ever executed, but this
+// contract never spawns it: the names are inert parser input only.
+const inertFyCommand =
+  "cd __c13b_missing_a__ && rm -rf __c13b_missing_target__/* | " +
+  "cd __c13b_missing_b__";
+const inertFyRoot = getParser().parse(inertFyCommand);
+const inertFyAnalysis = createCommandAnalysis(inertFyCommand, inertFyRoot);
+if (!inertFyRoot || !inertFyAnalysis) {
+  throw new Error("inert drn/Fy parser fixture did not produce an analysis");
+}
+eq("inert drn/Fy parser root", (inertFyRoot as any).type, "program");
+eq("inert drn/Fy pipe structure", inertFyAnalysis.getPipeSegments(), [
+  "cd __c13b_missing_a__ && rm -rf __c13b_missing_target__/*",
+  "cd __c13b_missing_b__",
+]);
+const pinnedDangerousRemovalDecision = evaluateScoped(
+  functionSource("Bw"),
+  "Bw",
+  {},
+);
+const dangerousRemovalPorts = {
+  pL: {
+    rm: (args: string[]) => args.filter((argument) => !argument.startsWith("-")),
+  },
+  Qo: (_filesystem: unknown, path: string) => ({ resolvedPath: path }),
+  le: () => ({}),
+  te: (values: string[]) => [...new Set(values)],
+  TT: () => [],
+  Rm: (path: string) => path,
+  uL: isAbsolute,
+  r8e: resolve,
+  Enn: normalize,
+  Bw: pinnedDangerousRemovalDecision,
+  Cnn: sep,
+  kze: () => false,
+  Qa: () => false,
+  Bn: () => false,
+  pwe: () => false,
+  nf: () => false,
+  Q: (values: unknown[], accept: (value: unknown) => boolean) =>
+    values.filter(accept).length,
+};
+const dangerousRemovalArgs = ["-rf", "__c13b_missing_target__/*"];
+const pinnedInertRemoval = evaluateScoped(
+  functionSource("dL"),
+  "dL",
+  dangerousRemovalPorts,
+)("rm", dangerousRemovalArgs, EFFECT_STATE.cwd, { mode: "default" }, true);
+const ownedInertRemoval = checkBashDangerousRemoval(
+  "rm",
+  dangerousRemovalArgs,
+  EFFECT_STATE.cwd,
+  { mode: "default" },
+  true,
+  {
+    pathArgumentExtractors: dangerousRemovalPorts.pL,
+    resolvePathPolicy: dangerousRemovalPorts.Qo,
+    filesystem: dangerousRemovalPorts.le,
+    uniqueValues: dangerousRemovalPorts.te,
+    allowedDirectories: dangerousRemovalPorts.TT,
+    expandHomePath: dangerousRemovalPorts.Rm,
+    isAbsolutePath: dangerousRemovalPorts.uL,
+    resolvePath: dangerousRemovalPorts.r8e,
+    normalizePath: dangerousRemovalPorts.Enn,
+    dangerousRemovalDecision: dangerousRemovalPorts.Bw,
+    pathSeparator: dangerousRemovalPorts.Cnn,
+    hasUnsafeGlobRoot: dangerousRemovalPorts.kze,
+    hasUnknownTrackedValue: dangerousRemovalPorts.Qa,
+    hasBlockedPathShape: dangerousRemovalPorts.Bn,
+    isCriticalPath: dangerousRemovalPorts.pwe,
+    pathContains: dangerousRemovalPorts.nf,
+    countMatching: dangerousRemovalPorts.Q,
+  },
+);
+eq("inert relative-glob dL full decision", ownedInertRemoval, pinnedInertRemoval);
+eq(
+  "inert relative-glob dL emits dangerousRemoval",
+  ownedInertRemoval.decisionReason?.circuitBreaker,
+  "dangerousRemoval",
+);
+let inertPermissionCalls = 0;
+const inertSafetyDecision = ownedInertRemoval;
+const inertFyPlan: SidePlan = {
+  decide(command) {
+    inertPermissionCalls++;
+    return command.includes("rm -rf ")
+      ? inertSafetyDecision
+      : { behavior: "allow", updatedInput: { command } };
+  },
+};
+const inertFyDecision = await comparePipe(
+  "inert production-shape drn/Fy",
+  inertFyCommand,
+  inertFyPlan,
+  { root: inertFyRoot, analyses: inertFyAnalysis },
+);
+eq("inert drn/Fy passes preceding checks to both pipe segments", inertPermissionCalls, 4);
+eq("inert drn/Fy preserves model-visible dangerous-removal reason", inertFyDecision, inertSafetyDecision);
+const inertBlindSide = makeSide({
+  decide(command) {
+    return command.includes("rm -rf ")
+      ? inertSafetyDecision
+      : { behavior: "allow", updatedInput: { command } };
+  },
+});
+const inertFyBlind = await buildUpstreamPipe(inertBlindSide, () => undefined)(
+  { command: inertFyCommand, description: "case:inert drn/Fy blind" },
+  inertBlindSide.checkPermission,
+  classifiers,
+  inertFyRoot,
+  inertFyAnalysis,
+  inertBlindSide.isCdGitSequenceSafe,
+);
+eq("inert drn/Fy blinded decision", inertFyBlind, drnFyBlindMutant);
+mustDiffer("inert drn/Fy versus blinded edge", inertFyDecision, inertFyBlind);
+
 const ordinaryCd = await comparePipe(
   "two-cd negative: ordinary asks",
   sharedPipeCase("two-cd-ordinary").command,
@@ -2164,7 +2527,7 @@ function pinnedTooComplexDecision(
     Prn: pinnedClamp,
     s: () => undefined,
     yi: { name: "Bash" },
-    b: (span: string) => `\`${span}\``,
+    b: pinnedDisplaySpan,
     QNe: "bashCommandClamp: no clamp rule matches this command",
     jrn: unreachable("clamp mismatch core"),
   })(fixture.input, {}, undefined);
@@ -2824,6 +3187,9 @@ function pinnedTooComplexDecision(
       | typeof SAFETY_REGRESSION_CASES.clampWildcard
       | typeof SAFETY_REGRESSION_CASES.clampPrefixThroughXargs
       | typeof SAFETY_REGRESSION_CASES.clampStarOnly
+      | typeof SAFETY_REGRESSION_CASES.clampDisplayDoubleQuote
+      | typeof SAFETY_REGRESSION_CASES.clampDisplayBackslash
+      | typeof SAFETY_REGRESSION_CASES.clampDisplayControlCharacters
       | typeof SAFETY_REGRESSION_CASES.clampEscapedLiteral
       | typeof SAFETY_REGRESSION_CASES.clampNestedRedirectAssignment,
   ) => {
@@ -2852,7 +3218,7 @@ function pinnedTooComplexDecision(
         Prn: pinnedClamp,
         s: () => undefined,
         yi: { name: "Bash" },
-        b: (span: string) => `\`${span}\``,
+        b: pinnedDisplaySpan,
         QNe: "bashCommandClamp: no clamp rule matches this command",
         jrn: async () => allowed,
         D8e: (decision: unknown) => decision,
@@ -2904,9 +3270,30 @@ function pinnedTooComplexDecision(
   );
   eq("review Bash star-only full decision", star.owned, star.upstream);
   eq("review Bash star-only denied", star.owned.behavior, "deny");
+  const simpleMessage = clampMismatchMessage(
+    SAFETY_REGRESSION_CASES.clampStarOnly.input.command,
+    SAFETY_REGRESSION_CASES.clampStarOnly.permissionContext.bashCommandClamps[0],
+  );
+  eq("review simple span pinned full denial message", star.upstream.message, simpleMessage);
+  eq("review simple span owned full denial message", star.owned.message, simpleMessage);
   mustDiffer("Prn Bash-star parser versus match-all mutant", star.owned, {
     behavior: "allow",
   });
+
+  for (const [tag, fixture] of [
+    ["double quote", SAFETY_REGRESSION_CASES.clampDisplayDoubleQuote],
+    ["backslash", SAFETY_REGRESSION_CASES.clampDisplayBackslash],
+    ["control characters", SAFETY_REGRESSION_CASES.clampDisplayControlCharacters],
+  ] as const) {
+    const result = await runClampAdmission(fixture);
+    const message = clampMismatchMessage(
+      fixture.input.command,
+      fixture.permissionContext.bashCommandClamps[0],
+    );
+    eq(`review ${tag} span full decision`, result.owned, result.upstream);
+    eq(`review ${tag} span pinned full denial message`, result.upstream.message, message);
+    eq(`review ${tag} span owned full denial message`, result.owned.message, message);
+  }
 
   const escaped = await runClampAdmission(
     SAFETY_REGRESSION_CASES.clampEscapedLiteral,
@@ -3214,8 +3601,8 @@ function pinnedTooComplexDecision(
 if (checks < 64) {
   failures.push(`NON-VACUOUS FLOOR: expected at least 64 checks, ran ${checks}`);
 }
-if (controls !== 31) {
-  failures.push(`CONTROL FLOOR: expected 31 named controls, ran ${controls}`);
+if (controls !== 57) {
+  failures.push(`CONTROL FLOOR: expected 57 named controls, ran ${controls}`);
 }
 
 if (failures.length > 0) {
