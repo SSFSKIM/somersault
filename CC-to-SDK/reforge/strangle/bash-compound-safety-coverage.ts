@@ -21,7 +21,15 @@ import {
   ROOT_CASES,
   SAFETY_REGRESSION_CASES,
   SEMANTIC_RECORDS,
+  type ScheduledDecisionTrace,
+  createAggregateClassifierPorts,
+  createCoreEffectPorts,
+  createScheduledDecisionPort,
 } from "./bash-compound-safety-corpus.js";
+import {
+  commandArgv as uninstrumentedCommandArgv,
+  peelCommandPrefixes as uninstrumentedPeelCommandPrefixes,
+} from "./modules/bash-compound-safety/reference.js";
 import { branchSites, instrumentSource } from "./branches.js";
 import {
   COVERAGE_DIR,
@@ -102,21 +110,22 @@ for (const { command, context } of MODE_CASES) {
 }
 
 function pureClassifiers() {
-  return {
-    isNormalizedCdCommand(command: string) {
-      const name = mod.peelCommandPrefixes(
-        mod.commandArgv(mod.normalizeCommandPrefix(command)),
-      )[0]?.replace(/^.*[\\/]/, "");
-      return ["cd", "chdir", "pushd", "popd"].includes(name ?? "");
-    },
-    isNormalizedGitCommand(command: string) {
-      return (
-        mod.peelCommandPrefixes(
-          mod.commandArgv(mod.normalizeCommandPrefix(command)),
-        )[0]?.replace(/^.*[\\/]/, "") === "git"
-      );
-    },
-  };
+  return createAggregateClassifierPorts({
+    commandArgv: uninstrumentedCommandArgv,
+    peelCommandPrefixes: uninstrumentedPeelCommandPrefixes,
+  });
+}
+
+function assertDecisionTrace(
+  label: string,
+  actual: readonly unknown[],
+  expected: readonly unknown[],
+): void {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(
+      `${label} schedule drifted: ${JSON.stringify(actual)} != ${JSON.stringify(expected)}`,
+    );
+  }
 }
 
 const harmlessEffects = {
@@ -215,52 +224,6 @@ function contextFor(permissionContext: Record<string, unknown>) {
   };
 }
 
-function coreEffects(
-  permissionContext: Record<string, unknown>,
-  overrides: Record<string, unknown> = {},
-) {
-  return {
-    readPermissionContext: () => permissionContext,
-    replaceSessionEnvironmentKeys: () => undefined,
-    emitTelemetry: () => undefined,
-    isSubprocessEnvironmentScrubbingEnabled: () =>
-      EFFECT_STATE.subprocessEnvironmentScrubbing,
-    currentWorkingDirectory: () => EFFECT_STATE.cwd,
-    platform: () => EFFECT_STATE.platform,
-    homeDirectory: () => EFFECT_STATE.homeDirectory,
-    spawnEnvironmentKeys: () => new Set<string>(),
-    matchRules: () => ({ deny: [], ask: [], allow: [] }),
-    validatePath: () => ({ behavior: "allow" }),
-    isSandboxingEnabled: () => EFFECT_STATE.sandboxingEnabled,
-    isAutoAllowBashIfSandboxedEnabled: () =>
-      EFFECT_STATE.autoAllowBashIfSandboxed,
-    isSandboxEligible: () => EFFECT_STATE.sandboxEligible,
-    isRestrictedContext: () => EFFECT_STATE.restricted,
-    hasUnsafeGitStructureFromAnalysis: () => false,
-    hasUnsafeGitStructureFromCommand: () => false,
-    isCdGitSequenceSafe: async () => false,
-    isCdGitAstSequenceSafe: async () => false,
-    checkTooComplexSafety: async () => null,
-    checkTooComplexSandbox: () => null,
-    checkInvalidSemanticsRules: () => null,
-    checkSandboxAutoAllow: () => null,
-    checkExactPermission: () => ({ behavior: "passthrough", message: "base" }),
-    checkPathSafety: () => ({ behavior: "passthrough", message: "path" }),
-    checkDirectCommand: () => ({ behavior: "passthrough", message: "direct" }),
-    checkSubcommandPermission: async () => ({
-      behavior: "passthrough",
-      message: "final",
-    }),
-    allowedDirectories: () => [],
-    resolvePathPolicy: (_filesystem: unknown, path: string) => ({
-      resolvedPath: path,
-    }),
-    filesystem: () => ({}),
-    resolveLeadingDirectoryChange: () => null,
-    decorateDecision: (decision: unknown) => decision,
-    ...overrides,
-  };
-}
 
 const duplicate = AGGREGATE_CASES.duplicateCore;
 const duplicateAnalyses = [0, 1].map(() => ({
@@ -271,20 +234,28 @@ const duplicateAnalyses = [0, 1].map(() => ({
   hasUnquotedGlob: false,
 }));
 let removalAt = 0;
+const duplicateDecisionTrace: ScheduledDecisionTrace[] = [];
+const duplicateEffectTrace: string[] = [];
 await mod.checkBashPermissionCore(
   duplicate.input,
   contextFor(EFFECT_STATE.permissionContext),
   undefined,
   {
-    effects: coreEffects(
+    effects: createCoreEffectPorts(
       EFFECT_STATE.permissionContext,
       {
         checkDangerousRemoval: () => ({ behavior: "passthrough" }),
+        checkPathSafety: createScheduledDecisionPort(
+          duplicateDecisionTrace,
+          "checkPathSafety",
+          duplicate.invocation.pathDecision,
+        ),
         checkDirectCommand: () =>
           DUPLICATE_REMOVAL_SCHEDULE[removalAt++],
         checkSubcommandPermission: async () =>
           DUPLICATE_REMOVAL_SCHEDULE[removalAt++ + 2],
       },
+      duplicateEffectTrace,
     ),
     classifyCommand: () => ({
       kind: "simple",
@@ -296,6 +267,16 @@ await mod.checkBashPermissionCore(
     isNormalizedGitCommand: () => false,
     permissionSuggestions: () => [],
   },
+);
+assertDecisionTrace(
+  "duplicate-core",
+  duplicateDecisionTrace,
+  duplicate.invocation.expectedDecisionTrace,
+);
+assertDecisionTrace(
+  "duplicate-core effects",
+  duplicateEffectTrace,
+  duplicate.invocation.expectedEffectTrace,
 );
 
 const reviewed = SAFETY_REGRESSION_CASES;
@@ -314,7 +295,7 @@ for (const fixture of [
     contextFor(fixture.permissionContext),
     undefined,
     {
-      effects: coreEffects(fixture.permissionContext, {
+      effects: createCoreEffectPorts(fixture.permissionContext, {
         checkDirectCommand: (input: unknown) => ({
           behavior: "allow",
           updatedInput: input,
@@ -350,7 +331,7 @@ for (const fixture of [
     },
     undefined,
     {
-      effects: coreEffects(fixture.permissionContext, {
+      effects: createCoreEffectPorts(fixture.permissionContext, {
         checkTooComplexSafety: async () => null,
         isSandboxingEnabled: () => fixture !== reviewed.asyncTooComplexSafety,
         isAutoAllowBashIfSandboxedEnabled: () =>
@@ -371,7 +352,7 @@ await mod.checkBashPermission(
   reviewed.clampQuotedWhitespace.input,
   contextFor(reviewed.clampQuotedWhitespace.permissionContext),
   undefined,
-  { effects: coreEffects(reviewed.clampQuotedWhitespace.permissionContext) },
+  { effects: createCoreEffectPorts(reviewed.clampQuotedWhitespace.permissionContext) },
 );
 
 for (const fixture of [
@@ -412,7 +393,7 @@ await mod.checkBashPermissionCore(
   contextFor(reviewed.multiCdDangerousRemoval.permissionContext),
   undefined,
   {
-    effects: coreEffects(reviewed.multiCdDangerousRemoval.permissionContext, {
+    effects: createCoreEffectPorts(reviewed.multiCdDangerousRemoval.permissionContext, {
       checkDangerousRemoval: (command: string) =>
         command === "rm"
           ? {
@@ -446,7 +427,7 @@ for (const fixture of [
     contextFor(fixture.permissionContext),
     undefined,
     {
-      effects: coreEffects(fixture.permissionContext, {
+      effects: createCoreEffectPorts(fixture.permissionContext, {
         checkDangerousRemoval: () => ({ behavior: "passthrough" }),
       }),
       classifyCommand: () => ({
@@ -466,7 +447,7 @@ await mod.checkBashPermissionCore(
   contextFor(reviewed.nestedRuleSuggestions.permissionContext),
   undefined,
   {
-    effects: coreEffects(reviewed.nestedRuleSuggestions.permissionContext, {
+    effects: createCoreEffectPorts(reviewed.nestedRuleSuggestions.permissionContext, {
       checkDirectCommand: () => ({ behavior: "passthrough", message: "preliminary" }),
       checkPathSafety: () => ({ behavior: "passthrough", message: "path" }),
       checkSubcommandPermission: ({ command }: { command: string }) => ({
@@ -492,21 +473,31 @@ await mod.checkBashPermissionCore(
 const reviewedCdAnalyses = reviewed.resolvedLeadingCd.subcommands.map(
   (text) => ({ text, argv: text.split(" "), envVars: [], redirects: [] }),
 );
+const resolvedCdDecisionTrace: any[] = [];
+const resolvedCdEffectTrace: string[] = [];
 await mod.checkBashPermissionCore(
   reviewed.resolvedLeadingCd.input,
   contextFor(reviewed.resolvedLeadingCd.permissionContext),
   undefined,
   {
-    effects: coreEffects(reviewed.resolvedLeadingCd.permissionContext, {
+    effects: createCoreEffectPorts(reviewed.resolvedLeadingCd.permissionContext, {
       currentWorkingDirectory: () => reviewed.resolvedLeadingCd.cwd,
       resolveLeadingDirectoryChange: () => reviewed.resolvedLeadingCd.resolvedCwd,
-      checkDirectCommand: () => ({ behavior: "passthrough" }),
-      checkPathSafety: () => ({ behavior: "passthrough" }),
+      checkDirectCommand: createScheduledDecisionPort(
+        resolvedCdDecisionTrace,
+        "checkDirectCommand",
+        reviewed.resolvedLeadingCd.invocation.directDecision,
+      ),
+      checkPathSafety: createScheduledDecisionPort(
+        resolvedCdDecisionTrace,
+        "checkPathSafety",
+        reviewed.resolvedLeadingCd.invocation.pathDecision,
+      ),
       checkSubcommandPermission: (input: Record<string, unknown>) => ({
         behavior: "allow",
         updatedInput: input,
       }),
-    }),
+    }, resolvedCdEffectTrace),
     classifyCommand: () => ({
       kind: "simple",
       commands: reviewedCdAnalyses,
@@ -514,6 +505,16 @@ await mod.checkBashPermissionCore(
     }),
     classifyReadOnly: () => ({ behavior: "passthrough" }),
   },
+);
+assertDecisionTrace(
+  "resolved-leading-cd",
+  resolvedCdDecisionTrace,
+  reviewed.resolvedLeadingCd.invocation.expectedDecisionTrace,
+);
+assertDecisionTrace(
+  "resolved-leading-cd effects",
+  resolvedCdEffectTrace,
+  reviewed.resolvedLeadingCd.invocation.expectedEffectTrace,
 );
 
 // Replay the same explicit effect states as the final suggestion/abort/cwd contracts.
@@ -523,7 +524,7 @@ for (const behavior of reviewed.emptyRuleSuggestions.decisionBehaviors) {
     text, argv: text.split(" "), envVars: [], redirects: [],
   }));
   await mod.checkBashPermissionCore(fixture.input, contextFor(fixture.permissionContext), undefined, {
-    effects: coreEffects(fixture.permissionContext, {
+    effects: createCoreEffectPorts(fixture.permissionContext, {
       checkDirectCommand: () => ({ behavior: "passthrough", message: "preliminary" }),
       checkSubcommandPermission: async () => ({
         behavior, message: "controlled final decision", suggestions: fixture.suggestions,
@@ -539,7 +540,7 @@ for (const behavior of reviewed.emptyRuleSuggestions.decisionBehaviors) {
   }));
   let index = 0;
   await mod.checkBashPermissionCore(fixture.input, contextFor(fixture.permissionContext), undefined, {
-    effects: coreEffects(fixture.permissionContext, {
+    effects: createCoreEffectPorts(fixture.permissionContext, {
       checkDirectCommand: () => ({ behavior: "passthrough", message: "preliminary" }),
       checkSubcommandPermission: async () => ({
         behavior: "passthrough", message: "controlled final decision",
@@ -563,7 +564,7 @@ for (const behavior of reviewed.emptyRuleSuggestions.decisionBehaviors) {
     await mod.checkBashPermissionCore(fixture.input, context,
       async () => { context.abortController.signal.aborted = true; return null; },
       {
-        effects: coreEffects(fixture.permissionContext),
+        effects: createCoreEffectPorts(fixture.permissionContext),
         classifyCommand: () => ({ kind: "simple", commands: analyses, bareAssignmentNames: [] }),
       },
     );
@@ -581,7 +582,7 @@ for (const behavior of reviewed.emptyRuleSuggestions.decisionBehaviors) {
     text, argv: ["custom", "alpha"], envVars: [], redirects: [],
   }));
   await mod.checkBashPermissionCore(fixture.input, contextFor(fixture.permissionContext), undefined, {
-    effects: coreEffects(fixture.permissionContext, {
+    effects: createCoreEffectPorts(fixture.permissionContext, {
       checkDirectCommand: () => ({ behavior: "passthrough", message: "preliminary" }),
       checkSubcommandPermission: async () => ({
         behavior: "ask", message: "controlled final decision", suggestions: [],
@@ -596,7 +597,7 @@ for (const behavior of reviewed.emptyRuleSuggestions.decisionBehaviors) {
     text, argv: text.split(" "), envVars: [], redirects: [],
   }));
   await mod.checkBashPermissionCore(fixture.input, contextFor(fixture.permissionContext), undefined, {
-    effects: coreEffects(fixture.permissionContext, {
+    effects: createCoreEffectPorts(fixture.permissionContext, {
       currentWorkingDirectory: () => fixture.cwd,
       platform: () => fixture.platform,
       checkDirectCommand: () => ({ behavior: "passthrough", message: "direct" }),
@@ -633,7 +634,7 @@ for (const behavior of reviewed.emptyRuleSuggestions.decisionBehaviors) {
     contextFor(fixture.permissionContext),
     undefined,
     {
-      effects: coreEffects(fixture.permissionContext, {
+      effects: createCoreEffectPorts(fixture.permissionContext, {
         currentWorkingDirectory: () => fixture.cwd,
         checkPathSafety: () => ({ behavior: "passthrough", message: "path" }),
         isCdGitSequenceSafe: async (_commands: readonly string[], cwd: string) => cwd === fixture.cwd,
@@ -664,7 +665,7 @@ await mod.checkBashPermission(
   contextFor(background.permissionContext),
   undefined,
   {
-    effects: coreEffects(background.permissionContext),
+    effects: createCoreEffectPorts(background.permissionContext),
     checkCore: async (input: unknown) => ({
       behavior: "allow",
       updatedInput: input,
@@ -802,7 +803,7 @@ console.log(
 );
 
 console.log(
-  `shared inputs: ${HELPER_CASES.split.length + HELPER_CASES.argv.length + HELPER_CASES.normalize.length + HELPER_CASES.peel.length} helper, ${SEMANTIC_RECORDS.length} named semantics, ${PIPE_CASES.length} pipe, ${AGGREGATE_CASES.preValidator.length} pre-validator aggregate, ${MODE_CASES.length} mode, ${Object.keys(SAFETY_REGRESSION_CASES).length} security-regression, ${PARTITIONS.reduce((sum, partition) => sum + partition.cases.length, 0)} parser-partition`,
+  `shared inputs: ${HELPER_CASES.split.length + HELPER_CASES.argv.length + HELPER_CASES.normalize.length + HELPER_CASES.peel.length} helper, ${SEMANTIC_RECORDS.length} named semantics, ${PIPE_CASES.length} pipe, ${AGGREGATE_CASES.preValidator.length} pre-validator aggregate, ${MODE_CASES.length} mode, ${Object.keys(SAFETY_REGRESSION_CASES).length} declared security-regression records (26 distinct records / 27 qualified calls), ${PARTITIONS.reduce((sum, partition) => sum + partition.cases.length, 0)} parser-partition`,
 );
 for (const [reason, outcomes] of groups) {
   console.log(`\n${reason} (${outcomes.length})`);

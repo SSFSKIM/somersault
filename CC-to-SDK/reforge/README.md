@@ -621,8 +621,8 @@ was already green.
 
 A splice's row now declares every value the excised body took from its enclosing
 scope, each with a §2.4 class saying what an adapter may do with it:
-`primitive` (own it and equality-assert the graph's), `pure-helper` (own it and
-use ours in both wirings), `effectful-port` (an explicitly typed delegation
+`primitive` (own it, normally equality-asserting the graph's), `pure-helper`
+(own it and use ours in both wirings), `effectful-port` (an explicitly typed delegation
 argument and a ledger edge to the wave that will own its far side).
 
 Classification and wiring are separate facts. Most rows still wire every capture
@@ -1166,12 +1166,13 @@ difference is the whole value of the primitive class:
 - **`pure-helper` → owned and NOT forwarded.** The module ships the implementation and uses it in
   both wirings; the graph's function is never called and never identity-compared. The build still
   derives and footprints the graph's binding, so §5 can stale the row when upstream moves it.
-- **`primitive` → owned AND still forwarded, on purpose.** The module uses its own copy; the
-  graph's copy crosses only so the adapter can equality-assert it, on every single delegation. That
-  is not ceremony. A constant whose *value* changes while its name stays put moves no anchor and no
-  target-span hash — the assertion is the cheapest thing that can see it, and it costs a comparison.
+- **`primitive` → owned and normally still forwarded.** The module uses its own copy; the graph's
+  copy crosses only so the adapter can equality-assert it. A constant whose *value* changes while its
+  name stays put moves no anchor and no target-span hash, so this assertion detects otherwise silent
+  drift. An identity-bearing primitive supplied by an owned whole chunk instead carries `owned: true`:
+  consumers reuse that owned producer without forwarding and self-asserting its replaced graph export.
 
-So `owned: true` marks pure helpers only. The Write and Edit formatters share **one** owned constant
+So `owned: true` marks non-forwarded pure helpers and exceptional primitives. The Write and Edit formatters share **one** owned constant
 (`strangle/modules/shared/file-state.js`), asserted from both adapters — the coordination point the
 W2 scout named, closed before it could become two independently transcribed strings.
 
@@ -5513,20 +5514,23 @@ parser's: reversing a one-element child array is a no-op, and the corruption had
 deepest node rather than to one that could carry it. It now searches for a node that can, and reports
 a partition where none exists as vacuous.
 
-### The finding: the corpus observes this module through exactly one door
+### The finding, corrected after C13b internalized the call edges
 
-Every export was sabotaged with a twin built to invert the one thing it means, and every twin was
-driven over **all sixteen** corpus scenarios that carry a Bash `tool_use` — read off the recorded
-cassettes rather than off the scenario prompts.
+At C13a landing, every export was sabotaged over all sixteen recorded Bash scenarios and
+`parseOrAbort` alone reddened five. That measurement was true for the then-current graph, but C13b
+later replaced the permission and read-only callers and imported the same owned parser reference
+inside their modules. The retained graph `pEe` export no longer lies on those paths.
 
-**One export reddens.** `parseOrAbort`, twinned to abort on every command, turns `dde` → `KTe`'s
-`if (t === PARSE_ABORTED)` into a `too-complex` verdict with `reason: "Parser aborted (timeout,
-resource limit, or over-length)"`, and five of the sixteen carry it into the transcript:
-`perm-rule-deny`, `perm-accept-edits`, `perm-bypass-deny-rule`, `perm-broker-updates`,
-`hooks-permission`. Two are listed as coverage, because the gate requires EVERY covering tag to
-redden and each extra one buys a second replay of the same mechanism.
+The 2026-09-09 remeasurement uses the current graph. `parseOrAbort`'s every-command-aborts twin stays
+GREEN over rule, hook, execution, compound, and classifier scenarios. `parseAborted`'s second-symbol
+twin stays GREEN over `bash-tool` and `perm-rule-deny` after the adapters stopped forwarding and
+asserting the owned chunk's own sentinel. The earlier RED for that twin was the named adapter
+stale-value assertion, not an aborted parse. A metadata-level manifest guard now refuses a primitive
+or pure helper forwarded under the same semantic alias as an owned-chunk export; it does not infer
+binding identity from derivation paths.
 
-**The other six move nothing**, and not because the twins are weak: `getParser` returns a handle whose
+**All seven retained graph exports are now measured dark**, and not because their twins are weak:
+`getParser` returns a handle whose
 `parse` answers `null` for every input, and `findCommandNode` answers `null` for every tree, which is
 as destructive as a shape-preserving twin can be. The reason is what the corpus contains. Its Bash
 commands are `echo REFORGE_TOOL_OK`, `chmod 600 perm.txt`, `mkdir -p …`, `cd moved`, `pwd`, `sleep 3`
@@ -6583,6 +6587,30 @@ dependencies: the `node:os` `homedir` state read and pinned pure table `St` from
 structurally asserted, and consumers then receive the owned value. Sets and RegExps are compared by
 structure rather than reference identity; callable slots are graded against pinned declaration bytes.
 
+### Post-gate qualification and liveness correction
+
+The parent-owned gate over `143adee` completed **212 PASS / 3 FAIL**; its faithful equivalence and
+coverage attestation phases passed, but three liveness rows exposed stale boundaries. The archived
+run is `build/gate-20260908-2327.log` with raw stream
+`build/c13b-gate-143adee-20260908-232729.log`. `command-classifier` and
+`shell-parser:parseOrAbort` stayed GREEN because C13b now owns their permission/read-only call sites
+and imports the same owned references internally. `shell-parser:parseAborted` went RED only because
+three adapters asserted the owned sentinel against its own chunk export.
+
+The correction owns the sentinel at all three adapter captures, removes the self-assertions, and
+adds a 141-check manifest guard against forwarding a primitive or pure helper under the same semantic
+alias as an owned-chunk export.
+Focused sabotage remeasurement leaves `command-classifier` GREEN over four named scenarios,
+`parseOrAbort` GREEN over five, and `parseAborted` GREEN over two; the manifest rows now carry those
+current dark populations and pinned parity remains their behavioral oracle.
+
+Contract attribution also now shares the complete retained invocation configuration. Parity and
+coverage consume one uninstrumented argv/peel classifier factory with no normalization dependency,
+one complete core-effect factory, the same duplicate and resolved-leading-`cd` responses, and exact
+ordered effect traces. Controls prove that adding normalization, changing a response message, or
+reordering ports is detected. The honestly remeasured aggregate total remains unchanged; equality of
+the number is a result, not an assumption.
+
 ### Focused evidence
 
 All long output is preserved under `build/`. Parity ran before aggregate coverage, because coverage
@@ -6590,28 +6618,30 @@ regenerates instrumented module state.
 
 | surface | measured result | durable log |
 |---|---|---|
-| C13a parser seam, rechecked | 8,171 checks over 2,191 command strings | `build/c13b-final-parser.log` |
-| command classifier | 6,613 differential checks | `build/c13b-final-classifier.log` |
+| C13a parser seam, rechecked | 8,171 checks over 2,191 command strings | `build/c13b-fix-round3-parser-parity.log` |
+| command classifier | 6,613 differential checks | `build/c13b-fix-round3-classifier-parity.log` |
 | read-only classifier | 2,522 differentials: 220 focused commands, 2,191 parser-domain strings, and 90 sed commands | `build/c13b-final-read-only.log` |
 | asserted tables | 1,286 checks / 95 controls; 1,263 callback comparisons / 83 callable slots; 46 adapter checks | `build/c13b-final-tables.log` |
-| aggregate, child-root, and owned-helper parity | **1,007 checks / 62 named controls** | `build/c13b-fix-round2-helper-oracle-final.log` |
-| root capture derivation | **329 perturbation checks** over the three aggregate and 25 child inventories | `build/c13b-fix-round2-captures-final.log` |
-| aggregate and child adapters | **262 checks**, including all nineteen pinned pure-helper sites, ten direct `node:path` function sites, the asserted separator, both effectful `qN` sites, exact port ordering, namespace partitioning, and sabotage result shapes | `build/c13b-fix-round2-adapters-final.log` |
-| qualified aggregate contract coverage | **1,083 / 3,276 outcomes across 1,693 generated branch sites** | `build/c13b-fix-round2-qualified-coverage-final.log` |
-| splice mechanism | **138 checks**, including same-module `owned-binding` enforcement | `build/c13b-fix-owned-binding-mechanism.log` |
-| manifest derivation | **1,532 checks / 140 capture inventories / 18 chunk fixtures** | `build/c13b-fix-round2-manifest-perturbation.log` |
-| exact population | 35 roots, eleven tables, and all 370 declarations partitioned once; `Nnn`, `$nn`, and `yQn` are owned closure | `build/c13b-fix-round2-population-check.log` |
+| aggregate, child-root, and owned-helper parity | **1,018 checks / 66 named controls** | `build/c13b-fix-round3-bash-parity.log` |
+| root capture derivation | **329 perturbation checks** over the three aggregate and 25 child inventories | `build/c13b-fix-round3-bash-captures.log` |
+| aggregate and child adapters | **262 checks**, including owned sentinel binding, all nineteen pinned pure-helper sites, ten direct `node:path` function sites, the asserted separator, both effectful `qN` sites, exact port ordering, namespace partitioning, and sabotage result shapes | `build/c13b-fix-round3-bash-adapters.log` |
+| qualified aggregate contract coverage | **1,083 / 3,276 outcomes across 1,693 generated branch sites** | `build/c13b-fix-round3-contract-qualification-coverage-green.log` |
+| splice mechanism | **141 checks**, including same-module `owned-binding` enforcement and refusal of graph-forwarded pure/primitive exports from owned chunks | `build/c13b-fix-round3-mechanism.log` |
+| manifest derivation | **1,532 checks / 140 capture inventories / 18 chunk fixtures** | `build/c13b-fix-round3-manifest-perturbation.log` |
+| exact population | 35 roots, eleven tables, and all 370 declarations partitioned once; `Nnn`, `$nn`, and `yQn` are owned closure | `build/c13b-fix-round3-population-check.log` |
 | engine-ts seam | skeleton, static reachability, and reachability negative controls green | `build/c13b-fix-final-skeleton.log`, `build/c13b-fix-final-reachability.log`, `build/c13b-fix-final-reachability-controls.log` |
-| closure ledger | **42 Bash footprints / 315 captures**; checker, controls, and backfill idempotence green after capture-kind regeneration | `build/c13b-fix-round2-ledger-check.log`, `build/c13b-fix-round2-ledger-controls.log`, `build/c13b-fix-round2-ledger-idempotence.log` |
-| focused replay | the unchanged compound cassette and existing dangerous-removal cassette are green on the faithful strangled graph | `build/c13b-fix-round2-faithful-replay-compound.log`, `build/c13b-fix-round2-faithful-replay-dangerous-removal.log` |
+| closure ledger | **42 Bash footprints / 315 captures**; checker, controls, and backfill idempotence green after sentinel ownership regeneration | `build/c13b-fix-round3-ledger-check.log`, `build/c13b-fix-round3-ledger-controls.log`, `build/c13b-fix-round3-ledger-idempotence.log` |
+| focused replay | the unchanged compound cassette and existing dangerous-removal cassette are green on the final faithful strangled graph | `build/c13b-fix-round3-faithful-replays.log` |
 | child-root liveness | **16 live / 9 reviewed dark**, each measured with a clean-start result-shape-preserving twin over its named cassette population; the consolidated manifest explicitly supersedes the stale leading-directory batch rows | `build/c13b-fix-round2-liveness-supersession.json` |
-| coverage attestation | **92 modules / 6,290 sites / 12,231 outcomes**: **2,079 corpus**, **6,376 contract**, **3,776 reviewed exclusions**, zero unadjudicated | `build/c13b-fix-round2-attestation-check.log` |
+| corrected classifier/parser export liveness | `command-classifier` dark over four scenarios, `parseOrAbort` dark over five, and `parseAborted` honestly dark over two after removing the self-asserting capture | `build/c13b-fix-round3-liveness-diagnosis.log`, `build/c13b-fix-round3-liveness-dark-remeasure.log` |
+| coverage attestation | **92 modules / 6,290 sites / 12,231 outcomes**: **2,079 corpus**, **6,376 contract**, **3,776 reviewed exclusions**, zero unadjudicated | `build/c13b-fix-round3-attestation-check.log` |
 
 The aggregate driver uses only invocations whose complete target, input, effect schedule, and
 configuration are independently compared by parity. Private aggregate cases and schedule-mismatched
-calls were removed rather than preserved for a larger number. Its shared partitions remain 71 helper
-cases, 15 semantic records, 29 pipe cases, two pre-validator aggregates, four mode cases, 30 security
-regressions, and 2,191 parser cases. Of the unobserved outcomes, twelve are identified separately as
+calls were removed rather than preserved for a larger number. The shared corpus declares 71 helper
+cases, 15 semantic records, 29 pipe cases, two pre-validator aggregates, four mode cases, 30 security-
+regression records, and 2,191 parser cases. The qualified aggregate driver invokes 26 distinct security-
+regression records across 27 calls. Of the unobserved outcomes, twelve are identified separately as
 **four producer invariants, three control-flow impossibilities, three caller-outside-domain cases, and
 two resource-sensitive cases**; the remaining 1,902 open-input, 276 validator-domain, and three port-
 state outcomes are explicit gaps rather than borrowed execution.
@@ -6620,7 +6650,7 @@ Contract attribution is driver-specific. An outcome earns contract credit only w
 recorded while that driver's suite runs, belongs to the driver's declared module, and exists in the
 current branch inventory. The final run accepted 2,957 parser, 1,064 classifier, 471 Bash-table,
 1,108 read-only, and 776 aggregate outcomes. It ignored 4,042 read-only-driver dependency outcomes
-and 3,962 aggregate-driver dependency outcomes instead of relabeling them as sibling-module proof.
+and 3,961 aggregate-driver dependency outcomes instead of relabeling them as sibling-module proof.
 Every accepted report row names the actual producing driver.
 
 ### The new `drn` / `Fy` recording
@@ -6655,8 +6685,8 @@ recorded. Direct pinned-byte cases continue to grade duplicate overwrite order, 
 
 ### Status left for the parent
 
-The expanded implementation, bounded correction round, focused replay, generated coverage report,
-ledger, and report freshness are complete. `strangle/attest.ts --check` reproduces the generated
-report, and a faithful build was restored afterward.
-The parent independent review and full strangler gate remain pending by request; nothing in this wave
-record claims final C13b or campaign closure.
+The expanded implementation, post-gate qualification/liveness correction, focused replay,
+generated coverage report, ledger, and report freshness are complete. `strangle/attest.ts --check`
+reproduces the generated report, and a faithful build was restored afterward. The parent review is
+complete. Its gate over `143adee` is preserved as 212 PASS / 3 FAIL and is not claimed as final
+evidence for this changed tree; the parent-owned rerun after these corrections remains pending. Nothing in this wave record claims final C13b or campaign closure.

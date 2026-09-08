@@ -30,10 +30,11 @@
 //
 // The capture taxonomy is a claim about what the ADAPTER may do with a value,
 // not a size class:
-//   `primitive`      strings/numbers/frozen config. The owned module should own
-//                    the value outright and the adapter equality-asserts the
-//                    graph's against it — every delegation becomes a free
-//                    micro-differential check.
+//   `primitive`      strings/numbers/frozen config and identity tokens. The
+//                    owned layer supplies the value. Normally the graph's copy
+//                    crosses only for an adapter assertion; `owned: true`
+//                    suppresses that crossing when no independent graph copy
+//                    exists, such as an identity token from an owned chunk.
 //   `pure-helper`    a side-effect-free function. The owned module ships its own
 //                    implementation and uses it in both wirings; the graph's
 //                    function is neither called nor identity-compared.
@@ -54,13 +55,12 @@
 //                    FOOTPRINTS the graph's binding — §5 still has to see it
 //                    move — but does not forward it. The graph's function is
 //                    never called.
-//   `primitive`      is still FORWARDED, deliberately. The module owns the value
-//                    and uses its own copy; the graph's copy crosses only so the
-//                    adapter can equality-assert it, which is what turns every
-//                    delegation into a free micro-differential check. A value
-//                    change that leaves the name alone moves no anchor and no
-//                    target hash, so this assertion is the only cheap thing that
-//                    can see it. `owned` therefore stays UNSET on a primitive.
+//   `primitive`      is normally FORWARDED for an equality assertion. This
+//                    catches a value change that moves no anchor or target hash.
+//                    An identity-bearing value exported by an owned whole chunk
+//                    instead carries `owned: true`: consumers reuse the owned
+//                    producer, and forwarding its replaced graph export would
+//                    only compare the value with itself.
 //   `effectful-port` is forwarded and stays a typed delegation argument.
 //   `owned-binding` is forwarded, and the build refuses it unless the same
 //                   graph module contains a registered splice for that binding.
@@ -82,9 +82,9 @@ export interface Capture {
   kind: CaptureClass;
   /**
    * Set on a `primitive`/`pure-helper` capture whose §2.4 retrofit has landed:
-   * the owned module implements it and uses that implementation in BOTH
-   * wirings, so the build derives and footprints the graph's binding (it is
-   * still part of the closure surface §5 has to watch) but does not forward it.
+   * the owned layer supplies it in BOTH wirings, so the build derives and
+   * footprints the graph's binding (it is still part of the closure surface §5
+   * has to watch) but does not forward it.
    */
   owned?: true;
   /**
@@ -415,11 +415,11 @@ const BASH_DECISION_LIVENESS: Record<
 
 export const SPLICES: Splice[] = [
   // ---- C13b / W10b: Bash command admission --------------------------------
-  // KTe is the shared parse-tree classifier. Its 86-declaration pure closure
-  // is owned inside command-classifier/reference.js; the one identity-bearing
-  // value still forwarded is C13a's PARSE_ABORTED symbol, asserted at the
-  // adapter. The subprocess-env scrub gate is pinned false by X6 in graph runs
-  // and both values remain contract-graded by classifier-parity.test.ts.
+  // KTe is the shared parse-tree classifier. Its 86-declaration pure closure,
+  // including C13a's identity-bearing PARSE_ABORTED symbol, is owned inside
+  // command-classifier/reference.js. The subprocess-env scrub gate is pinned
+  // false by X6 in graph runs and both values remain contract-graded by
+  // classifier-parity.test.ts.
   {
     name: "command-classifier",
     target: "free-function",
@@ -436,12 +436,20 @@ export const SPLICES: Splice[] = [
       { as: "zshNumericRangePattern", kind: "primitive", owned: true, derive: pick("command-classifier", "zshNumericRangePattern", new RegExp(`if\\((${ID})\\.test\\(${ID}\\)\\)return\\{kind:"too-complex",reason:"Contains zsh <N-M> numeric-range glob"`)) },
       { as: "braceWithQuotePattern", kind: "primitive", owned: true, derive: pick("command-classifier", "braceWithQuotePattern", new RegExp(`if\\((${ID})\\.test\\(${ID}\\(${ID}\\)\\)\\)return\\{kind:"too-complex",reason:"Contains brace with quote character`)) },
       { as: "stripEscapedSegments", kind: "pure-helper", owned: true, derive: pick("command-classifier", "stripEscapedSegments", new RegExp(`if\\(${ID}\\.test\\((${ID})\\(${ID}\\)\\)\\)return\\{kind:"too-complex",reason:"Contains brace with quote character`)) },
-      { as: "parseAborted", kind: "primitive", derive: pick("command-classifier", "parseAborted", new RegExp(`if\\(${ID}===(${ID})\\)return\\{kind:"too-complex",reason:"Parser aborted`)) },
+      { as: "parseAborted", kind: "primitive", owned: true, derive: pick("command-classifier", "parseAborted", new RegExp(`if\\(${ID}===(${ID})\\)return\\{kind:"too-complex",reason:"Parser aborted`)) },
       { as: "redirectError", kind: "pure-helper", owned: true, derive: pick("command-classifier", "redirectError", new RegExp(`\\{let ${ID}=(${ID})\\(${ID}\\);if\\(${ID}\\)return ${ID}\\}`)) },
       { as: "analyzeTree", kind: "pure-helper", owned: true, derive: pick("command-classifier", "analyzeTree", new RegExp(`let ${ID}=(${ID})\\(${ID}\\);if\\(${ID}\\.kind==="too-complex"`)) },
       { as: "containsExpansionError", kind: "pure-helper", owned: true, derive: pick("command-classifier", "containsExpansionError", new RegExp(`&&(${ID})\\(${ID}\\)\\)return\\{\\.\\.\\.${ID},nodeType:"ERROR"`)) },
     ],
-    coverage: ["perm-rule-deny"],
+    coverage: [],
+    darkOver: [
+      "perm-rule-deny",
+      "bash-tool",
+      "bash-compound-safety",
+      "perm-auto-classifier-deny",
+    ],
+    darkReason:
+      "the result-class-inverting twin stayed GREEN over four Bash admission/execution scenarios after C13b internalized the permission and read-only classifier call sites. Those owned modules import command-classifier/reference.js directly, so changing the retained graph KTe export no longer changes their decisions; the surviving graph KTe callers are not selected by this measured population. Exact classifier behavior remains graded by classifier-parity.test.ts against pinned bytes, including three semantic mutants.",
   },
   // `_8e` composes the owned parser, KTe and table population. Six values
   // remain effectful graph ports: the spawn-environment snapshot, git/cwd
@@ -6247,8 +6255,9 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
           "Graded instead by strangle/parser-parity.test.ts, which drives this entry point against the pinned chunk's own bytes over nine env-prefixed commands and the three length-cap boundary cases.",
       },
       {
-        // `var w3=Symbol("parse-aborted")` — the sentinel every consumer
-        // compares with `===`. Five references across three importers.
+        // `var w3=Symbol("parse-aborted")` — the retained graph sentinel.
+        // C13b-owned consumers now import their one owned instance directly;
+        // the two surviving graph comparisons remain abort-only.
         as: "parseAborted",
         kind: "primitive",
         owned: "PARSE_ABORTED",
@@ -6256,12 +6265,8 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
         declare: (name, owned) => `var ${name}=${owned};`,
         coverage: [],
         darkOver: ["bash-tool", "perm-rule-deny"],
-        darkReason: C13A_MEASURED +
-          "the sentinel is only ever COMPARED against, and only on the path where a parse gave up — over the 10,000-character cap, out of node budget, past the 50 ms deadline, or on a delimiter the parser refuses to guess about. " +
-          "The corpus's longest Bash command is 36 characters (`reforge-no-such-command-probe --fail`) and parses in microseconds, so no recorded scenario reaches an abort and a second symbol with the same description is unobservable. " +
-          "THE ADJUDICATION IS THE MEASUREMENT: a twin that mints its own `Symbol(\"parse-aborted\")` was built and driven over all sixteen, and nothing moved. " +
-          "Graded instead by strangle/parser-parity.test.ts, which drives all three of upstream's abort causes — over-length, a null parse and a thrown parse — and requires that each side answer with ITS OWN sentinel by identity, " +
-          "plus the telemetry each abort emits, field for field.",
+        darkReason:
+          "the second-symbol twin stayed GREEN over bash-tool and perm-rule-deny after C13b stopped forwarding the owned parser sentinel into its adapters. The two surviving graph comparisons can observe it only after a parse aborts; neither measured command approaches the length, node-budget, deadline, or refused-delimiter abort paths. The earlier RED was an adapter equality assertion against this owned chunk's own export, not semantic liveness; the owned-chunk capture guard now refuses that wiring. Graded instead by parser-parity.test.ts, which drives all three abort causes and requires each side's sentinel identity plus the complete telemetry trace.",
       },
       {
         // `async function pEe(e)` — parse or abort, and the chunk's ONE effectful
@@ -6276,28 +6281,20 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
         // same number of microtasks upstream's does.
         declare: (name, owned, port) => `function ${name}(command){return ${owned}(command,${port("parseAbortTelemetry")})}`,
         derive: pick("shell-parser", "parseOrAbort", new RegExp(`async function (${ID})\\(${ID}\\)\\{if\\(!${ID}\\)return null;if\\(${ID}\\.length>`)),
-        // THE ONE DOOR the corpus can see this module through, and the reason is
-        // legible in upstream's own code: `dde` awaits this function and hands the
-        // result to `KTe` (chunk-9e2ns8ty.js @112426), which tests it with
-        // `if (result === PARSE_ABORTED) return {kind:"too-complex", reason:"Parser
-        // aborted (timeout, resource limit, or over-length)", nodeType:"PARSE_ABORT"}`.
-        // That is the TENTH guard rather than the first — @113348, behind eight regex
-        // refusals (lone surrogate, control characters, Unicode whitespace,
-        // backslash-escaped whitespace, three zsh-only syntaxes, a brace carrying a
-        // quote) and an empty-command check, each of which returns a `too-complex`
-        // verdict of its own. So the twin's red is the sentinel's only for a command
-        // none of the nine refuse first, which every corpus command is. A twin that
-        // aborts on every command therefore rewrites the `decisionReason` every Bash
-        // permission decision carries.
-        //
-        // Measured: of the sixteen Bash-bearing scenarios, FIVE go red under that twin
-        // — `perm-rule-deny`, `perm-accept-edits`, `perm-bypass-deny-rule`,
-        // `perm-broker-updates`, `hooks-permission`. Two of the five are listed, not all
-        // five: the gate requires EVERY covering tag to redden, so each extra one buys a
-        // second replay of the same mechanism and nothing else. These two are the pair
-        // that differ in HOW the decision is reached — a settings rule and a permission
-        // hook — rather than in which command was run.
-        coverage: ["perm-rule-deny", "hooks-permission"],
+        // C13b internalized the permission and read-only call sites: they now
+        // import the same owned parser reference directly rather than calling
+        // this retained graph export. The surviving pEe callers are clamp and
+        // execution-time helpers outside the measured population below.
+        coverage: [],
+        darkOver: [
+          "perm-rule-deny",
+          "hooks-permission",
+          "bash-tool",
+          "bash-compound-safety",
+          "perm-auto-classifier-deny",
+        ],
+        darkReason:
+          "the every-command-aborts twin stayed GREEN over five Bash rule, hook, execution, compound, and classifier scenarios after C13b internalized the permission and read-only parseOrAbort call sites. Those owned modules import shell-parser/reference.js directly; the surviving graph pEe callers are not selected by this measured population. The implementation remains graded by parser-parity.test.ts against pinned bytes over normal parsing and all three abort causes, with exact sentinel identity and telemetry traces.",
       },
       {
         // `function wV(e,L)` — the walk from a program node to the command inside
@@ -6428,7 +6425,7 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
           "the abort sentinel, and the one construction here where IDENTITY is the whole semantics: it carries no data, it is never inspected, and every consumer does exactly one thing with it — `result === PARSE_ABORTED`. " +
           "A per-call `Symbol(\"parse-aborted\")` would have the same type and the same description and would answer false at every one of those five comparison sites, silently, in the direction where a parse the engine gave up on is treated as a parse tree. " +
           "The owned module constructs it once at module scope, which is where upstream's `var` puts it and where ESM's once-per-URL evaluation keeps it. " +
-          "Graded by strangle/parser-parity.test.ts, which requires each side's `parseOrAbort` to answer with ITS OWN sentinel by identity on all three abort causes, and by the `parseAborted` twin, which mints a second one.",
+          "Graded by strangle/parser-parity.test.ts, which requires each side's `parseOrAbort` to answer with ITS OWN sentinel by identity on all three abort causes. The second-symbol liveness twin separately confirms that no retained graph comparison is selected by its declared recorded population; it is not credited as identity-behavior proof.",
       },
     ],
   },
@@ -6462,15 +6459,55 @@ function sections(as: string, body: string): [string, string] {
  * The manifest's own integrity check, run at import so no consumer can read a
  * row that has not passed it.
  *
- * One rule today, and it is the splice counterpart of the guard `chunk.ts` has
- * carried for chunk exports since W2: a splice with no covering scenario must
- * carry a reviewed `darkReason`, and a splice that HAS covering scenarios must
- * not carry one. Both directions matter. Without the first, a row with an empty
- * coverage list reaches the gate's liveness loop and is reported as
- * unprovable — which is correct but late, and says nothing about whether anyone
- * looked. Without the second, a reason could sit beside a live coverage list and
- * quietly become the row's story after the scenarios that covered it were
- * renamed away.
+ * Refuse a primitive or pure helper that a splice forwards under the same
+ * semantic `as` alias as an export from an owned whole chunk. At this metadata
+ * layer the alias is the declared ownership link; this guard does not infer
+ * graph-binding identity from derivation paths. The current parser-sentinel rows
+ * use aligned aliases and are protected by this rule.
+ */
+export function ownedChunkCaptureViolations(
+  rows: readonly {
+    name: string;
+    captures: readonly {
+      as: string;
+      kind: CaptureClass;
+      owned?: true;
+    }[];
+  }[],
+  chunks: readonly {
+    name: string;
+    exports: readonly { as: string }[];
+  }[],
+): string[] {
+  const producers = new Map<string, string[]>();
+  for (const chunk of chunks) {
+    for (const exported of chunk.exports) {
+      const names = producers.get(exported.as) ?? [];
+      names.push(chunk.name);
+      producers.set(exported.as, names);
+    }
+  }
+  return rows.flatMap((row) =>
+    row.captures.flatMap((capture) => {
+      const ownedBy = producers.get(capture.as);
+      if (
+        !ownedBy ||
+        capture.owned === true ||
+        capture.kind === "effectful-port" ||
+        capture.kind === "owned-binding"
+      ) {
+        return [];
+      }
+      return [
+        `${row.name}.${capture.as}: forwards a ${capture.kind} exported by owned chunk ${ownedBy.join(", ")} — own the capture instead of asserting or calling the graph's copy`,
+      ];
+    }),
+  );
+}
+
+/**
+ * Require every splice and chunk export to choose either covering scenarios or
+ * reviewed darkness with a replayable measurement population, never both.
  */
 export function manifestViolations(rows: readonly Pick<Splice, "name" | "coverage" | "darkReason" | "darkOver">[]): string[] {
   const bad: string[] = [];
@@ -6502,9 +6539,12 @@ export function manifestViolations(rows: readonly Pick<Splice, "name" | "coverag
   // population a splice does. `chunk.ts` keeps its own build-time refusal for
   // the coverage/reason pair; this adds the `darkOver` half at import, where
   // every consumer of the manifest sees it.
-  const bad = manifestViolations([
-    ...SPLICES,
-    ...CHUNK_REPLACEMENTS.flatMap((cr) => cr.exports.map((e) => ({ name: `${cr.name}:${e.as}`, coverage: e.coverage, darkReason: e.darkReason, darkOver: e.darkOver }))),
-  ]);
+  const bad = [
+    ...manifestViolations([
+      ...SPLICES,
+      ...CHUNK_REPLACEMENTS.flatMap((cr) => cr.exports.map((e) => ({ name: `${cr.name}:${e.as}`, coverage: e.coverage, darkReason: e.darkReason, darkOver: e.darkOver }))),
+    ]),
+    ...ownedChunkCaptureViolations(SPLICES, CHUNK_REPLACEMENTS),
+  ];
   if (bad.length > 0) throw new Error(`manifest: ${bad.join("; ")}`);
 }

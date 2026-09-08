@@ -115,6 +115,113 @@ export type PlannedDecision = {
   updatedInput?: Record<string, unknown>;
 };
 
+export type ScheduledDecisionTrace = {
+  port: string;
+  behavior: PlannedDecision["behavior"];
+  message?: string;
+};
+
+/**
+ * The exact controlled classifier configuration shared by aggregate parity and
+ * contract coverage. Deliberately no normalization dependency: even when an
+ * assignment-prefixed result is equal, an extra helper call is a different
+ * configuration and the ordered-trace control must detect it.
+ */
+export function createAggregateClassifierPorts({
+  commandArgv,
+  peelCommandPrefixes,
+}: {
+  commandArgv(command: string): string[];
+  peelCommandPrefixes(argv: readonly string[]): string[];
+}) {
+  const commandName = (command: string) =>
+    peelCommandPrefixes(commandArgv(command))[0]?.replace(/^.*[\\/]/, "");
+  return {
+    isNormalizedCdCommand(command: string): boolean {
+      return ["cd", "chdir", "pushd", "popd"].includes(
+        commandName(command) ?? "",
+      );
+    },
+    isNormalizedGitCommand(command: string): boolean {
+      return commandName(command) === "git";
+    },
+  };
+}
+
+/** A fixed decision response whose invocation is recorded in source order. */
+export function createScheduledDecisionPort(
+  trace: ScheduledDecisionTrace[],
+  port: string,
+  decision: PlannedDecision,
+) {
+  return () => {
+    const response = structuredClone(decision);
+    trace.push({
+      port,
+      behavior: response.behavior,
+      ...(response.message === undefined ? {} : { message: response.message }),
+    });
+    return response;
+  };
+}
+
+export const DUPLICATE_CORE_INVOCATION = {
+  pathDecision: {
+    behavior: "passthrough",
+    message: "path pass",
+  } satisfies PlannedDecision,
+  expectedDecisionTrace: [
+    { port: "checkPathSafety", behavior: "passthrough", message: "path pass" },
+  ] satisfies ScheduledDecisionTrace[],
+  expectedEffectTrace: [
+    "readPermissionContext",
+    "replaceSessionEnvironmentKeys",
+    "checkSandboxAutoAllow",
+    "checkExactPermission",
+    "currentWorkingDirectory",
+    "platform",
+    "readPermissionContext",
+    "checkDirectCommand",
+    "checkDirectCommand",
+    "checkPathSafety",
+    "readPermissionContext",
+    "checkSubcommandPermission",
+    "checkSubcommandPermission",
+  ],
+} as const;
+
+export const RESOLVED_LEADING_CD_INVOCATION = {
+  directDecision: {
+    behavior: "passthrough",
+    message: "preliminary",
+  } satisfies PlannedDecision,
+  pathDecision: {
+    behavior: "passthrough",
+    message: "path",
+  } satisfies PlannedDecision,
+  expectedDecisionTrace: [
+    { port: "checkDirectCommand", behavior: "passthrough", message: "preliminary" },
+    { port: "checkDirectCommand", behavior: "passthrough", message: "preliminary" },
+    { port: "checkPathSafety", behavior: "passthrough", message: "path" },
+  ] satisfies ScheduledDecisionTrace[],
+  expectedEffectTrace: [
+    "readPermissionContext",
+    "replaceSessionEnvironmentKeys",
+    "checkSandboxAutoAllow",
+    "checkExactPermission",
+    "currentWorkingDirectory",
+    "platform",
+    "resolveLeadingDirectoryChange",
+    "readPermissionContext",
+    "checkDirectCommand",
+    "checkDirectCommand",
+    "checkPathSafety",
+    "readPermissionContext",
+    "checkSubcommandPermission",
+    "checkSubcommandPermission",
+  ],
+} as const;
+
 export const DANGEROUS_SAFETY_REASON = {
   type: "safetyCheck",
   reason: "dangerous removal",
@@ -133,8 +240,8 @@ export const DUPLICATE_REMOVAL_SCHEDULE: readonly PlannedDecision[] = [
     message: "pre two",
     decisionReason: { type: "other", reason: "pre two" },
   },
-  { behavior: "passthrough", message: "path pass" },
-  { behavior: "passthrough", message: "path pass" },
+  DUPLICATE_CORE_INVOCATION.pathDecision,
+  DUPLICATE_CORE_INVOCATION.pathDecision,
   {
     behavior: "ask",
     message: "ordinary duplicate",
@@ -337,6 +444,7 @@ export const AGGREGATE_CASES = {
   duplicateCore: {
     input: { command: "rm x; rm x" },
     subcommand: "rm x",
+    invocation: DUPLICATE_CORE_INVOCATION,
   },
   direct: {
     input: { command: "alpha | beta", description: "direct aggregate" },
@@ -372,6 +480,67 @@ export const EFFECT_STATE = {
   restricted: false,
   permissionContext: { mode: "default" },
 } as const;
+
+/** Complete controlled effect configuration for every shared Bash-root invocation. */
+export function createCoreEffectPorts(
+  permissionContext: Record<string, unknown>,
+  overrides: Record<string, unknown> = {},
+  effectTrace?: string[],
+): Record<string, unknown> {
+  const ports: Record<string, unknown> = {
+    readPermissionContext: () => permissionContext,
+    replaceSessionEnvironmentKeys: () => undefined,
+    emitTelemetry: () => undefined,
+    isSubprocessEnvironmentScrubbingEnabled: () =>
+      EFFECT_STATE.subprocessEnvironmentScrubbing,
+    currentWorkingDirectory: () => EFFECT_STATE.cwd,
+    platform: () => EFFECT_STATE.platform,
+    homeDirectory: () => EFFECT_STATE.homeDirectory,
+    spawnEnvironmentKeys: () => new Set<string>(),
+    matchRules: () => ({ deny: [], ask: [], allow: [] }),
+    validatePath: () => ({ behavior: "allow" }),
+    isSandboxingEnabled: () => EFFECT_STATE.sandboxingEnabled,
+    isAutoAllowBashIfSandboxedEnabled: () =>
+      EFFECT_STATE.autoAllowBashIfSandboxed,
+    isSandboxEligible: () => EFFECT_STATE.sandboxEligible,
+    isRestrictedContext: () => EFFECT_STATE.restricted,
+    hasUnsafeGitStructureFromAnalysis: () => false,
+    hasUnsafeGitStructureFromCommand: () => false,
+    isCdGitSequenceSafe: async () => false,
+    isCdGitAstSequenceSafe: async () => false,
+    checkTooComplexSafety: async () => null,
+    checkTooComplexSandbox: () => null,
+    checkInvalidSemanticsRules: () => null,
+    checkSandboxAutoAllow: () => null,
+    checkExactPermission: () => ({ behavior: "passthrough", message: "base" }),
+    checkPathSafety: () => ({ behavior: "passthrough", message: "path" }),
+    checkDirectCommand: () => ({ behavior: "passthrough", message: "direct" }),
+    checkSubcommandPermission: async () => ({
+      behavior: "passthrough",
+      message: "final",
+    }),
+    allowedDirectories: () => [],
+    resolvePathPolicy: (_filesystem: unknown, path: string) => ({
+      resolvedPath: path,
+    }),
+    filesystem: () => ({}),
+    resolveLeadingDirectoryChange: () => null,
+    decorateDecision: (decision: unknown) => decision,
+    ...overrides,
+  };
+  if (!effectTrace) return ports;
+  return Object.fromEntries(
+    Object.entries(ports).map(([name, value]) => [
+      name,
+      typeof value === "function"
+        ? (...args: unknown[]) => {
+            effectTrace.push(name);
+            return value(...args);
+          }
+        : value,
+    ]),
+  );
+}
 
 export const ROOT_CASES = {
   clampedOverLength: {
@@ -583,6 +752,7 @@ export const SAFETY_REGRESSION_CASES = {
     cwd: "/pinned/cwd",
     resolvedCwd: "/pinned/cwd/sub",
     permissionContext: { mode: "default" },
+    invocation: RESOLVED_LEADING_CD_INVOCATION,
   },
   classifierPrefix: {
     input: { command: "npm test -- --watch" },

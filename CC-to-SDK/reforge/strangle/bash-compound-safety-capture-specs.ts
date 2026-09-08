@@ -165,7 +165,8 @@ const CAPTURE_METADATA = {
     },
     {
       "as": "parseAborted",
-      "kind": "primitive"
+      "kind": "primitive",
+      "owned": true
     },
     {
       "as": "hasUnsafeBackgroundOperator",
@@ -629,6 +630,7 @@ export const BASH_DECISION_ROOTS = {
       {
         as: "parseAborted",
         kind: "primitive",
+        owned: true,
         derive: deriveDecisionCapture("checkBashTooComplexRules", "free-function", 7, "w3"),
       },
       {

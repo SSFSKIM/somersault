@@ -8,7 +8,10 @@
 // before the named assertion fires.
 import { sep as pathSeparator } from "node:path";
 import { PARSE_ABORTED } from "./modules/shell-parser/reference.js";
-import { BASH_DECISION_ROOTS } from "./bash-compound-safety-capture-specs.js";
+import {
+  BASH_DECISION_ROOTS,
+  COPY_READY_BASH_SAFETY_CAPTURES,
+} from "./bash-compound-safety-capture-specs.js";
 import {
   BASH_DECISION_SABOTAGE_SHAPES,
   DECISION_ROOT_SPECS,
@@ -68,7 +71,6 @@ const entryPorts = {
   checkCore: unique("entry.checkCore"),
   decorateDecision: unique("entry.decorateDecision"),
   sandboxAutoAllowReason: "Auto-allowed with sandbox (autoAllowBashIfSandboxed enabled)",
-  parseAborted: PARSE_ABORTED,
 };
 const entryArgs = [
   input,
@@ -81,7 +83,6 @@ const entryArgs = [
   entryPorts.checkCore,
   entryPorts.decorateDecision,
   entryPorts.sandboxAutoAllowReason,
-  entryPorts.parseAborted,
 ];
 
 const corePorts = {
@@ -308,7 +309,6 @@ async function stale(
 await stale("entry bashTool", adapters.checkOwnedBashPermission, entryArgs, 5, { name: "Shell" }, "bashTool");
 await stale("entry clampRejectionReason", adapters.checkOwnedBashPermission, entryArgs, 6, "changed clamp reason", "clampRejectionReason");
 await stale("entry sandboxAutoAllowReason", adapters.checkOwnedBashPermission, entryArgs, 9, "changed sandbox reason", "sandboxAutoAllowReason");
-await stale("entry parseAborted", adapters.checkOwnedBashPermission, entryArgs, 10, Symbol("changed"), "parseAborted");
 await stale("core bashTool", adapters.checkOwnedBashPermissionCore, coreArgs, 8, { name: "Shell" }, "bashTool");
 await stale("core pathSeparator", adapters.checkOwnedBashPermissionCore, coreArgs, 20, pathSeparator === "/" ? "\\" : "/", "pathSeparator");
 await stale("core suggestionLimit", adapters.checkOwnedBashPermissionCore, coreArgs, 28, 6, "suggestionLimit");
@@ -434,6 +434,9 @@ for (const root of decisionRoots) {
     `${root.name}: owned helpers replace graph decision closure`,
     expectedOwned.every((name) => {
       ownedHelperSites.push(name);
+      if (Object.hasOwn(decisionPrimitiveValues, name)) {
+        return ports[name] === decisionPrimitiveValues[name];
+      }
       return name === "isUncPath"
         ? typeof ports[name] === "function"
         : ports[name] === decisionHelperValues[name];
@@ -497,7 +500,7 @@ for (const root of decisionRoots) {
 }
 check(
   "every decision primitive capture site has a perturbation control",
-  primitiveSites.length === 23 &&
+  primitiveSites.length === 22 &&
     primitiveSites.every((name) => declaredPrimitiveNames.has(name)),
   `${primitiveSites.length} controlled site(s)`,
 );
@@ -539,6 +542,19 @@ check(
     `${platformReads} platform read(s)`,
   );
 }
+
+check(
+  "entry parseAborted is owned rather than graph-forwarded",
+  (COPY_READY_BASH_SAFETY_CAPTURES as any).checkBashPermission.find(
+    (capture: any) => capture.as === "parseAborted",
+  )?.owned === true,
+);
+check(
+  "too-complex parseAborted is owned rather than graph-forwarded",
+  (BASH_DECISION_ROOTS as any).checkBashTooComplexRules.captures.find(
+    (capture: any) => capture.as === "parseAborted",
+  )?.owned === true,
+);
 
 const helperSites = decisionRoots.flatMap((root) =>
   root.captures.map((capture) => ({ root: root.name, ...capture })),

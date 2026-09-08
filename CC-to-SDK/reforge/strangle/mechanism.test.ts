@@ -55,7 +55,10 @@
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { resolveAnchor } from "./anchor.js";
-import { manifestViolations } from "./manifest.js";
+import {
+  manifestViolations,
+  ownedChunkCaptureViolations,
+} from "./manifest.js";
 import { classifyReplay, darkVerdict } from "./runners.js";
 import { assertSignature, chunkAst, excise, formatSignature, gradeDeclaratorValue, literalStringValue, selectExcision } from "./ast.js";
 import { spliceFootprint } from "./footprint.js";
@@ -805,6 +808,30 @@ function footprintOf(owner: string, helper: string) {
       new Set(["/graph/chunk-b.js\0child"]),
       captures,
     ).length === 1,
+  );
+}
+
+// ---- owned chunk exports cannot be asserted against themselves -----------
+{
+  const chunks = [{ name: "owned-source", exports: [{ as: "sentinel" }] }];
+  const row = (kind: "primitive" | "pure-helper" | "effectful-port", owned?: true) => ({
+    name: `consumer-${kind}`,
+    captures: [{ as: "sentinel", kind, ...(owned ? { owned } : {}) }],
+  });
+  check(
+    "a forwarded primitive exported by an owned chunk is refused",
+    ownedChunkCaptureViolations([row("primitive")], chunks).length === 1,
+  );
+  check(
+    "a forwarded pure helper exported by an owned chunk is refused",
+    ownedChunkCaptureViolations([row("pure-helper")], chunks).length === 1,
+  );
+  check(
+    "an owned capture and a genuine effectful chunk port remain valid",
+    ownedChunkCaptureViolations(
+      [row("primitive", true), row("effectful-port")],
+      chunks,
+    ).length === 0,
   );
 }
 

@@ -333,20 +333,28 @@ export const OWNED_DECISION_HELPERS = {
 const OWNED_DECISION_HELPER_NAMES = new Set(
   Object.keys(OWNED_DECISION_HELPERS),
 );
+const OWNED_DECISION_PRIMITIVE_NAMES = new Set(["parseAborted"]);
 for (const spec of Object.values(DECISION_ROOT_SPECS)) {
   const allCaptures = [
     ...spec.captures,
     ...(spec.ownedCaptures ?? []),
   ];
   spec.captures = allCaptures.filter(
-    (capture) => !OWNED_DECISION_HELPER_NAMES.has(capture),
+    (capture) =>
+      !OWNED_DECISION_HELPER_NAMES.has(capture) &&
+      !OWNED_DECISION_PRIMITIVE_NAMES.has(capture),
   );
-  spec.ownedCaptures = allCaptures.filter((capture) =>
-    OWNED_DECISION_HELPER_NAMES.has(capture),
+  spec.ownedCaptures = allCaptures.filter(
+    (capture) =>
+      OWNED_DECISION_HELPER_NAMES.has(capture) ||
+      OWNED_DECISION_PRIMITIVE_NAMES.has(capture),
   );
 }
 
 function ownedDecisionHelper(capture, graphPorts) {
+  if (OWNED_DECISION_PRIMITIVE_NAMES.has(capture)) {
+    return OWNED_DECISION_PRIMITIVES[capture];
+  }
   if (capture === "isUncPath") {
     return (value, scanEmbedded = false) =>
       isWindowsUncPath(value, scanEmbedded, graphPorts.platform());
@@ -408,12 +416,10 @@ export function createBashCompoundSafetyAdapters(rootOverrides = {}) {
     checkCore,
     decorateDecision,
     sandboxAutoAllowReason,
-    parseAborted,
   ) {
     assertGraphValue("bash-permission-entry", "bashTool.name", bashTool.name, BASH_TOOL_NAME);
     assertGraphValue("bash-permission-entry", "clampRejectionReason", clampRejectionReason, CLAMP_REJECTION_REASON);
     assertGraphValue("bash-permission-entry", "sandboxAutoAllowReason", sandboxAutoAllowReason, SANDBOX_AUTO_ALLOW_REASON);
-    assertGraphValue("bash-permission-entry", "parseAborted", parseAborted, PARSE_ABORTED);
     return roots.checkBashPermission(input, context, modelClassifier, {
       decisions: { decorateDecision },
       effects: {

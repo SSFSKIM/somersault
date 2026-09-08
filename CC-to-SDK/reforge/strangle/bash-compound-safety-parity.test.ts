@@ -24,14 +24,20 @@ import { PARTITIONS } from "./parser-corpus.js";
 import {
   AGGREGATE_CASES,
   DANGEROUS_SAFETY_REASON,
+  DUPLICATE_CORE_INVOCATION,
   DUPLICATE_REMOVAL_SCHEDULE,
   EFFECT_STATE,
   HELPER_CASES,
   MODE_CASES,
   PIPE_CASES,
   ROOT_CASES,
+  RESOLVED_LEADING_CD_INVOCATION,
   SAFETY_REGRESSION_CASES,
   SEMANTIC_RECORDS,
+  type ScheduledDecisionTrace,
+  createAggregateClassifierPorts,
+  createCoreEffectPorts,
+  createScheduledDecisionPort,
 } from "./bash-compound-safety-corpus.js";
 import { createCommandClassifier } from "./modules/command-classifier/reference.js";
 import { resolveAnchor } from "./anchor.js";
@@ -928,6 +934,41 @@ const pinnedPermissionMessage = evaluateFunction(
     K$: pinnedModeTitle,
   },
 );
+const pinnedSuggestionDependencies = {
+  rQ: evaluateValue(initializerSource("rQ")),
+  cW: evaluateValue(initializerSource("cW")),
+  oQ: evaluateValue(initializerSource("oQ")),
+  St: (text: string, delimiter: string) => text.split(delimiter)[0],
+};
+const pinnedSuggestionPrefix = evaluateScoped(
+  functionSource("KNt"),
+  "KNt",
+  pinnedSuggestionDependencies,
+);
+const pinnedSuggestionHeredoc = evaluateScoped(
+  functionSource("krn"),
+  "krn",
+  { ...pinnedSuggestionDependencies, KNt: pinnedSuggestionPrefix },
+);
+const pinnedSuggestionUpdate = (toolName: string, ruleContent: string) => [{
+  type: "addRules",
+  rules: [{ toolName, ruleContent }],
+  behavior: "allow",
+  destination: "localSettings",
+}];
+const pinnedWholeCommandSuggestions = evaluateScoped(
+  functionSource("w3e"),
+  "w3e",
+  {
+    krn: pinnedSuggestionHeredoc,
+    KNt: pinnedSuggestionPrefix,
+    wr: (command: string) => command.split("\n")[0],
+    yi: { name: "Bash" },
+    ayt: pinnedSuggestionUpdate,
+    lyt: (tool: string, content: string) =>
+      pinnedSuggestionUpdate(tool, `${content} *`),
+  },
+);
 
 interface SidePlan {
   decide(command: string, call: number): Decision;
@@ -1000,21 +1041,63 @@ function makeSide(plan: SidePlan): Side {
   };
 }
 
-const classifiers = {
-  isNormalizedCdCommand(command: string): boolean {
-    const base = peelCommandPrefixes(commandArgv(command))[0]?.replace(
-      /^.*[\\/]/,
-      "",
-    );
-    return ["cd", "chdir", "pushd", "popd"].includes(base ?? "");
-  },
-  isNormalizedGitCommand(command: string): boolean {
-    return (
-      peelCommandPrefixes(commandArgv(command))[0]?.replace(/^.*[\\/]/, "") ===
-      "git"
-    );
-  },
-};
+const classifiers = createAggregateClassifierPorts({
+  commandArgv,
+  peelCommandPrefixes,
+});
+
+// Qualification is a behavior contract, not a source-text comparison. An
+// assignment prefix makes the declared no-normalization dependency schedule
+// observable even when the classifier result is equal, and calls are recorded
+// in order.
+{
+  const dependencyTrace: string[] = [];
+  const traced = createAggregateClassifierPorts({
+    commandArgv(command) {
+      dependencyTrace.push(`commandArgv:${command}`);
+      return commandArgv(command);
+    },
+    peelCommandPrefixes(argv) {
+      dependencyTrace.push(`peelCommandPrefixes:${JSON.stringify(argv)}`);
+      return peelCommandPrefixes(argv);
+    },
+  });
+  const command = "CI=1 cd /tmp";
+  eq(
+    "shared aggregate classifier preserves assignment-prefixed cd semantics",
+    traced.isNormalizedCdCommand(command),
+    true,
+  );
+  eq(
+    "shared aggregate classifier dependency order",
+    dependencyTrace,
+    [
+      "commandArgv:CI=1 cd /tmp",
+      'peelCommandPrefixes:["cd","/tmp"]',
+    ],
+  );
+  const normalizationMutantTrace: string[] = [];
+  const normalizationMutant = createAggregateClassifierPorts({
+    commandArgv(value) {
+      normalizationMutantTrace.push(`normalizeCommandPrefix:${value}`);
+      const normalized = normalizeCommandPrefix(value);
+      normalizationMutantTrace.push(`commandArgv:${normalized}`);
+      return commandArgv(normalized);
+    },
+    peelCommandPrefixes(argv) {
+      normalizationMutantTrace.push(
+        `peelCommandPrefixes:${JSON.stringify(argv)}`,
+      );
+      return peelCommandPrefixes(argv);
+    },
+  });
+  normalizationMutant.isNormalizedCdCommand(command);
+  mustDiffer(
+    "aggregate classifier rejects an added-normalization dependency trace",
+    dependencyTrace,
+    normalizationMutantTrace,
+  );
+}
 
 function buildUpstreamAggregate(
   side: Side,
@@ -1801,7 +1884,7 @@ function runPermissionChainDuplicate(
     tQ: () => false,
     iW: () => false,
     j8e: () => preliminary[preliminaryAt++],
-    I8: () => ({ behavior: "passthrough", message: "path layer" }),
+    I8: () => structuredClone(DUPLICATE_CORE_INVOCATION.pathDecision),
     r_e: () => false,
     Q: (values: Decision[], accept: (value: Decision) => boolean) =>
       values.filter(accept).length,
@@ -1889,33 +1972,42 @@ mustDiffer("jrn duplicate tie-break Fy-blind mutant", jrnHealthy, jrnFyBlindMuta
     },
   ];
   let removals = 0;
+  let pinnedRemovals = 0;
+  const pathTrace: ScheduledDecisionTrace[] = [];
+  const pinnedPathTrace: ScheduledDecisionTrace[] = [];
   const removalSchedule = DUPLICATE_REMOVAL_SCHEDULE;
   const permissionContext = { mode: "default" };
-  const effects = {
-    readPermissionContext: () => permissionContext,
-    replaceSessionEnvironmentKeys: () => undefined,
-    emitTelemetry: () => undefined,
-    isSubprocessEnvironmentScrubbingEnabled: () => false,
-    currentWorkingDirectory: () => "/pinned/cwd",
-    platform: () => "macos",
-    homeDirectory: () => "/pinned/home",
-    spawnEnvironmentKeys: () => new Set<string>(),
-    matchRules: () => ({ deny: [], ask: [], allow: [] }),
-    validatePath: () => ({ behavior: "allow" }),
-    checkDangerousRemoval: () => ({ behavior: "passthrough" }),
-    checkSandboxAutoAllow: () => null,
-    checkExactPermission: () => ({ behavior: "passthrough", message: "base" }),
-    checkPathSafety: () => ({ behavior: "passthrough", message: "path layer" }),
-    checkDirectCommand: () => removalSchedule[removals++],
-    checkSubcommandPermission: async () => removalSchedule[removals++ + 2],
-    isSandboxingEnabled: () => false,
-    isAutoAllowBashIfSandboxedEnabled: () => false,
-    isSandboxEligible: () => false,
-    isRestrictedContext: () => false,
-    hasUnsafeGitStructureFromAnalysis: () => false,
-    hasUnsafeGitStructureFromCommand: () => false,
-    isCdGitSequenceSafe: async () => false,
-  };
+  const pinnedEffectTrace: string[] = [];
+  const pinnedEffects = createCoreEffectPorts(
+    permissionContext,
+    {
+      checkDangerousRemoval: () => ({ behavior: "passthrough" }),
+      checkPathSafety: createScheduledDecisionPort(
+        pinnedPathTrace,
+        "checkPathSafety",
+        DUPLICATE_CORE_INVOCATION.pathDecision,
+      ),
+      checkDirectCommand: () => removalSchedule[pinnedRemovals++],
+      checkSubcommandPermission: async () =>
+        removalSchedule[pinnedRemovals++ + 2],
+    },
+    pinnedEffectTrace,
+  );
+  const duplicateEffectTrace: string[] = [];
+  const effects = createCoreEffectPorts(
+    permissionContext,
+    {
+      checkDangerousRemoval: () => ({ behavior: "passthrough" }),
+      checkPathSafety: createScheduledDecisionPort(
+        pathTrace,
+        "checkPathSafety",
+        DUPLICATE_CORE_INVOCATION.pathDecision,
+      ),
+      checkDirectCommand: () => removalSchedule[removals++],
+      checkSubcommandPermission: async () => removalSchedule[removals++ + 2],
+    },
+    duplicateEffectTrace,
+  );
   const owned = await checkBashPermissionCore(
     { command: `${subcommand}; ${subcommand}` },
     {
@@ -1938,9 +2030,60 @@ mustDiffer("jrn duplicate tie-break Fy-blind mutant", jrnHealthy, jrnFyBlindMuta
       permissionSuggestions: () => [],
     },
   );
-  const upstream = await runPermissionChainDuplicate(false, subcommand);
+  const upstream = await pinnedCore(
+    { command: `${subcommand}; ${subcommand}` },
+    regressionContext(permissionContext),
+    {
+      KTe: () => ({
+        kind: "simple",
+        commands: analyses,
+        bareAssignmentNames: [],
+      }),
+      Drn: () => ({
+        subcommands: [subcommand, subcommand],
+        astCommandsByIdx: analyses,
+      }),
+      Lb: () => false,
+      LP: () => false,
+      w3e: pinnedWholeCommandSuggestions,
+    },
+    undefined,
+    pinnedEffects,
+  );
   eq("owned jrn duplicate tie-break full decision", owned, upstream);
+  eq("pinned jrn reaches four scheduled direct decisions", pinnedRemovals, 4);
   eq("owned jrn reaches four scheduled direct decisions", removals, 4);
+  eq(
+    "pinned jrn duplicate path schedule trace",
+    pinnedPathTrace,
+    DUPLICATE_CORE_INVOCATION.expectedDecisionTrace,
+  );
+  eq(
+    "pinned jrn duplicate complete effect trace",
+    pinnedEffectTrace,
+    DUPLICATE_CORE_INVOCATION.expectedEffectTrace,
+  );
+  eq(
+    "owned jrn duplicate path schedule trace",
+    pathTrace,
+    DUPLICATE_CORE_INVOCATION.expectedDecisionTrace,
+  );
+  eq(
+    "owned jrn duplicate complete effect trace",
+    duplicateEffectTrace,
+    DUPLICATE_CORE_INVOCATION.expectedEffectTrace,
+  );
+  const messageMutantTrace: ScheduledDecisionTrace[] = [];
+  createScheduledDecisionPort(
+    messageMutantTrace,
+    "checkPathSafety",
+    { ...DUPLICATE_CORE_INVOCATION.pathDecision, message: "changed path message" },
+  )();
+  mustDiffer(
+    "duplicate schedule trace catches an effect-message mutation",
+    messageMutantTrace,
+    DUPLICATE_CORE_INVOCATION.expectedDecisionTrace,
+  );
   eq("owned jrn duplicate safety winner", owned.decisionReason.reasons, new Map([
     [
       subcommand,
@@ -2439,46 +2582,45 @@ function regressionContext(
 function regressionEffects(
   permissionContext: Record<string, unknown>,
   overrides: Record<string, unknown> = {},
+  effectTrace?: string[],
 ) {
-  return {
-    readPermissionContext: () => permissionContext,
-    replaceSessionEnvironmentKeys: () => undefined,
-    emitTelemetry: () => undefined,
-    isSubprocessEnvironmentScrubbingEnabled: () => false,
-    currentWorkingDirectory: () => EFFECT_STATE.cwd,
-    platform: () => EFFECT_STATE.platform,
-    homeDirectory: () => EFFECT_STATE.homeDirectory,
-    spawnEnvironmentKeys: () => new Set<string>(),
-    matchRules: () => ({ deny: [], ask: [], allow: [] }),
-    validatePath: () => ({ behavior: "allow" }),
-    isSandboxingEnabled: () => false,
-    isAutoAllowBashIfSandboxedEnabled: () => false,
-    isSandboxEligible: () => false,
-    isRestrictedContext: () => false,
-    hasUnsafeGitStructureFromAnalysis: () => false,
-    hasUnsafeGitStructureFromCommand: () => false,
-    isCdGitSequenceSafe: async () => false,
-    isCdGitAstSequenceSafe: async () => false,
-    checkTooComplexSafety: async () => null,
-    checkTooComplexSandbox: () => null,
-    checkInvalidSemanticsRules: () => null,
-    checkSandboxAutoAllow: () => null,
-    checkExactPermission: () => ({ behavior: "passthrough", message: "base" }),
-    checkPathSafety: () => ({ behavior: "passthrough", message: "path" }),
-    checkDirectCommand: () => ({ behavior: "passthrough", message: "direct" }),
-    checkSubcommandPermission: async () => ({
-      behavior: "passthrough",
-      message: "final",
-    }),
-    allowedDirectories: () => [],
-    resolvePathPolicy: (_filesystem: unknown, path: string) => ({
-      resolvedPath: path,
-    }),
-    filesystem: () => ({}),
-    resolveLeadingDirectoryChange: () => null,
-    decorateDecision: (decision: unknown) => decision,
-    ...overrides,
+  return createCoreEffectPorts(permissionContext, overrides, effectTrace);
+}
+
+function controlledPinnedCoreBindings(
+  effects: Record<string, any> | undefined,
+): Record<string, unknown> {
+  if (!effects) return {};
+  const captures: Record<string, string> = {
+    he: "readPermissionContext",
+    x9e: "replaceSessionEnvironmentKeys",
+    Urn: "checkTooComplexSafety",
+    xrn: "checkTooComplexSandbox",
+    s: "emitTelemetry",
+    Hrn: "checkInvalidSemanticsRules",
+    A8e: "checkSandboxAutoAllow",
+    aQ: "checkExactPermission",
+    $ct: "checkPermission",
+    $rn: "isCdGitSequenceSafe",
+    ee: "currentWorkingDirectory",
+    I8: "checkPathSafety",
+    D: "platform",
+    TT: "allowedDirectories",
+    Qo: "resolvePathPolicy",
+    le: "filesystem",
+    dL: "checkDangerousRemoval",
+    Frn: "resolveLeadingDirectoryChange",
+    Nrn: "isCdGitAstSequenceSafe",
+    tQ: "hasUnsafeGitStructureFromAnalysis",
+    iW: "hasUnsafeGitStructureFromCommand",
+    j8e: "checkDirectCommand",
+    C8e: "checkSubcommandPermission",
   };
+  return Object.fromEntries(
+    Object.entries(captures)
+      .filter(([, semantic]) => typeof effects[semantic] === "function")
+      .map(([pinned, semantic]) => [pinned, effects[semantic]]),
+  );
 }
 
 function pinnedCore(
@@ -2486,6 +2628,7 @@ function pinnedCore(
   context: Record<string, unknown>,
   overrides: Record<string, unknown>,
   classifier?: AnyFn,
+  controlledEffects?: Record<string, any>,
 ): Promise<Decision> {
   const bindings: Record<string, unknown> = {
     he: (value: any) => value.permissionContext ?? {},
@@ -2546,6 +2689,7 @@ function pinnedCore(
     eo: (value: unknown) => stable(value),
     w3e: () => [],
     brn: 5,
+    ...controlledPinnedCoreBindings(controlledEffects),
     ...overrides,
   };
   return evaluateScoped(permissionChainSource, permissionChainLabel, bindings)(
@@ -3100,26 +3244,6 @@ function pinnedTooComplexDecision(
 // Unsafe assignments must remain part of whole-command suggestions.
 {
   const fixture = SAFETY_REGRESSION_CASES.assignmentSuggestions;
-  const common = {
-    rQ: evaluateValue(initializerSource("rQ")),
-    cW: evaluateValue(initializerSource("cW")),
-    oQ: evaluateValue(initializerSource("oQ")),
-    St: (text: string, delimiter: string) => text.split(delimiter)[0],
-  };
-  const pinnedPrefix = evaluateScoped(functionSource("KNt"), "KNt", common);
-  const pinnedHeredoc = evaluateScoped(functionSource("krn"), "krn", { ...common, KNt: pinnedPrefix });
-  const update = (toolName: string, ruleContent: string) => [{
-    type: "addRules", rules: [{ toolName, ruleContent }],
-    behavior: "allow", destination: "localSettings",
-  }];
-  const pinnedSuggestions = evaluateScoped(functionSource("w3e"), "w3e", {
-    krn: pinnedHeredoc,
-    KNt: pinnedPrefix,
-    wr: (command: string) => command.split("\n")[0],
-    yi: { name: "Bash" },
-    ayt: update,
-    lyt: (tool: string, content: string) => update(tool, `${content} *`),
-  });
   const analyses = fixture.subcommands.map((text) => ({
     text, argv: ["custom", "alpha"], envVars: [], redirects: [],
   }));
@@ -3128,7 +3252,7 @@ function pinnedTooComplexDecision(
     KTe: () => ({ kind: "simple", commands: analyses, bareAssignmentNames: [] }),
     j8e: () => ({ behavior: "passthrough", message: "preliminary" }),
     C8e: async () => finalDecision,
-    w3e: pinnedSuggestions,
+    w3e: pinnedWholeCommandSuggestions,
   });
   const owned = await checkBashPermissionCore(fixture.input, regressionContext(fixture.permissionContext), undefined, {
     effects: regressionEffects(fixture.permissionContext, {
@@ -3688,6 +3812,33 @@ function pinnedTooComplexDecision(
     { text: fixture.subcommands[1], argv: ["cat", "file"], envVars: [], redirects: [] },
   ];
   const pinnedPaths: unknown[][] = [];
+  const pinnedDecisionTrace: ScheduledDecisionTrace[] = [];
+  const pinnedEffectTrace: string[] = [];
+  const pinnedEffects = createCoreEffectPorts(
+    fixture.permissionContext,
+    {
+      currentWorkingDirectory: () => fixture.cwd,
+      resolveLeadingDirectoryChange: () => fixture.resolvedCwd,
+      checkDirectCommand: createScheduledDecisionPort(
+        pinnedDecisionTrace,
+        "checkDirectCommand",
+        RESOLVED_LEADING_CD_INVOCATION.directDecision,
+      ),
+      checkPathSafety: (_input: unknown, _cwd: unknown, _context: unknown, _hasCd: unknown, _redirects: unknown, records: unknown[]) => {
+        pinnedPaths.push(records);
+        return createScheduledDecisionPort(
+          pinnedDecisionTrace,
+          "checkPathSafety",
+          RESOLVED_LEADING_CD_INVOCATION.pathDecision,
+        )();
+      },
+      checkSubcommandPermission: (input: any) => ({
+        behavior: "allow",
+        updatedInput: input,
+      }),
+    },
+    pinnedEffectTrace,
+  );
   const expected = await pinnedCore(
     fixture.input,
     regressionContext(fixture.permissionContext),
@@ -3695,16 +3846,13 @@ function pinnedTooComplexDecision(
       KTe: () => ({ kind: "simple", commands: analyses, bareAssignmentNames: [] }),
       Drn: () => ({ subcommands: [...fixture.subcommands], astCommandsByIdx: analyses }),
       Lrn: () => true,
-      Frn: () => fixture.resolvedCwd,
-      j8e: () => ({ behavior: "passthrough", message: "preliminary" }),
-      I8: (_input: unknown, _cwd: unknown, _context: unknown, _hasCd: unknown, _redirects: unknown, records: unknown[]) => {
-        pinnedPaths.push(records);
-        return { behavior: "passthrough", message: "path" };
-      },
-      C8e: async (input: any) => ({ behavior: "allow", updatedInput: input }),
     },
+    undefined,
+    pinnedEffects,
   );
   const ownedPaths: unknown[][] = [];
+  const ownedDecisionTrace: ScheduledDecisionTrace[] = [];
+  const resolvedEffectTrace: string[] = [];
   const owned = await checkBashPermissionCore(
     fixture.input,
     regressionContext(fixture.permissionContext),
@@ -3712,19 +3860,62 @@ function pinnedTooComplexDecision(
     {
       effects: regressionEffects(fixture.permissionContext, {
         resolveLeadingDirectoryChange: () => fixture.resolvedCwd,
-        checkDirectCommand: () => ({ behavior: "passthrough", message: "preliminary" }),
+        checkDirectCommand: createScheduledDecisionPort(
+          ownedDecisionTrace,
+          "checkDirectCommand",
+          RESOLVED_LEADING_CD_INVOCATION.directDecision,
+        ),
         checkPathSafety: (_input: unknown, _cwd: unknown, _context: unknown, _hasCd: unknown, _redirects: unknown, records: unknown[]) => {
           ownedPaths.push(records);
-          return { behavior: "passthrough", message: "path" };
+          return createScheduledDecisionPort(
+            ownedDecisionTrace,
+            "checkPathSafety",
+            RESOLVED_LEADING_CD_INVOCATION.pathDecision,
+          )();
         },
         checkSubcommandPermission: (input: any) => ({ behavior: "allow", updatedInput: input }),
-      }),
+      }, resolvedEffectTrace),
       classifyCommand: () => ({ kind: "simple", commands: analyses, bareAssignmentNames: [] }),
       classifyReadOnly: () => ({ behavior: "passthrough" }),
     },
   );
   eq("review resolved-cd full decision", owned, expected);
   eq("review resolved-cd path records", ownedPaths, pinnedPaths);
+  eq(
+    "review resolved-cd pinned decision trace",
+    pinnedDecisionTrace,
+    RESOLVED_LEADING_CD_INVOCATION.expectedDecisionTrace,
+  );
+  eq(
+    "review resolved-cd pinned complete effect trace",
+    pinnedEffectTrace,
+    RESOLVED_LEADING_CD_INVOCATION.expectedEffectTrace,
+  );
+  eq(
+    "review resolved-cd owned decision trace",
+    ownedDecisionTrace,
+    RESOLVED_LEADING_CD_INVOCATION.expectedDecisionTrace,
+  );
+  eq(
+    "review resolved-cd complete effect trace",
+    resolvedEffectTrace,
+    RESOLVED_LEADING_CD_INVOCATION.expectedEffectTrace,
+  );
+  const effectOrderMutant = [...resolvedEffectTrace];
+  [effectOrderMutant[6], effectOrderMutant[7]] = [
+    effectOrderMutant[7],
+    effectOrderMutant[6],
+  ];
+  mustDiffer(
+    "resolved-cd complete effect trace catches reordered ports",
+    resolvedEffectTrace,
+    effectOrderMutant,
+  );
+  mustDiffer(
+    "resolved-cd decision trace catches reordered effects",
+    ownedDecisionTrace,
+    [...RESOLVED_LEADING_CD_INVOCATION.expectedDecisionTrace].reverse(),
+  );
   eq("review resolved-cd excludes leading analysis", ownedPaths, [[analyses[1]]]);
 }
 
@@ -4363,8 +4554,8 @@ function pinnedTooComplexDecision(
 if (checks < 64) {
   failures.push(`NON-VACUOUS FLOOR: expected at least 64 checks, ran ${checks}`);
 }
-if (controls !== 62) {
-  failures.push(`CONTROL FLOOR: expected 62 named controls, ran ${controls}`);
+if (controls !== 66) {
+  failures.push(`CONTROL FLOOR: expected 66 named controls, ran ${controls}`);
 }
 
 if (failures.length > 0) {
