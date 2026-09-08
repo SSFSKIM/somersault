@@ -3496,7 +3496,7 @@
     },
     {
       "role": "decideBashPermissions",
-      "wiring": "fold",
+      "wiring": "splice",
       "scope": "graph",
       "anchor": "tengu_bash_ast_too_complex",
       "file": "chunk-fy12d89p.js",

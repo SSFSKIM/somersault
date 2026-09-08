@@ -253,7 +253,7 @@ const rootSpecs = [
   ["checkBashPermissions", "this agent's Bash use is clamped to a fixed set of command forms", "splice", "graph"],
   ["clampCrashFailClosed", "permission check crashed and this agent carries a per-spawn bashCommandClamp", "splice", "engine"],
   ["decideModeSpecificCommand", "Base command not found", "fold"],
-  ["decideBashPermissions", "tengu_bash_ast_too_complex", "fold"],
+  ["decideBashPermissions", "tengu_bash_ast_too_complex", "splice"],
   ["aggregateSubcommands", "Bare output redirection with no command; path layer approved", "fold"],
   ["parsePipeCommand", "Failed to parse command", "fold"],
   ["rejectCompoundOperators", "This command uses shell operators that require approval for safety", "fold"],
