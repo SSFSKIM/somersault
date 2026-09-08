@@ -278,7 +278,9 @@ const GIT_SAFE_COMMANDS = {
         subcommand && !subcommand.startsWith("-") &&
         !allowedReflogSubcommands.has(subcommand)
       ) return true;
-      for (let arg of args) if (mutatingReflogSubcommands.has(arg)) return true;
+      for (let arg of args) {
+        if (mutatingReflogSubcommands.has(arg)) return true;
+      }
       return false;
     },
   },
