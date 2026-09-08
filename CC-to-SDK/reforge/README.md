@@ -6569,10 +6569,12 @@ classifier-routed, and directory allow suggestions target `Read`, not `Bash`.
 The child decision boundary now owns all twelve pinned pure helpers used at nineteen capture sites.
 Their behavior is compared against the exact pinned declarations, including every permission-message
 reason arm, Windows directory normalization, critical-path and absolute containment domains, and the
-full UNC grammar. The eight graph aliases resolve directly to `node:path` rather than reimplemented engine logic:
-seven function aliases occupy ten capture sites, while `path.sep` crosses only as an asserted
-primitive. The two `qN` sites remain explicit effectful ports because pinned `qN` calls `statSync`. Adapter controls reject any
-child decision that still forwards a graph-side `pure-helper`.
+full UNC grammar. The `YTe` oracle also derives its `Read` tool name from pinned `_t` initializer
+bytes rather than supplying the owned literal. The eight graph aliases resolve directly to
+`node:path` rather than reimplemented engine logic: seven function aliases occupy ten capture sites,
+while `path.sep` crosses only as an asserted primitive. The two `qN` sites remain explicit effectful
+ports because pinned `qN` calls `statSync`. Adapter controls reject any child decision that still
+forwards a graph-side `pure-helper`.
 
 The eleven table declarators occupy **22,674 pinned bytes**; their initializer expressions occupy
 **22,632**. Their complete dependency closure contains 59 declarations, plus two explicitly external

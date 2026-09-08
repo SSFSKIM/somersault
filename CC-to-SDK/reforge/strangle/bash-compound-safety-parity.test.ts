@@ -773,6 +773,7 @@ const PINNED_SMALL_HELPER_CHUNK = "chunk-4vdmpx05.js";
 const PINNED_PATH_POLICY_CHUNK = "chunk-2q90zhqs.js";
 const PINNED_PATH_UTIL_CHUNK = "chunk-vvj94wew.js";
 const PINNED_RULE_CHUNK = "chunk-fk13r7sg.js";
+const PINNED_TOOL_NAME_CHUNK = "chunk-bsdtxcdc.js";
 const pinnedClassifierRoutedSafetyCheck = evaluateFunction(
   pinnedFunctionSource(PINNED_CIRCUIT_CHUNK, "_Tt"),
   "_Tt",
@@ -868,6 +869,9 @@ const pinnedEscapeRulePattern = evaluateFunction(
   "FTt",
   {},
 );
+const pinnedReadToolName = evaluateValue(
+  pinnedInitializerSource(PINNED_TOOL_NAME_CHUNK, "_t"),
+);
 const pinnedDirectoryRuleSuggestion = (platform: string) => evaluateFunction(
   pinnedFunctionSource(PINNED_CLASSIFIER_CHUNK, "YTe"),
   "YTe",
@@ -875,7 +879,7 @@ const pinnedDirectoryRuleSuggestion = (platform: string) => evaluateFunction(
     TKe: pinnedNormalizeDirectoryRulePath(platform),
     FTt: pinnedEscapeRulePattern,
     cl: nodePath,
-    _t: "Read",
+    _t: pinnedReadToolName,
   },
 );
 const pinnedEscapePermissionRule = evaluateFunction(
