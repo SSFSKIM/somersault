@@ -15,8 +15,8 @@ C13b replaces the pinned engine’s Bash command classification and per-subcomma
 - [x] (2026-09-08 01:28Z) Implemented and spliced `_8e` plus its owned `cL` sed predicate and pure closure. The pinned-byte oracle passes 2,522 differentials over 220 focused commands, all 2,191 parser-domain strings, and 90 sed commands. Faithful permission/compound replay is green; the semantic twin is RED on `perm-accept-edits` because it wrongly skips the Bash broker.
 - [x] (2026-09-08 04:10Z) Implemented the engine-chunk command-safety half: `$ct`, `jrn`, and `XNt` are anchored beside the existing `KTe` and `_8e` seams; `w8e`, `mrn`, `drn`, `hrn`, and `bQn` are folded; the expanded aggregate pinned-byte contract reports 777 parity checks and 31 controls. The implementation-review correction set is reflected in the shared corpus and direct contracts.
 - [x] (2026-09-08 04:10Z) Registered the five runtime splices, eleven asserted table declarators, owned modules, manifest capture derivations, engine-ts entries, focused gate phases, and ledger footprints. Reachability and skeleton checks are green; the three final runtime footprints carry exact 13/53/2 capture inventories.
-- [ ] Record the parent-owned final attestation check and generated-report status in this living plan. All other focused final verification evidence—mechanism, derivation, contracts, permission-matrix Bash cells, `bash-compound-safety` replay, liveness controls, reachability, ledger, and TypeScript—is complete. Do not run the full strangler gate.
-- [ ] Integrate the parent-owned final attestation counts/status without rewriting the focused evidence; parent independent review and the full gate remain parent-owned.
+- [x] (2026-09-08 05:21Z) Completed focused final verification. The generated attestation covers 92 modules / 5,504 sites / 10,726 outcomes: 1,745 replay-executed, 6,514 contract-executed and 2,467 reviewed exclusions, with zero unadjudicated or stale rows; `strangle/attest.ts --check` is green. The full strangler gate was not run.
+- [x] (2026-09-08 05:21Z) Integrated the final README wave record, campaign tracking row/revision, and this living outcome. Parent independent review and the full gate remain parent-owned.
 
 ## Surprises & Discoveries
 
@@ -85,7 +85,7 @@ C13b replaces the pinned engine’s Bash command classification and per-subcomma
 
 ## Outcomes & Retrospective
 
-Implementation and focused replay are complete. The existing compound cassette cannot close the two W6 `Fy` caller edges; direct pinned-byte contracts cover multi-`cd`, duplicate tie-breaking, insertion-ordered `Map` behavior, and exact `subcommandResults`, and no live take was made. Parent-owned final attestation evidence still requires documentation integration. The parent also owns independent review and the full strangler gate, so this plan does not claim C13b or campaign closure.
+Implementation, focused replay, coverage attestation, and documentation are complete. The existing compound cassette cannot close the two W6 `Fy` caller edges; direct pinned-byte contracts cover multi-`cd`, duplicate tie-breaking, insertion-ordered `Map` behavior, and exact `subcommandResults`, and no live take was made. The final focused attestation is green with 1,745 replay-executed, 6,514 contract-executed, 2,467 reviewed, and zero unadjudicated/stale outcomes. The parent still owns independent review and the full strangler gate, so this plan does not claim final C13b or campaign closure.
 
 ## Context and Orientation
 
@@ -157,3 +157,5 @@ Revision note (2026-09-08 04:10Z): the five runtime splices, five folds, eleven 
 Revision note (2026-09-08 04:10Z): incorporated implementation-review closure. The plan now records the 26 tracked correction families, the sequential parity-before-coverage requirement, immediate per-driver coverage accumulation, primitive assertion policy, `AbortError` ownership, and the rule that startup crashes are inconclusive liveness. Documentation remains deliberately pre-attestation; parent independent review and the full gate remain pending.
 
 Revision note (2026-09-08 05:16Z): expanded the helper corpus and superseded the draft's aggregate totals. Focused parity is now 777/31 and contract coverage is 1,093/1,771 across the unchanged 907 sites. The expansion covers all 103 reachable helper outcomes plus one validator; twelve pinned-producer-verified helper outcomes remain categorized as invariant, impossible, caller-domain, or resource-sensitive. Parent-owned final attestation evidence remains deliberately unintegrated in this pre-attestation documentation commit; parent review and the full gate remain pending.
+
+Revision note (2026-09-08 05:21Z): final focused attestation and artifact freshness are green: 92 modules, 5,504 sites, 10,726 outcomes, 1,745 replay-executed, 6,514 contract-executed, 2,467 reviewed exclusions, and zero unadjudicated/stale rows. Documentation is integrated; parent independent review and the full strangler gate remain pending, so no final closure is claimed.

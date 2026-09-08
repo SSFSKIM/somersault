@@ -6523,8 +6523,9 @@ here.
 ## W10b — Bash command safety: five runtime seams, eleven asserted tables, and a cassette that misses both intended callers (2026-09-08)
 
 W10b owns the Bash command-classification and command-admission decisions between C13a's parser and
-W6's permission surface. This is a **focused-evidence record, not final attestation**. The runtime cut
-is five anchored splices and five folds:
+W6's permission surface. This is a **focused implementation and attestation record, not a claim that
+the parent-owned final review or full strangler gate has run**. The runtime cut is five anchored
+splices and five folds:
 
 | kind | pinned binding | owned role |
 |---|---|---|
@@ -6555,8 +6556,8 @@ checks**. This is why a callable table member is graded by behavior rather than 
 
 ### Focused evidence already measured
 
-These are the exact focused results on the implementation tree. They do not stand in for the pending
-final attestation.
+These are the exact focused results on the implementation tree. The final coverage attestation is
+reported separately below; neither result stands in for the parent-owned full strangler gate.
 
 | surface | measured result | durable log |
 |---|---|---|
@@ -6574,6 +6575,7 @@ final attestation.
 | engine-ts ownership seam | static reachability and skeleton checks are green | `build/c13b-final-reachability.log`, `build/c13b-final-skeleton.log` |
 | closure ledger | canonical ledger check is green; the three new runtime footprints carry exact **13 / 53 / 2** captures | `build/c13b-final-ledger-backfill-check.log`, `build/c13b-final-ledger-check.log` |
 | focused replay | all **13 W6 Bash-bearing cells** and `bash-compound-safety` are green offline | `build/c13b-final-w6-and-compound-replay.log` |
+| coverage attestation | **92 modules / 5,504 sites / 10,726 outcomes**: 1,745 corpus, 6,514 contract, 2,467 reviewed exclusions, **0 unadjudicated** | `build/c13b-final-attestation.log`, `build/c13b-final-attestation-check.log` |
 
 The final helper-corpus expansion adds **104** covered outcomes: all **103 reachable helper outcomes**
 and **one validator outcome**. Its explicit input partitions are **71 helper**, **15 named semantic**,
@@ -6640,9 +6642,10 @@ whose name and behavior are compared to the pinned declaration.
 
 ### Status left for the parent
 
-Implementation and focused replay evidence are complete. **Parent-owned final attestation counts/status
-and generated-report integration remain intentionally absent from this pre-attestation commit.** The
-earlier unadjudicated run remains at `build/c13b-final-attestation-unadjudicated.log` only as
-intermediate history; this record makes no final attestation claim. The parent independent review and
-full strangler gate also remain pending by request. Nothing in this wave record claims campaign
-closure.
+Implementation, focused replay, the generated coverage report, and its freshness check are complete.
+The final attestation covers **92 modules and 10,726 outcomes**: **1,745** executed by replay,
+**6,514** by pinned differential contract drivers, and **2,467** explicit reviewed exclusions, with
+**zero unadjudicated and zero stale rows**. `strangle/attest.ts --check` reproduces those bytes. The
+earlier unadjudicated logs remain under `build/` only as intermediate history. The parent independent
+review and full strangler gate remain pending by request; nothing in this wave record claims final
+C13b or campaign closure.
