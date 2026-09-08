@@ -6689,4 +6689,29 @@ The expanded implementation, post-gate qualification/liveness correction, focuse
 generated coverage report, ledger, and report freshness are complete. `strangle/attest.ts --check`
 reproduces the generated report, and a faithful build was restored afterward. The parent review is
 complete. Its gate over `143adee` is preserved as 212 PASS / 3 FAIL and is not claimed as final
-evidence for this changed tree; the parent-owned rerun after these corrections remains pending. Nothing in this wave record claims final C13b or campaign closure.
+evidence for this changed tree. The corrected-tree rerun is green as recorded below. The occurrence-sensitive `jrn` recording requirement remains open; this wave record does not claim final C13b or campaign closure.
+
+
+### Parent verification checkpoint (2026-09-09)
+
+Independent correctness, qualification, and boundary reviews converged after the corrective rounds.
+The full strangler gate over committed runtime tree `c034abf680085c96ce4d13934348aad9d34dcc08`
+completed with **215 PASS / 0 FAIL**, exit status **0**. These counts come only from the
+`=== strangler gate ===` summary block, not from intermediate test output.
+
+- Archive: `build/gate-20260909-0339.log`.
+- Raw stream: `build/c13b-gate-c034abf-20260909-033916.log`.
+- Process exit record: `build/c13b-gate-c034abf-20260909-033916.exit`.
+
+The earlier **212 PASS / 3 FAIL** result remains part of the record. Its classifier/parser
+liveness corrections and the independently verified contract qualification changes are included
+in the successful rerun. No executable file changed during the corrected-tree gate.
+
+**Acceptance decision still pending:** the original C13b cut required a stock replay observation
+of the occurrence-sensitive `jrn` duplicate-subcommand tie-break. Direct pinned-byte contracts
+grade the algorithm, exact aggregate result, and insertion-ordered `Map`, but a fixed supported
+permission snapshot gives repeated normalized commands the same decision. An injected
+occurrence-dependent decision schedule would test a modified path, not establish stock reachability.
+The recommendation is to accept this edge as explicitly reviewed, contract-only evidence, without
+inventing a live-recording claim. That changes the original recording acceptance and requires the
+user's decision. Until then, implementation and gate verification are complete but C13b remains open.
