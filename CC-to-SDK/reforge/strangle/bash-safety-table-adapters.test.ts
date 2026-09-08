@@ -30,6 +30,20 @@ const independentCopy = (value: any): any => {
   return value;
 };
 
+const OBSERVE_NAMED_BEHAVIOR: Record<string, (value: any) => unknown> = {
+  pL: (value) => value.cd([]),
+  Pnn: (value) => value.cd,
+  DP: (value) => value.cd,
+  xnn: (value) => value.mv(["-f"]),
+  u8e: (value) => value["--help"],
+  l_e: (value) => value["--help"],
+  Bnn: (value) => value.xargs.safeFlags["-I"],
+  oro: (value) => value.aki.safeFlags["--help"],
+  Ern: (value) => [...value.env],
+  Crn: (value) => [...value.env],
+  Arn: (value) => value.chrt("42"),
+};
+
 const deps = { homeDirectory: () => "/home/reforge", isSedReadOnly: () => true };
 // The real graph evaluates a different initializer. Clone the fixture so this
 // test does not accidentally hand the adapter its own exported singleton.
@@ -54,11 +68,8 @@ for (const spec of TABLE_ADAPTER_SPECS) {
     stale.split("\n")[0],
   );
 
-  const observe = spec.observe;
-  check(
-    `${spec.binding}: sabotage declares an observation at ${spec.changedPath}`,
-    typeof observe === "function",
-  );
+  const observe = OBSERVE_NAMED_BEHAVIOR[spec.binding];
+  check(`${spec.binding}: test observes ${spec.changedPath}`, typeof observe === "function");
   if (typeof observe !== "function") continue;
   const sabotaged = sabotage[spec.fn](graphValue);
   check(

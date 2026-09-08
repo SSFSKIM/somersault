@@ -54,7 +54,6 @@ export const TABLE_ADAPTER_SPECS = [
     changedPath: "pL.cd",
     perturbGraph: (value) => replaceObjectPath(value, ["cd"], null),
     sabotageOwned: (value) => replaceObjectPath(value, ["cd"], () => ["__C13B_TABLE_SABOTAGE__"]),
-    observe: (value) => value.cd([]),
   },
   {
     binding: "Pnn",
@@ -62,7 +61,6 @@ export const TABLE_ADAPTER_SPECS = [
     changedPath: "Pnn.cd",
     perturbGraph: (value) => replaceObjectPath(value, ["cd"], "changed"),
     sabotageOwned: (value) => replaceObjectPath(value, ["cd"], "C13b changed effect phrase"),
-    observe: (value) => value.cd,
   },
   {
     binding: "DP",
@@ -70,7 +68,6 @@ export const TABLE_ADAPTER_SPECS = [
     changedPath: "DP.cd",
     perturbGraph: (value) => replaceObjectPath(value, ["cd"], "write"),
     sabotageOwned: (value) => replaceObjectPath(value, ["cd"], "write"),
-    observe: (value) => value.cd,
   },
   {
     binding: "xnn",
@@ -78,7 +75,6 @@ export const TABLE_ADAPTER_SPECS = [
     changedPath: "xnn.mv",
     perturbGraph: (value) => replaceObjectPath(value, ["mv"], null),
     sabotageOwned: (value) => replaceObjectPath(value, ["mv"], () => true),
-    observe: (value) => value.mv(["-f"]),
   },
   {
     binding: "u8e",
@@ -86,7 +82,6 @@ export const TABLE_ADAPTER_SPECS = [
     changedPath: 'u8e["--help"]',
     perturbGraph: (value) => replaceObjectPath(value, ["--help"], "string"),
     sabotageOwned: (value) => replaceObjectPath(value, ["--help"], "string"),
-    observe: (value) => value["--help"],
   },
   {
     binding: "l_e",
@@ -94,7 +89,6 @@ export const TABLE_ADAPTER_SPECS = [
     changedPath: 'l_e["--help"]',
     perturbGraph: (value) => replaceObjectPath(value, ["--help"], "string"),
     sabotageOwned: (value) => replaceObjectPath(value, ["--help"], "string"),
-    observe: (value) => value["--help"],
   },
   {
     binding: "Bnn",
@@ -102,7 +96,6 @@ export const TABLE_ADAPTER_SPECS = [
     changedPath: 'Bnn.xargs.safeFlags["-I"]',
     perturbGraph: (value) => replaceObjectPath(value, ["xargs", "safeFlags", "-I"], "changed"),
     sabotageOwned: (value) => replaceObjectPath(value, ["xargs", "safeFlags", "-I"], "changed"),
-    observe: (value) => value.xargs.safeFlags["-I"],
   },
   {
     binding: "oro",
@@ -110,7 +103,6 @@ export const TABLE_ADAPTER_SPECS = [
     changedPath: 'oro.aki.safeFlags["--help"]',
     perturbGraph: (value) => replaceObjectPath(value, ["aki", "safeFlags", "--help"], "string"),
     sabotageOwned: (value) => replaceObjectPath(value, ["aki", "safeFlags", "--help"], "string"),
-    observe: (value) => value.aki.safeFlags["--help"],
   },
   {
     binding: "Ern",
@@ -118,7 +110,6 @@ export const TABLE_ADAPTER_SPECS = [
     changedPath: "Ern.env[0]",
     perturbGraph: (value) => replaceSetMember(value, ["env"], 0, "--changed"),
     sabotageOwned: (value) => replaceSetMember(value, ["env"], 0, "--changed"),
-    observe: (value) => [...value.env],
   },
   {
     binding: "Crn",
@@ -126,7 +117,6 @@ export const TABLE_ADAPTER_SPECS = [
     changedPath: "Crn.env[0]",
     perturbGraph: (value) => replaceSetMember(value, ["env"], 0, "--changed"),
     sabotageOwned: (value) => replaceSetMember(value, ["env"], 0, "--changed"),
-    observe: (value) => [...value.env],
   },
   {
     binding: "Arn",
@@ -134,7 +124,6 @@ export const TABLE_ADAPTER_SPECS = [
     changedPath: "Arn.chrt",
     perturbGraph: (value) => replaceObjectPath(value, ["chrt"], null),
     sabotageOwned: (value) => replaceObjectPath(value, ["chrt"], () => false),
-    observe: (value) => value.chrt("42"),
   },
 ];
 
