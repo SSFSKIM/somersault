@@ -6519,3 +6519,130 @@ here.
 | suites | census projection 15 → **23**, differ run-id map 44 → **47**, state surface 43 → **44** |
 | gate phases added by this round | **none** — both reds are closed inside phases that already existed |
 | the gate, re-run over the closed tree (`3f803e7`) | **GATE PASS — 166 phases, 166 PASS, 0 FAIL** — `build/gate-20260906-1939.log` (raw stream `build/c13c-merged-gate2.log`). Inside the block: canonicalization 119, differ run-id map 47, config precondition 32, process supervision 39, scripted child 44, re-seal 25; coverage attestation, config-dir inventory, run-id shapes and the timed-deadline pair all green |
+
+## W10b — Bash command safety: five runtime seams, eleven asserted tables, and a cassette that misses both intended callers (2026-09-08)
+
+W10b owns the Bash command-classification and command-admission decisions between C13a's parser and
+W6's permission surface. This is a **focused-evidence record, not final attestation**. The runtime cut
+is five anchored splices and five folds:
+
+| kind | pinned binding | owned role |
+|---|---|---|
+| splice | `KTe` | classify the parsed command and reject syntax the safety chain cannot model |
+| splice | `_8e` | decide whether a Bash command is read-only, passthrough, or must ask |
+| splice | `$ct` | enter Bash permission checking, apply the clamp, and decorate the decision |
+| splice | `jrn` | run the effectful permission/sandbox/path/rule command-safety core |
+| splice | `XNt` | fail closed when permission checking crashes under a per-spawn clamp |
+| fold | `w8e` | parse and route a pipe command |
+| fold | `mrn` | reject unsafe compound operators |
+| fold | `drn` | aggregate per-subcommand permission decisions |
+| fold | `hrn` | decide the mode-specific command path |
+| fold | `bQn` | validate the classifier's command semantics |
+
+`jrn` remains its own splice even though `$ct` is its sole caller. `$ct` has **13 direct free
+variables**. `jrn` has **53**, including direct permission, sandbox, path, filesystem, current-working-
+directory, and rule-store ports that are not free in `$ct`'s AST node. Folding `jrn` beneath `$ct`
+would either hide those effects or ask the adapter to capture names the caller cannot lexically
+supply. The separate anchored seam is the smallest honest ownership boundary.
+
+The callable cut is accompanied by **11 `asserted-variable-declarator` data splices**. Their direct
+initializers occupy exactly **22,674 pinned bytes**, and their closure accounts for **27 additional
+declaration dependencies**. Each original graph initializer executes once, its independently built
+value is structurally asserted, and consumers then receive the owned value. Across those tables,
+`build/c13b-final-tables.log` reports **1,286 checks and 95 controls**, including **1,263 callback
+comparisons over 83 callable slots**; `build/c13b-final-tables.log` also reports **46 table-adapter
+checks**. This is why a callable table member is graded by behavior rather than by function identity.
+
+### Focused evidence already measured
+
+These are the exact focused results on the implementation tree. They do not stand in for the pending
+final attestation.
+
+| surface | measured result | durable log |
+|---|---|---|
+| C13a parser seam, rechecked | **8,171 checks over 2,191 command strings** | `build/c13b-final-parser.log` |
+| command classifier | **6,613 differential checks** | `build/c13b-final-classifier.log` |
+| read-only classifier | **2,522 differentials**: 220 focused commands + all 2,191 parser-domain strings + 90 `sed` commands | `build/c13b-final-read-only.log` |
+| asserted tables | **1,286 checks / 95 controls**; 1,263 callback comparisons / 83 slots; **46** adapter checks | `build/c13b-final-tables.log` |
+| aggregate command safety | **777 parity checks / 31 named controls** | `build/c13b-final-aggregate-parity.log` |
+| aggregate root captures | exact **13 / 53 / 2** inventories for `$ct` / `jrn` / `XNt`, plus **136** derivation-perturbation checks | `build/c13b-final-aggregate-captures.log` |
+| aggregate graph primitives | **16 adapter checks across 8 primitive perturbations** | `build/c13b-final-aggregate-adapters.log` |
+| aggregate contract coverage | **1,093 / 1,771 outcomes across 907 generated branch sites** | `build/c13b-final-aggregate-coverage.log` |
+| permission subsystem | **2,508 comparisons / 49 controls** | `build/c13b-final-permissions.log` |
+| splice mechanism | **135 checks** | `build/c13b-final-mechanism.log` |
+| final manifest derivation | **1,146 checks / 115 capture inventories / 18 chunk fixtures** | `build/c13b-final-perturb.log` |
+| engine-ts ownership seam | static reachability and skeleton checks are green | `build/c13b-final-reachability.log`, `build/c13b-final-skeleton.log` |
+| closure ledger | canonical ledger check is green; the three new runtime footprints carry exact **13 / 53 / 2** captures | `build/c13b-final-ledger-backfill-check.log`, `build/c13b-final-ledger-check.log` |
+| focused replay | all **13 W6 Bash-bearing cells** and `bash-compound-safety` are green offline | `build/c13b-final-w6-and-compound-replay.log` |
+
+The final helper-corpus expansion adds **104** covered outcomes: all **103 reachable helper outcomes**
+and **one validator outcome**. Its explicit input partitions are **71 helper**, **15 named semantic**,
+**29 pipe**, and **2 pre-validator aggregate** cases. Twelve helper outcomes remain outside the
+reachable corpus, classified from pinned-producer evidence as **4 invariant**, **4 impossible**, **2
+caller-domain**, and **2 resource-sensitive**; none is silently treated as reached.
+
+Parity and coverage must run sequentially, not concurrently: the coverage driver regenerates the
+instrumented module state. The authoritative aggregate parity count is therefore the sequential
+**777**, not a count read while coverage owns that generated state.
+
+### What replay proves, and what it does not
+
+The entry and core semantic twins both turn `perm-accept-edits` RED with the named failure **“the
+Bash was not brokered”**. That is direct end-to-end evidence that `$ct` and `jrn` are live on a
+recorded permission path; the complete traces are in `build/c13b-final-entry-liveness.log` and
+`build/c13b-final-core-liveness.log`. `XNt`'s strongest decision-inverting twin remains GREEN/dark on
+`bash-compound-safety`, without a startup crash (`build/c13b-final-failure-dark.log`): that cassette
+does not combine a non-empty clamp with an internal permission-check failure, while the direct
+pinned-byte contract grades both clamp states.
+
+A dependent table sabotage that aborts startup is likewise **inconclusive liveness**, not a RED
+observation of the table consumer. The fd and grep tables feed the later command-allowlist
+initializer, so breaking an upstream dependency can trip the later healthy assertion before the
+scenario starts. The corrected twins preserve the dependency reads through startup and expose the
+changed table value only afterward; their startup-compatible GREEN/dark verdicts and controls are in
+`build/c13b-table-dependent-sabotage-red.log`,
+`build/c13b-table-dependent-sabotage-green.log`, and
+`build/c13b-table-dependent-liveness-green.log`.
+
+The ordinary `bash-compound-safety` cassette reaches **neither** `Fy` call it was expected to close.
+A unique throwing replacement at each call site left replay green: `mrn` rejects the recorded
+subshell before `drn` reaches the multi-`cd` aggregate, and the command contains no duplicate
+normalized subcommand for `jrn`'s merge tie-break. Those measurements are preserved in
+`build/c13b-fy-multicd-reachability.log` and `build/c13b-fy-tiebreak-reachability.log`. The direct
+pinned-byte contract, rather than the cassette, proves multi-`cd` safety, duplicate tie-breaking,
+and the exact insertion-ordered `Map` and `subcommandResults` result. **No live take was made for
+W10b.**
+
+### Implementation-review closure
+
+The implementation review's **26 tracked corrections** are closed in the focused implementation and
+contract evidence. Some findings overlap or extend one another; they are grouped here by the
+behavioral evidence family they changed rather than presented as 26 supposedly independent bugs:
+
+- command parsing and classification: **sed execute and redirect safety**; **inherited assignment
+  safety**; **classifier-prefix rules**; the **exact env-prefix allowlist**; **AbortError**; and the
+  **pnn assignment traversal boundary**;
+- clamps, rules, and suggestions: **clamp literal/wildcard/prefix/xargs/Bash(*)/escaped parsing**;
+  **empty suggestion fallback**; **rule dedup keys**; and **See clamp redirection projection**;
+- permission and asynchronous effects: **sandbox deny/ask**; **remote/command-specific too-complex
+  handling**; **required effect ports**; and **awaiting async safety**;
+- path and working-directory decisions: **multi-cd removal and candidate cwd**; **resolved
+  leading-cd path checks**; **Windows cwd normalization**; and **cwd forwarded to git/cd-git
+  checks**.
+
+Two review corrections changed the verification machinery itself. Each contract coverage driver
+resets coverage as it creates its instrumented state, so attestation now accumulates a driver's
+result **immediately after that driver**, before the next reset; otherwise only the last driver could
+survive into the aggregate. Separately, all **eight graph primitive captures** for the three final
+runtime adapters now cross the seam solely to equality-assert before healthy delegation, measured by
+the 16 checks above. `AbortError` is not one of those graph effect ports: it is an owned pure helper
+whose name and behavior are compared to the pinned declaration.
+
+### Status left for the parent
+
+Implementation and focused replay evidence are complete. **Parent-owned final attestation counts/status
+and generated-report integration remain intentionally absent from this pre-attestation commit.** The
+earlier unadjudicated run remains at `build/c13b-final-attestation-unadjudicated.log` only as
+intermediate history; this record makes no final attestation claim. The parent independent review and
+full strangler gate also remain pending by request. Nothing in this wave record claims campaign
+closure.
