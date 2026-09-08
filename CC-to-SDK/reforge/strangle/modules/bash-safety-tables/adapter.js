@@ -48,17 +48,94 @@ function replaceSetMember(root, path, index, replacement) {
  * behavior to move or to remain dark for its adjudicated scenario population.
  */
 export const TABLE_ADAPTER_SPECS = [
-  { binding: "pL", fn: "assertPathArgumentExtractors", changedPath: "pL.cd", perturbGraph: (value) => replaceObjectPath(value, ["cd"], null) },
-  { binding: "Pnn", fn: "assertPathEffectDescriptions", changedPath: "Pnn.cd", perturbGraph: (value) => replaceObjectPath(value, ["cd"], "changed") },
-  { binding: "DP", fn: "assertPathEffectKinds", changedPath: "DP.cd", perturbGraph: (value) => replaceObjectPath(value, ["cd"], "write") },
-  { binding: "xnn", fn: "assertPathFlagValidators", changedPath: "xnn.mv", perturbGraph: (value) => replaceObjectPath(value, ["mv"], null) },
-  { binding: "u8e", fn: "assertFdFlags", changedPath: 'u8e["--help"]', perturbGraph: (value) => replaceObjectPath(value, ["--help"], "string") },
-  { binding: "l_e", fn: "assertGrepFlags", changedPath: 'l_e["--help"]', perturbGraph: (value) => replaceObjectPath(value, ["--help"], "string") },
-  { binding: "Bnn", fn: "assertCommandAllowlist", changedPath: 'Bnn.xargs.safeFlags["-I"]', perturbGraph: (value) => replaceObjectPath(value, ["xargs", "safeFlags", "-I"], "changed") },
-  { binding: "oro", fn: "assertCommandAllowlistExtension", changedPath: 'oro.aki.safeFlags["--help"]', perturbGraph: (value) => replaceObjectPath(value, ["aki", "safeFlags", "--help"], "string") },
-  { binding: "Ern", fn: "assertWrapperValueFlags", changedPath: "Ern.env[0]", perturbGraph: (value) => replaceSetMember(value, ["env"], 0, "--changed") },
-  { binding: "Crn", fn: "assertWrapperCommandFlags", changedPath: "Crn.env[0]", perturbGraph: (value) => replaceSetMember(value, ["env"], 0, "--changed") },
-  { binding: "Arn", fn: "assertWrapperPositionalValidators", changedPath: "Arn.chrt", perturbGraph: (value) => replaceObjectPath(value, ["chrt"], null) },
+  {
+    binding: "pL",
+    fn: "assertPathArgumentExtractors",
+    changedPath: "pL.cd",
+    perturbGraph: (value) => replaceObjectPath(value, ["cd"], null),
+    sabotageOwned: (value) => replaceObjectPath(value, ["cd"], () => ["__C13B_TABLE_SABOTAGE__"]),
+    observe: (value) => value.cd([]),
+  },
+  {
+    binding: "Pnn",
+    fn: "assertPathEffectDescriptions",
+    changedPath: "Pnn.cd",
+    perturbGraph: (value) => replaceObjectPath(value, ["cd"], "changed"),
+    sabotageOwned: (value) => replaceObjectPath(value, ["cd"], "C13b changed effect phrase"),
+    observe: (value) => value.cd,
+  },
+  {
+    binding: "DP",
+    fn: "assertPathEffectKinds",
+    changedPath: "DP.cd",
+    perturbGraph: (value) => replaceObjectPath(value, ["cd"], "write"),
+    sabotageOwned: (value) => replaceObjectPath(value, ["cd"], "write"),
+    observe: (value) => value.cd,
+  },
+  {
+    binding: "xnn",
+    fn: "assertPathFlagValidators",
+    changedPath: "xnn.mv",
+    perturbGraph: (value) => replaceObjectPath(value, ["mv"], null),
+    sabotageOwned: (value) => replaceObjectPath(value, ["mv"], () => true),
+    observe: (value) => value.mv(["-f"]),
+  },
+  {
+    binding: "u8e",
+    fn: "assertFdFlags",
+    changedPath: 'u8e["--help"]',
+    perturbGraph: (value) => replaceObjectPath(value, ["--help"], "string"),
+    sabotageOwned: (value) => replaceObjectPath(value, ["--help"], "string"),
+    observe: (value) => value["--help"],
+  },
+  {
+    binding: "l_e",
+    fn: "assertGrepFlags",
+    changedPath: 'l_e["--help"]',
+    perturbGraph: (value) => replaceObjectPath(value, ["--help"], "string"),
+    sabotageOwned: (value) => replaceObjectPath(value, ["--help"], "string"),
+    observe: (value) => value["--help"],
+  },
+  {
+    binding: "Bnn",
+    fn: "assertCommandAllowlist",
+    changedPath: 'Bnn.xargs.safeFlags["-I"]',
+    perturbGraph: (value) => replaceObjectPath(value, ["xargs", "safeFlags", "-I"], "changed"),
+    sabotageOwned: (value) => replaceObjectPath(value, ["xargs", "safeFlags", "-I"], "changed"),
+    observe: (value) => value.xargs.safeFlags["-I"],
+  },
+  {
+    binding: "oro",
+    fn: "assertCommandAllowlistExtension",
+    changedPath: 'oro.aki.safeFlags["--help"]',
+    perturbGraph: (value) => replaceObjectPath(value, ["aki", "safeFlags", "--help"], "string"),
+    sabotageOwned: (value) => replaceObjectPath(value, ["aki", "safeFlags", "--help"], "string"),
+    observe: (value) => value.aki.safeFlags["--help"],
+  },
+  {
+    binding: "Ern",
+    fn: "assertWrapperValueFlags",
+    changedPath: "Ern.env[0]",
+    perturbGraph: (value) => replaceSetMember(value, ["env"], 0, "--changed"),
+    sabotageOwned: (value) => replaceSetMember(value, ["env"], 0, "--changed"),
+    observe: (value) => [...value.env],
+  },
+  {
+    binding: "Crn",
+    fn: "assertWrapperCommandFlags",
+    changedPath: "Crn.env[0]",
+    perturbGraph: (value) => replaceSetMember(value, ["env"], 0, "--changed"),
+    sabotageOwned: (value) => replaceSetMember(value, ["env"], 0, "--changed"),
+    observe: (value) => [...value.env],
+  },
+  {
+    binding: "Arn",
+    fn: "assertWrapperPositionalValidators",
+    changedPath: "Arn.chrt",
+    perturbGraph: (value) => replaceObjectPath(value, ["chrt"], null),
+    sabotageOwned: (value) => replaceObjectPath(value, ["chrt"], () => false),
+    observe: (value) => value.chrt("42"),
+  },
 ];
 
 function buildAdapters(dependencies, sabotaged) {
@@ -68,7 +145,7 @@ function buildAdapters(dependencies, sabotaged) {
       spec.fn,
       (graphValue) => {
         const healthy = assertStructuredEqual(`bash-table-${spec.binding}`, spec.binding, graphValue, owned[spec.binding]);
-        return sabotaged ? spec.perturbGraph(healthy) : healthy;
+        return sabotaged ? spec.sabotageOwned(healthy) : healthy;
       },
     ]),
   );

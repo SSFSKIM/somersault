@@ -30,7 +30,7 @@ const independentCopy = (value: any): any => {
   return value;
 };
 
-const deps = { homeDirectory: "/home/reforge", isSedReadOnly: () => true };
+const deps = { homeDirectory: () => "/home/reforge", isSedReadOnly: () => true };
 // The real graph evaluates a different initializer. Clone the fixture so this
 // test does not accidentally hand the adapter its own exported singleton.
 const graph = independentCopy(createBashSafetyTables(deps)) as Record<string, unknown>;
@@ -54,20 +54,17 @@ for (const spec of TABLE_ADAPTER_SPECS) {
     stale.split("\n")[0],
   );
 
+  const observe = spec.observe;
+  check(
+    `${spec.binding}: sabotage declares an observation at ${spec.changedPath}`,
+    typeof observe === "function",
+  );
+  if (typeof observe !== "function") continue;
   const sabotaged = sabotage[spec.fn](graphValue);
-  let healthyAcceptsSabotage = true;
-  try {
-    healthy[spec.fn](sabotaged);
-  } catch (error) {
-    healthyAcceptsSabotage = false;
-    const message = String((error as Error).message);
-    check(
-      `${spec.binding}: sabotage changes the named path`,
-      message.includes(spec.changedPath),
-      message.split("\n")[0],
-    );
-  }
-  check(`${spec.binding}: sabotage cannot pass as the healthy table`, !healthyAcceptsSabotage);
+  check(
+    `${spec.binding}: sabotage changes named behavior at ${spec.changedPath}`,
+    JSON.stringify(observe(sabotaged)) !== JSON.stringify(observe(ownedValue)),
+  );
 }
 
 console.log(`=== Bash safety table adapters: ${checks} check(s) ===`);
