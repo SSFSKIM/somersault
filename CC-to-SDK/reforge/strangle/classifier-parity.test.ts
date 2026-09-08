@@ -21,10 +21,17 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { BUNDLE_MODULES, ENGINE_VERSION } from "../src/pin.js";
+import {
+  CLASSIFIER_GUARD_CASES,
+  MALFORMED_ROOT_CASES,
+  SCRUB_ENABLED_CASES,
+  SENTINEL_IDENTITY_CASES,
+  type ClassifierShellNode,
+} from "./classifier-corpus.js";
 import { LENGTH_CAP_CASES, PARTITIONS } from "./parser-corpus.js";
 import {
-  PARSE_ABORTED as ownedParseAborted,
-  parseOrAbort as ownedParseOrAbort,
+  PARSE_ABORTED as ownedParseAbortedSentinel,
+  parseOrAbort as parseWithOwnedParser,
 } from "./modules/shell-parser/reference.js";
 import { createCommandClassifier } from "./modules/command-classifier/reference.js";
 
@@ -35,15 +42,7 @@ const BOOLEAN_HELPER_CHUNK = "chunk-5b2g0bc6.js";
 const CLASSIFIER_START = 108_945;
 const CLASSIFIER_END = 163_205; // exclusive; the final declaration ends at 163204
 
-type ShellNode = {
-  type: string;
-  text: string;
-  startIndex: number;
-  endIndex: number;
-  children: (ShellNode | null)[];
-};
-
-type ParseResult = ShellNode | symbol | null;
+type ParseResult = ClassifierShellNode | symbol | null;
 type ClassifierResult =
   | { kind: "simple"; commands: unknown[]; bareAssignmentNames: string[] }
   | {
@@ -254,10 +253,10 @@ const upstreamClassifyCommandWithScrub = loadUpstreamClassifier(
   upstreamParser.parseAborted,
   upstreamScrubGateEnabled,
 );
-const ownedClassifyCommand = createCommandClassifier(
+const classifyWithOwnedClassifier = createCommandClassifier(
   () => false,
 ) as unknown as UpstreamClassifier;
-const ownedClassifyCommandWithScrub = createCommandClassifier(
+const classifyWithOwnedScrubClassifier = createCommandClassifier(
   () => true,
 ) as unknown as UpstreamClassifier;
 const noTelemetry = (): void => {};
@@ -266,11 +265,11 @@ async function compareCommand(
   label: string,
   command: string,
   upstreamClassifier: UpstreamClassifier = upstreamClassifyCommand,
-  ownedClassifier: UpstreamClassifier = ownedClassifyCommand,
+  ownedClassifier: UpstreamClassifier = classifyWithOwnedClassifier,
 ): Promise<void> {
   const [upstreamParsed, ownedParsed] = await Promise.all([
     upstreamParser.parseOrAbort(command),
-    ownedParseOrAbort(command, noTelemetry) as unknown as Promise<ParseResult>,
+    parseWithOwnedParser(command, noTelemetry) as unknown as Promise<ParseResult>,
   ]);
   const upstream = upstreamClassifier(command, upstreamParsed);
   const owned = ownedClassifier(command, ownedParsed);
@@ -300,23 +299,7 @@ console.log(
 
 // Pre-parse guards are ordered. Several strings deliberately satisfy a later
 // guard too; comparing the exact verdict catches reordering as well as deletion.
-const GUARD_CASES: readonly [string, string][] = [
-  ["empty", ""],
-  ["ASCII whitespace", " \t\n"],
-  ["lone high surrogate", "echo \ud800"],
-  ["lone low surrogate", "echo \udc00"],
-  ["control character", "echo \u0001"],
-  ["Unicode no-break space", "echo x"],
-  ["backslash escaped space", "echo a\\ b"],
-  ["backslash continued line", "echo a\\\nb"],
-  ["zsh dynamic directory", "echo ~[name]"],
-  ["zsh equals expansion", "=git status"],
-  ["zsh numeric range glob", "echo <1-9>"],
-  ["brace carrying quote", 'echo {a"b,c}'],
-  ["comment bytes are preserved", 'echo ok # {a"b,c}'],
-  ["quoted brace is masked", 'echo "{a"'],
-];
-for (const [label, command] of GUARD_CASES) {
+for (const [label, command] of CLASSIFIER_GUARD_CASES) {
   await compareCommand(`guard/${label}`, command);
 }
 
@@ -341,77 +324,45 @@ for (const partition of PARTITIONS) {
 // `bu` is the closure's one non-pure import. Evaluate the pinned gate in both
 // latched states and bind the owned factory to the corresponding boolean; a
 // hand-written gate stub on the upstream side would not be an upstream oracle.
-const SCRUB_MODE_CASES: readonly [string, string][] = [
-  ["for loop", 'for item in a b; do echo "$item"; done'],
-  ["while loop", "while true; do echo x; done"],
-  ["expanded command name", "$COMMAND arg"],
-  ["quoted expanded command name", '"$COMMAND" arg'],
-];
-for (const [label, command] of SCRUB_MODE_CASES) {
+for (const [label, command] of SCRUB_ENABLED_CASES) {
   await compareCommand(
     `subprocess-env-scrub/${label}`,
     command,
     upstreamClassifyCommandWithScrub,
-    ownedClassifyCommandWithScrub,
+    classifyWithOwnedScrubClassifier,
   );
 }
 
-// These two malformed roots select KTe's byte-coverage checks directly. A real
+// These malformed roots select KTe's byte-coverage checks directly. A real
 // parser should never emit them; the classifier nevertheless owns the boundary
 // and must reject skipped source and unconsumed trailing bytes exactly as pinned.
-const skippedRoot: ShellNode = {
-  type: "program",
-  text: "x echo hi",
-  startIndex: 0,
-  endIndex: 9,
-  children: [
-    {
-      type: "command",
-      text: "echo hi",
-      startIndex: 2,
-      endIndex: 9,
-      children: [],
-    },
-  ],
-};
-const trailingRoot: ShellNode = {
-  type: "program",
-  text: "echo hi x",
-  startIndex: 0,
-  endIndex: 9,
-  children: [
-    {
-      type: "command",
-      text: "echo hi",
-      startIndex: 0,
-      endIndex: 7,
-      children: [],
-    },
-  ],
-};
-eq(
-  "malformed/skipped top-level bytes",
-  upstreamClassifyCommand("x echo hi", skippedRoot),
-  ownedClassifyCommand("x echo hi", skippedRoot),
-);
-eq(
-  "malformed/trailing top-level bytes",
-  upstreamClassifyCommand("echo hi x", trailingRoot),
-  ownedClassifyCommand("echo hi x", trailingRoot),
-);
+for (const { label, command, root } of MALFORMED_ROOT_CASES) {
+  eq(
+    `malformed/${label}`,
+    upstreamClassifyCommand(command, root),
+    classifyWithOwnedClassifier(command, root),
+  );
+}
 
 // Identity is tested within each side. Passing a fresh same-description symbol
 // must not take the parse-abort arm; importing C13a's sentinel is the behavior.
-eq(
-  "abort sentinel/each side recognises its own identity",
-  upstreamClassifyCommand("echo ok", upstreamParser.parseAborted),
-  ownedClassifyCommand("echo ok", ownedParseAborted),
-);
-eq(
-  "abort sentinel/fresh symbols are not mistaken for the sentinel",
-  capture(() => upstreamClassifyCommand("echo ok", Symbol("parse-aborted"))),
-  capture(() => ownedClassifyCommand("echo ok", Symbol("parse-aborted"))),
-);
+for (const { label, command, input } of SENTINEL_IDENTITY_CASES) {
+  if (input === "canonical") {
+    eq(
+      `abort sentinel/${label}`,
+      upstreamClassifyCommand(command, upstreamParser.parseAborted),
+      classifyWithOwnedClassifier(command, ownedParseAbortedSentinel),
+    );
+  } else {
+    eq(
+      `abort sentinel/${label}`,
+      capture(() => upstreamClassifyCommand(command, Symbol("parse-aborted"))),
+      capture(() =>
+        classifyWithOwnedClassifier(command, Symbol("parse-aborted")),
+      ),
+    );
+  }
+}
 mustDiffer(
   "an always-simple classifier",
   upstreamClassifyCommand(
@@ -423,12 +374,12 @@ mustDiffer(
 mustDiffer(
   "the subprocess-environment scrub gate",
   upstreamClassifyCommand(
-    SCRUB_MODE_CASES[0][1],
-    await upstreamParser.parseOrAbort(SCRUB_MODE_CASES[0][1]),
+    SCRUB_ENABLED_CASES[0][1],
+    await upstreamParser.parseOrAbort(SCRUB_ENABLED_CASES[0][1]),
   ),
   upstreamClassifyCommandWithScrub(
-    SCRUB_MODE_CASES[0][1],
-    await upstreamParser.parseOrAbort(SCRUB_MODE_CASES[0][1]),
+    SCRUB_ENABLED_CASES[0][1],
+    await upstreamParser.parseOrAbort(SCRUB_ENABLED_CASES[0][1]),
   ),
 );
 mustDiffer(

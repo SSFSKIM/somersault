@@ -504,8 +504,9 @@ export function createCommandClassifier(
   // upstream Oo @ 114161-114284
   function containsExpansionErrorNode(node) {
     if (node.type === "ERROR" && node.text.startsWith("${")) return !0;
-    for (let child of node.children)
+    for (let child of node.children) {
       if (child && containsExpansionErrorNode(child)) return !0;
+    }
     return !1;
   }
 
@@ -632,11 +633,12 @@ export function createCommandClassifier(
         commandCountBefore = commands.length,
         hasBranchingOperator = !1;
       if (!isPipeline) {
-        for (let child of node.children)
+        for (let child of node.children) {
           if (child && (child.type === "||" || child.type === "&")) {
             hasBranchingOperator = !0;
             break;
           }
+        }
       }
       let baselineVariables = hasBranchingOperator
           ? new Map(trackedVariables)
@@ -656,21 +658,25 @@ export function createCommandClassifier(
           )
             if (child.type === "||") {
               pendingOrVariables ??= new Set();
-              for (let variableName of trackedVariables.keys())
+              for (let variableName of trackedVariables.keys()) {
                 pendingOrVariables.add(variableName);
+              }
               let branchBaseVariables = baselineVariables ?? trackedVariables;
               activeVariables = new Map(branchBaseVariables);
-              for (let [variableName, trackedValue] of trackedVariables)
+              for (let [variableName, trackedValue] of trackedVariables) {
                 if (branchBaseVariables.get(variableName) !== trackedValue)
                   activeVariables.set(variableName, UNKNOWN_TRACKED_VALUE);
-              for (let variableName of branchBaseVariables.keys())
+              }
+              for (let variableName of branchBaseVariables.keys()) {
                 if (!trackedVariables.has(variableName))
                   activeVariables.set(variableName, UNKNOWN_TRACKED_VALUE);
+              }
             } else
               activeVariables = new Map(baselineVariables ?? trackedVariables);
           else if (pendingOrVariables !== null) {
-            for (let variableName of pendingOrVariables)
+            for (let variableName of pendingOrVariables) {
               trackedVariables.set(variableName, UNKNOWN_TRACKED_VALUE);
+            }
             ((pendingOrVariables = null), (activeVariables = trackedVariables));
           }
           continue;
@@ -684,8 +690,9 @@ export function createCommandClassifier(
         if (failure) return failure;
       }
       if (pendingOrVariables !== null)
-        for (let variableName of pendingOrVariables)
+        for (let variableName of pendingOrVariables) {
           trackedVariables.set(variableName, UNKNOWN_TRACKED_VALUE);
+        }
       if (isPipeline) {
         if (
           (mergeTrackedVariables(trackedVariables, activeVariables),
@@ -1114,7 +1121,7 @@ export function createCommandClassifier(
               };
             trackedVariables.set(variableName, trackedValue);
           }
-          for (let variableName of trackedVariables.keys())
+          for (let variableName of trackedVariables.keys()) {
             if (!childVariables.has(variableName)) {
               let previousValue = (preLoopVariables ?? trackedVariables).get(
                 variableName,
@@ -1130,6 +1137,7 @@ export function createCommandClassifier(
                 };
               trackedVariables.set(variableName, UNKNOWN_TRACKED_VALUE);
             }
+          }
           for (
             let commandIndex = commandStart;
             commandIndex < commands.length;
@@ -1137,7 +1145,7 @@ export function createCommandClassifier(
           ) {
             let command = commands[commandIndex];
             if (command?.argv[0] === "read") {
-              for (let operand of command.argv.slice(1))
+              for (let operand of command.argv.slice(1)) {
                 if (
                   !operand.startsWith("-") &&
                   /^[A-Za-z_][A-Za-z0-9_]*$/.test(operand)
@@ -1154,6 +1162,7 @@ export function createCommandClassifier(
                     };
                   trackedVariables.set(operand, UNKNOWN_TRACKED_VALUE);
                 }
+              }
               let replyValue = trackedVariables.get("REPLY");
               if (replyValue !== void 0 && !hasUnknownTrackedValue(replyValue))
                 return {
@@ -1167,9 +1176,10 @@ export function createCommandClassifier(
         } else mergeTrackedVariables(trackedVariables, childVariables);
       }
       if (preLoopNames !== null) {
-        for (let variableName of [...trackedVariables.keys()])
+        for (let variableName of [...trackedVariables.keys()]) {
           if (!preLoopNames.has(variableName))
             trackedVariables.delete(variableName);
+        }
       }
       return null;
     }
@@ -1968,11 +1978,12 @@ export function createCommandClassifier(
       let shapeError = validateRedirectShape(node);
       if (shapeError) return shapeError;
     }
-    for (let child of node.children)
+    for (let child of node.children) {
       if (child) {
         let nestedError = findInvalidRedirect(child);
         if (nestedError) return nestedError;
       }
+    }
     return null;
   }
 
@@ -2277,7 +2288,7 @@ export function createCommandClassifier(
       remainingArgv = argv,
       wrapperAltersExecution = !1,
       previousWrapper;
-    for (;;) {
+    while (true) {
       let leadingToken = remainingArgv[0];
       if (leadingToken === void 0) break;
       if (COMMAND_PREFIX_WRAPPERS.has(leadingToken)) {
@@ -2317,7 +2328,9 @@ export function createCommandClassifier(
     }
     let commandName = remainingArgv[0];
     if (commandName === void 0)
-      for (let bareEnvVar of envVars) recordVariableWrite(bareEnvVar.name);
+      for (let bareEnvVar of envVars) {
+        recordVariableWrite(bareEnvVar.name);
+      }
     else if (DECLARATION_COMMAND_NAMES.has(commandName)) {
       let declarationEndOfOptions = !1;
       for (
@@ -2595,8 +2608,9 @@ export function createCommandClassifier(
       envVars.length > 0 &&
       ENV_PREFIX_COMMITTING_BUILTINS.has(commandName)
     )
-      for (let committingEnvVar of envVars)
+      for (let committingEnvVar of envVars) {
         recordVariableWrite(committingEnvVar.name);
+      }
     for (let writtenName of writtenVariableNames) {
       if (isSensitiveShellVariable(writtenName))
         return {
@@ -3199,8 +3213,9 @@ export function createCommandClassifier(
   // upstream qn @ 150507-150620
   function containsArithmeticExpansion(node) {
     if (node.type === "arithmetic_expansion") return !0;
-    for (let child of node.children)
+    for (let child of node.children) {
       if (child && containsArithmeticExpansion(child)) return !0;
+    }
     return !1;
   }
 
@@ -3470,8 +3485,9 @@ export function createCommandClassifier(
   // upstream Po @ 153986-154513
   function invalidateUnsetTargets(nodes, trackedVariables) {
     let invalidateAll = () => {
-      for (let variableName of trackedVariables.keys())
+      for (let variableName of trackedVariables.keys()) {
         trackedVariables.set(variableName, UNKNOWN_TRACKED_VALUE);
+      }
     };
     for (let target of nodes) {
       if (target?.type === "unset" && target.text === "unsetenv") return;
@@ -3554,9 +3570,10 @@ export function createCommandClassifier(
       return;
     if (node.type === "pipeline") {
       let lastCommand = null;
-      for (let pipelineChild of node.children)
+      for (let pipelineChild of node.children) {
         if (pipelineChild && !SHELL_OPERATOR_TYPES.has(pipelineChild.type))
           lastCommand = pipelineChild;
+      }
       if (lastCommand)
         invalidateModifiedVariables(lastCommand, trackedVariables);
       return;
@@ -3574,18 +3591,20 @@ export function createCommandClassifier(
       return;
     }
     if (node.type === "variable_assignment") {
-      for (let assignmentChild of node.children)
+      for (let assignmentChild of node.children) {
         if (assignmentChild?.type === "variable_name") {
           trackedVariables.set(assignmentChild.text, UNKNOWN_TRACKED_VALUE);
           break;
         }
+      }
     }
     if (node.type === "for_statement") {
-      for (let loopChild of node.children)
+      for (let loopChild of node.children) {
         if (loopChild?.type === "variable_name") {
           trackedVariables.set(loopChild.text, UNKNOWN_TRACKED_VALUE);
           break;
         }
+      }
     }
     if (node.type === "unset_command")
       invalidateUnsetTargets(node.children, trackedVariables);
@@ -3718,17 +3737,18 @@ export function createCommandClassifier(
           !ENV_PREFIX_COMMITTING_BUILTINS.has(originalCommandName) &&
           !COMMAND_PREFIX_WRAPPERS.has(originalCommandName) &&
           !DECLARATION_COMMAND_NAMES.has(originalCommandName);
-      for (let commandChild of node.children)
+      for (let commandChild of node.children) {
         if (
           commandChild &&
           (commandChild.type !== "variable_assignment" ||
             !assignmentsAreTemporary)
         )
           invalidateModifiedVariables(commandChild, trackedVariables);
+      }
       return;
     }
     if (node.type === "declaration_command") {
-      for (let declarationChild of node.children)
+      for (let declarationChild of node.children) {
         if (
           declarationChild?.type === "string" ||
           declarationChild?.type === "raw_string" ||
@@ -3747,13 +3767,16 @@ export function createCommandClassifier(
               equalsIndex > 0 &&
               text.lastIndexOf("$", equalsIndex - 1) !== -1
             )
-              for (let variableName of [...trackedVariables.keys()])
+              for (let variableName of [...trackedVariables.keys()]) {
                 trackedVariables.set(variableName, UNKNOWN_TRACKED_VALUE);
+              }
           }
         }
+      }
     }
-    for (let descendant of node.children)
+    for (let descendant of node.children) {
       if (descendant) invalidateModifiedVariables(descendant, trackedVariables);
+    }
   }
 
   // upstream xt @ 157656-157784
@@ -3763,9 +3786,10 @@ export function createCommandClassifier(
       if (currentValue !== void 0 && currentValue !== branchValue)
         trackedVariables.set(branchName, UNKNOWN_TRACKED_VALUE);
     }
-    for (let trackedName of trackedVariables.keys())
+    for (let trackedName of trackedVariables.keys()) {
       if (!branchVariables.has(trackedName))
         trackedVariables.set(trackedName, UNKNOWN_TRACKED_VALUE);
+    }
   }
 
   // upstream Ln @ 157784-158027
