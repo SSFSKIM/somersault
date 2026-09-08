@@ -43,6 +43,7 @@ import * as globDescription from "../../strangle/modules/glob-description/refere
 import * as processLifecycle from "../../strangle/modules/process-lifecycle/reference.js";
 import * as shellParser from "../../strangle/modules/shell-parser/reference.js";
 import * as commandClassifier from "../../strangle/modules/command-classifier/reference.js";
+import * as bashSafetyTables from "../../strangle/modules/bash-safety-tables/reference.js";
 import * as twnIsShuttingDown from "../../strangle/modules/twn-is-shutting-down/reference.js";
 import * as twnClaimShutdown from "../../strangle/modules/twn-claim-shutdown/reference.js";
 import * as twnReleaseShutdownClaim from "../../strangle/modules/twn-release-shutdown-claim/reference.js";
@@ -342,6 +343,17 @@ const OWNED: [string, string, unknown][] = [
   // the backgrounding are all still upstream's, and are C13b through C13e's.
   ["shell-parser", "subsystem/bash-executor", shellParser.parseOrAbort],
   ["command-classifier", "subsystem/bash-executor", commandClassifier.createCommandClassifier],
+  ["bash-table-path-arguments", "subsystem/bash-executor", bashSafetyTables.createFileArgumentExtractors],
+  ["bash-table-effect-phrases", "subsystem/bash-executor", () => bashSafetyTables.FILE_EFFECT_PHRASES],
+  ["bash-table-effect-kinds", "subsystem/bash-executor", () => bashSafetyTables.FILE_EFFECT_KINDS],
+  ["bash-table-flag-validators", "subsystem/bash-executor", () => bashSafetyTables.FILE_ARGUMENT_SAFETY],
+  ["bash-table-fd-flags", "subsystem/bash-executor", () => bashSafetyTables.FD_SAFE_FLAGS],
+  ["bash-table-grep-flags", "subsystem/bash-executor", () => bashSafetyTables.GREP_SAFE_FLAGS],
+  ["bash-table-command-allowlist", "subsystem/bash-executor", bashSafetyTables.createSafeCommandTable],
+  ["bash-table-command-extension", "subsystem/bash-executor", () => bashSafetyTables.OPTIONAL_SAFE_COMMANDS],
+  ["bash-table-wrapper-value-flags", "subsystem/bash-executor", () => bashSafetyTables.WRAPPER_VALUE_FLAGS],
+  ["bash-table-wrapper-command-flags", "subsystem/bash-executor", () => bashSafetyTables.WRAPPER_COMMAND_FLAGS],
+  ["bash-table-wrapper-validators", "subsystem/bash-executor", () => bashSafetyTables.WRAPPER_POSITIONAL_VALIDATORS],
 ];
 
 for (const [name, subsystem, entry] of OWNED) {

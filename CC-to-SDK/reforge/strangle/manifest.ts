@@ -345,6 +345,186 @@ export const SPLICES: Splice[] = [
     ],
     coverage: ["perm-rule-deny"],
   },
+  // The eleven flag/effect tables are values rather than callables. Each
+  // asserted-variable-declarator evaluates upstream's initializer once, hands
+  // that independently-built graph value to its adapter, structurally asserts
+  // it, and replaces every downstream read with the owned table. Callable slots
+  // are behavior-graded against pinned declaration bytes, not by identity.
+  {
+    name: "bash-table-path-arguments",
+    target: "asserted-variable-declarator",
+    signature: { params: 0, ancestry: ["SourceFile"], declarator: 0 },
+    anchor: '"--slurpfile","--rawfile"',
+    fn: "assertPathArgumentExtractors",
+    valueUngraded:
+      "the object contains callable extractors; `strangle/bash-safety-tables.test.ts` compares every callback with pinned upstream bytes and `strangle/bash-safety-table-adapters.test.ts` proves structural graph drift fires this adapter by named path.",
+    captures: [
+      { as: "positionalArguments", kind: "pure-helper", owned: true, derive: pick("bash-table-path-arguments", "positionalArguments", new RegExp(`mkdir:(${ID}),touch:`)) },
+      { as: "homeDirectory", kind: "effectful-port", derive: pick("bash-table-path-arguments", "homeDirectory", new RegExp(`\\?\\["-"\\]:\\[(${ID})\\(\\)\\]`)) },
+      { as: "positionalArgumentsWithValues", kind: "pure-helper", owned: true, derive: pick("bash-table-path-arguments", "positionalArgumentsWithValues", new RegExp(`cut:(${ID})\\(new Set`)) },
+      { as: "attachedOptionValue", kind: "pure-helper", owned: true, derive: pick("bash-table-path-arguments", "attachedOptionValue", new RegExp(`let ${ID}=(${ID})\\(${ID},\\["-f","--file","-E","--exec"\\]\\)`)) },
+      { as: "grepPathArguments", kind: "pure-helper", owned: true, derive: pick("bash-table-path-arguments", "grepPathArguments", new RegExp(`grep:\\(${ID}\\)=>\\{let ${ID}=(${ID})\\(${ID},new Set`)) },
+    ],
+    coverage: [],
+    darkReason:
+      "the corpus has no command that distinguishes the named `pL.cd` sabotage. The exact table structure and all extractor behavior are instead compared with pinned upstream bytes by `strangle/bash-safety-tables.test.ts`; the real adapter control separately perturbs `pL.cd` and requires that assertion to name the changed path.",
+    darkOver: ["bash-compound-safety"],
+  },
+  {
+    name: "bash-table-effect-phrases",
+    target: "asserted-variable-declarator",
+    signature: { params: 0, ancestry: ["SourceFile"], declarator: 2 },
+    anchor: "compute SHA-256 checksums for files in",
+    fn: "assertPathEffectDescriptions",
+    valueUngraded:
+      "the object-valued initializer is structurally and behaviorally graded by `strangle/bash-safety-tables.test.ts`, and its graph adapter has a named-path perturbation control.",
+    captures: [],
+    coverage: [],
+    darkReason:
+      "the recorded compound command does not render the changed `Pnn.cd` effect phrase on a graded surface. Pinned-byte table parity grades every phrase, and the adapter control requires a `Pnn.cd` graph perturbation to fire this assertion by name.",
+    darkOver: ["bash-compound-safety"],
+  },
+  {
+    name: "bash-table-effect-kinds",
+    target: "asserted-variable-declarator",
+    signature: { params: 0, ancestry: ["SourceFile"], declarator: 3 },
+    anchor: 'cd:"read",ls:"read",find:"read",mkdir:"create"',
+    fn: "assertPathEffectKinds",
+    valueUngraded:
+      "the object-valued initializer is structurally and behaviorally graded by `strangle/bash-safety-tables.test.ts`, and its graph adapter has a named-path perturbation control.",
+    captures: [],
+    coverage: [],
+    darkReason:
+      "the recorded compound command does not expose the changed `DP.cd` effect kind on a graded surface. Pinned-byte table parity grades every kind, and the adapter control requires a `DP.cd` graph perturbation to fire this assertion by name.",
+    darkOver: ["bash-compound-safety"],
+  },
+  {
+    name: "bash-table-flag-validators",
+    target: "asserted-variable-declarator",
+    signature: { params: 0, ancestry: ["SourceFile"], declarator: 4 },
+    anchor: 'if(o==="--"){t=!0;continue}if(o.startsWith("-")&&o!=="-")',
+    fn: "assertPathFlagValidators",
+    valueUngraded:
+      "the object contains callable validators; `strangle/bash-safety-tables.test.ts` compares every callback with pinned upstream bytes and the adapter test perturbs one named slot.",
+    captures: [],
+    coverage: [],
+    darkReason:
+      "the corpus contains no `mv` call that can distinguish the named `xnn.mv` sabotage. Pinned-byte callback parity grades each validator, and the adapter control requires a graph perturbation at `xnn.mv` to fire this assertion by name.",
+    darkOver: ["bash-compound-safety"],
+  },
+  {
+    name: "bash-table-fd-flags",
+    target: "asserted-variable-declarator",
+    signature: { params: 0, ancestry: ["SourceFile"], declarator: 0 },
+    anchor: '"--changed-within":"string"',
+    fn: "assertFdFlags",
+    valueUngraded:
+      "the object-valued initializer is structurally graded against pinned bytes and its graph adapter has a named-path perturbation control.",
+    captures: [],
+    coverage: [],
+    darkReason:
+      "the recorded Bash population contains no `fd --help` command, so the named `u8e[\"--help\"]` sabotage is not observable end to end. Pinned-byte parity grades every flag and the adapter control requires that exact graph perturbation to fire this assertion.",
+    darkOver: ["bash-tool"],
+  },
+  {
+    name: "bash-table-grep-flags",
+    target: "asserted-variable-declarator",
+    signature: { params: 0, ancestry: ["SourceFile"], declarator: 1 },
+    anchor: '"--dereference-recursive":"none"',
+    fn: "assertGrepFlags",
+    valueUngraded:
+      "the object-valued initializer is structurally graded against pinned bytes and its graph adapter has a named-path perturbation control.",
+    captures: [],
+    coverage: [],
+    darkReason:
+      "the recorded Bash population contains no `grep --help` command, so the named `l_e[\"--help\"]` sabotage is not observable end to end. Pinned-byte parity grades every flag and the adapter control requires that exact graph perturbation to fire this assertion.",
+    darkOver: ["bash-tool"],
+  },
+  {
+    name: "bash-table-command-allowlist",
+    target: "asserted-variable-declarator",
+    signature: { params: 0, ancestry: ["SourceFile"], declarator: 2 },
+    anchor: 'regex:/^hostname(?:\\s+(?:-[a-zA-Z]|--[a-zA-Z-]+))*\\s*$/',
+    fn: "assertCommandAllowlist",
+    valueUngraded:
+      "the table has spreads, regular expressions, Sets and callable slots; `strangle/bash-safety-tables.test.ts` evaluates their exact pinned declarations and grades every callback, while the adapter test perturbs one named leaf.",
+    captures: [
+      { as: "coreCommands", kind: "primitive", owned: true, derive: pick("bash-table-command-allowlist", "coreCommands", new RegExp(`^\\{xargs:\\{.*?\\},\\.\\.\\.(${ID}),file:`, "s")) },
+      { as: "isSedReadOnly", kind: "pure-helper", owned: true, derive: pick("bash-table-command-allowlist", "isSedReadOnly", new RegExp(`additionalCommandIsDangerousCallback:\\(${ID},${ID}\\)=>!(${ID})\\(${ID}\\)`)) },
+      { as: "looksLikePath", kind: "pure-helper", owned: true, derive: pick("bash-table-command-allowlist", "looksLikePath", new RegExp(`if\\(${ID}=!0,(${ID})\\(${ID}\\)\\)return!0`)) },
+      { as: "grepFlags", kind: "primitive", owned: true, derive: pick("bash-table-command-allowlist", "grepFlags", new RegExp(`grep:\\{safeFlags:(${ID})\\},egrep:`)) },
+      { as: "searchCommands", kind: "primitive", owned: true, derive: pick("bash-table-command-allowlist", "searchCommands", new RegExp(`\\},\\.\\.\\.(${ID}),sha256sum:`)) },
+      { as: "prefixBefore", kind: "pure-helper", owned: true, derive: pick("bash-table-command-allowlist", "prefixBefore", new RegExp(`let ${ID}=(${ID})\\(${ID}\\.slice\\(${ID}\\.indexOf\\("@"\\)\\+1\\),":"\\)`)) },
+      { as: "fdFlags", kind: "primitive", owned: true, derive: pick("bash-table-command-allowlist", "fdFlags", new RegExp(`fd:\\{safeFlags:\\{\\.\\.\\.(${ID})\\}\\}`)) },
+      { as: "platformCommands", kind: "primitive", owned: true, derive: pick("bash-table-command-allowlist", "platformCommands", new RegExp(`fdfind:\\{safeFlags:\\{\\.\\.\\.${ID}\\}\\},\\.\\.\\.(${ID}),\\.\\.\\.`)) },
+      { as: "optionalCommands", kind: "primitive", owned: true, derive: pick("bash-table-command-allowlist", "optionalCommands", new RegExp(`fdfind:\\{safeFlags:\\{\\.\\.\\.${ID}\\}\\},\\.\\.\\.${ID},\\.\\.\\.(${ID}),test:`)) },
+      { as: "testOperators", kind: "primitive", owned: true, derive: pick("bash-table-command-allowlist", "testOperators", new RegExp(`if\\((${ID})\\.has\\(${ID}\\[${ID}\\]\\)\\)`)) },
+      { as: "safeTestOperand", kind: "primitive", owned: true, derive: pick("bash-table-command-allowlist", "safeTestOperand", new RegExp(`!==void 0&&!(${ID})\\.test\\(${ID}\\)`)) },
+    ],
+    coverage: [],
+    darkReason:
+      "the recorded Bash population has no `xargs -I` call, so the named `Bnn.xargs.safeFlags[\"-I\"]` sabotage is not observable end to end. Exact table structure and all 83 callable slots are graded against pinned upstream declarations, and the adapter control requires that precise graph perturbation to fire this assertion.",
+    darkOver: ["bash-tool"],
+  },
+  {
+    name: "bash-table-command-extension",
+    target: "asserted-variable-declarator",
+    signature: { params: 0, ancestry: ["SourceFile"], declarator: 3 },
+    anchor: '"--multi-turn-context":"string"',
+    fn: "assertCommandAllowlistExtension",
+    valueUngraded:
+      "the spread-valued table is structurally graded against pinned declarations and its graph adapter has a named-path perturbation control.",
+    captures: [
+      { as: "extendedCommands", kind: "primitive", owned: true, derive: pick("bash-table-command-extension", "extendedCommands", new RegExp(`^\\{\\.\\.\\.(${ID}),aki:`)) },
+    ],
+    coverage: [],
+    darkReason:
+      "pinned byte-level reference analysis finds no consumer of `oro`; it is retained because the approved table population names it. Pinned-byte parity grades the retained structure, and the adapter control requires an `oro.aki.safeFlags[\"--help\"]` graph perturbation to fire this assertion.",
+    darkOver: ["bash-tool"],
+  },
+  {
+    name: "bash-table-wrapper-value-flags",
+    target: "asserted-variable-declarator",
+    signature: { params: 0, ancestry: ["SourceFile"], declarator: 0 },
+    anchor: '"--sched-deadline"',
+    fn: "assertWrapperValueFlags",
+    valueUngraded:
+      "the object contains ordered Sets; exact key and member order is structurally graded against pinned bytes and its adapter has a named-member perturbation control.",
+    captures: [],
+    coverage: [],
+    darkReason:
+      "the recorded Bash population has no `env -u` wrapper, so the named `Ern.env[0]` sabotage is not observable end to end. Pinned-byte parity grades every ordered Set member and the adapter control requires that exact graph perturbation to fire this assertion.",
+    darkOver: ["bash-tool"],
+  },
+  {
+    name: "bash-table-wrapper-command-flags",
+    target: "asserted-variable-declarator",
+    signature: { params: 0, ancestry: ["SourceFile"], declarator: 1 },
+    anchor: '"--split-string"',
+    fn: "assertWrapperCommandFlags",
+    valueUngraded:
+      "the object contains ordered Sets; exact key and member order is structurally graded against pinned bytes and its adapter has a named-member perturbation control.",
+    captures: [],
+    coverage: [],
+    darkReason:
+      "the recorded Bash population has no `env -S` wrapper, so the named `Crn.env[0]` sabotage is not observable end to end. Pinned-byte parity grades every ordered Set member and the adapter control requires that exact graph perturbation to fire this assertion.",
+    darkOver: ["bash-tool"],
+  },
+  {
+    name: "bash-table-wrapper-validators",
+    target: "asserted-variable-declarator",
+    signature: { params: 0, ancestry: ["SourceFile"], declarator: 2 },
+    anchor: '/^(0x[\\da-f]+|\\d+)$/i',
+    fn: "assertWrapperPositionalValidators",
+    valueUngraded:
+      "the object contains callable validators; each callback is compared with pinned upstream bytes and its adapter has a named-slot perturbation control.",
+    captures: [],
+    coverage: [],
+    darkReason:
+      "the recorded Bash population has no `chrt` wrapper, so the named `Arn.chrt` sabotage is not observable end to end. Pinned-byte callback parity grades every validator and the adapter control requires that exact graph perturbation to fire this assertion.",
+    darkOver: ["bash-tool"],
+  },
+
   // ---- tool-result formatters (subsystem/tool-result-formatters) -----------
   // Ten of the graph's 44 `mapToolResultToToolResultBlockParam` methods. All
   // share one shape and one signature; each is anchored on prose only it emits.
