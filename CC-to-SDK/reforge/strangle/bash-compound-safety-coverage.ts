@@ -185,6 +185,26 @@ await mod.aggregateSubcommandPermissions(
   },
 );
 
+for (const fixture of AGGREGATE_CASES.preValidator) {
+  let call = 0;
+  await mod.aggregateSubcommandPermissions(
+    fixture.input,
+    fixture.normalized,
+    fixture.original,
+    {
+      checkPermission: async () =>
+        structuredClone(
+          fixture.decisions[call++] ?? {
+            behavior: "deny",
+            message: "shared fixture marks this permission effect unreachable",
+          },
+        ),
+      classifiers: pureClassifiers(),
+      effects: harmlessEffects,
+    },
+  );
+}
+
 function contextFor(permissionContext: Record<string, unknown>) {
   return {
     sessionEnvVars: new Map(),
@@ -704,6 +724,14 @@ mod.permissionCheckFailureDecision(
       ROOT_CASES.failureWithoutClamp.permissionContext,
   },
 );
+mod.permissionCheckFailureDecision(
+  ROOT_CASES.failureWithoutClampProperty.toolName,
+  {},
+  {
+    readPermissionContext: () =>
+      ROOT_CASES.failureWithoutClampProperty.permissionContext,
+  },
+);
 
 const coveragePath = join(COVERAGE_DIR, `${process.pid}.txt`);
 if (!existsSync(coveragePath)) {
@@ -720,11 +748,43 @@ const allOutcomes = sites.flatMap((site) =>
 const missing = allOutcomes.filter((outcome) => !observed.has(outcome));
 const byId = new Map(sites.map((site) => [site.id, site]));
 const groups = new Map<string, string[]>();
+const invariantOutcomes = new Set([
+  "bash-compound-safety#walk@1:F",
+  "bash-compound-safety#inspect@1:T",
+  "bash-compound-safety#inspect@4:T",
+  "bash-compound-safety#inspect@23:T",
+]);
+const impossibleOutcomes = new Set([
+  "bash-compound-safety#splitSubcommands@5:T",
+  "bash-compound-safety#createCommandAnalysis@3:T",
+  "bash-compound-safety#peelCommandPrefixes@0:F",
+  "bash-compound-safety#aggregateSubcommandPermissions@4:F",
+]);
+const callerOutsideDomainOutcomes = new Set([
+  "bash-compound-safety#getPipeSegments@2:F",
+  "bash-compound-safety#checkParsedPipeSafety@0:F",
+]);
+const resourceSensitiveOutcomes = new Set([
+  "bash-compound-safety#checkParsedPipeSafety@5:T",
+  "bash-compound-safety#checkParsedPipeSafety@6:T",
+]);
 for (const outcome of missing) {
   const siteId = outcome.slice(0, outcome.lastIndexOf(":"));
   const site = byId.get(siteId)!;
   let reason: string;
-  if (
+  if (invariantOutcomes.has(outcome)) {
+    reason =
+      "INVARIANT: pinned and owned parser child-array producers cannot emit falsy entries";
+  } else if (impossibleOutcomes.has(outcome)) {
+    reason =
+      "IMPOSSIBLE: the pinned and owned control-flow contracts cannot select this outcome";
+  } else if (callerOutsideDomainOutcomes.has(outcome)) {
+    reason =
+      "CALLER-OUTSIDE-DOMAIN: only a foreign or mismatched analysis shape can select this outcome";
+  } else if (resourceSensitiveOutcomes.has(outcome)) {
+    reason =
+      "RESOURCE-SENSITIVE: only a fresh segment reparse deadline race can select this outcome";
+  } else if (
     /effects\.|runtime\.effects|check[A-Z].*Port|readPermissionContext/.test(
       site.text,
     )
@@ -746,11 +806,15 @@ for (const outcome of missing) {
 const expected = {
   sites: 907,
   outcomes: 1_771,
-  observed: 989,
+  observed: 1_093,
   missingByReason: {
-    "OPEN-INPUT: no input in the shared differential corpus selects this pure outcome; no exclusion is claimed": 508,
+    "INVARIANT: pinned and owned parser child-array producers cannot emit falsy entries": 4,
+    "IMPOSSIBLE: the pinned and owned control-flow contracts cannot select this outcome": 4,
+    "CALLER-OUTSIDE-DOMAIN: only a foreign or mismatched analysis shape can select this outcome": 2,
+    "RESOURCE-SENSITIVE: only a fresh segment reparse deadline race can select this outcome": 2,
+    "OPEN-INPUT: no input in the shared differential corpus selects this pure outcome; no exclusion is claimed": 393,
     "PORT-STATE: the shared contract does not select this adapter/settings/filesystem outcome": 4,
-    "VALIDATOR-DOMAIN: no simple KTe result in the shared parser partition selects this outcome": 270,
+    "VALIDATOR-DOMAIN: no simple KTe result in the shared parser partition selects this outcome": 269,
   },
 };
 if (
@@ -774,7 +838,7 @@ console.log(
 );
 
 console.log(
-  `shared inputs: ${HELPER_CASES.split.length + HELPER_CASES.argv.length + HELPER_CASES.normalize.length + HELPER_CASES.peel.length} helper, ${SEMANTIC_RECORDS.length} named semantics, ${PIPE_CASES.length} pipe, ${MODE_CASES.length} mode, ${Object.keys(SAFETY_REGRESSION_CASES).length} security-regression, ${PARTITIONS.reduce((sum, partition) => sum + partition.cases.length, 0)} parser-partition`,
+  `shared inputs: ${HELPER_CASES.split.length + HELPER_CASES.argv.length + HELPER_CASES.normalize.length + HELPER_CASES.peel.length} helper, ${SEMANTIC_RECORDS.length} named semantics, ${PIPE_CASES.length} pipe, ${AGGREGATE_CASES.preValidator.length} pre-validator aggregate, ${MODE_CASES.length} mode, ${Object.keys(SAFETY_REGRESSION_CASES).length} security-regression, ${PARTITIONS.reduce((sum, partition) => sum + partition.cases.length, 0)} parser-partition`,
 );
 for (const [reason, outcomes] of groups) {
   console.log(`\n${reason} (${outcomes.length})`);

@@ -1,6 +1,12 @@
 // Shared inputs for C13b's pinned-byte differential and branch-evidence driver.
 // The driver owns no private command, decision, mode, or configuration case.
 
+// This stays below the 10,000-character entry cap. Under the pinned Bun runtime
+// it exhausts the parser's 50,000-node budget; Node may refuse earlier from its
+// stack limit, and branch instrumentation may hit the 50 ms deadline first. It
+// is parsed as inert text and never run.
+const NODE_BUDGET_COMMAND = "$(".repeat(3_000) + ")".repeat(3_000);
+
 export const HELPER_CASES = {
   split: [
     "echo one | grep one",
@@ -8,6 +14,10 @@ export const HELPER_CASES = {
     "(cd one; pwd)",
     "echo ';' && printf x",
     "cat <<EOF\nhello\nEOF",
+    "echo ${foo:-{a}}",
+    "echo ${foo:-<(id)}",
+    NODE_BUDGET_COMMAND,
+    "x".repeat(10_001),
     "",
   ],
   argv: [
@@ -15,6 +25,9 @@ export const HELPER_CASES = {
     "A=1 echo x",
     "echo a$(x)b c",
     "$(x)y foo bar",
+    "> out",
+    "A=1",
+    NODE_BUDGET_COMMAND,
     "",
     "x".repeat(10_001),
   ],
@@ -24,7 +37,15 @@ export const HELPER_CASES = {
     "SECRET=x mkdir work",
     "SHELL=/bin/sh echo ok",
     "# comment\nnohup echo ok",
+    "# only a comment",
     "'timeout' 2 echo ok",
+    "\"timeout\" 2 echo ok",
+    "\"ec\\$ho\" ok",
+    "\"ec\\qho\" ok",
+    "ec\\ho ok",
+    "\"unterminated 2 echo",
+    '"ech\\',
+    "ech\\",
     "",
   ],
   peel: [
@@ -33,6 +54,37 @@ export const HELPER_CASES = {
     ["stdbuf", "-oL", "grep", "x"],
     ["builtin", "--", "cd", "one"],
     ["timeout", "--bad", "2", "echo"],
+    ["timeout", "--foreground", "--", "2", "echo"],
+    ["timeout", "--signal=TERM", "2", "echo"],
+    ["timeout", "--kill-after", "1", "2", "echo"],
+    ["timeout", "-v", "2", "echo"],
+    ["timeout", "-k", "1", "2", "echo"],
+    ["timeout", "-k1", "2", "echo"],
+    ["timeout", "-z", "2", "echo"],
+    ["timeout", "-v"],
+    ["stdbuf", "-o", "L", "grep", "x"],
+    ["stdbuf", "--output=L", "grep", "x"],
+    ["stdbuf", "--bad", "grep"],
+    ["stdbuf", "grep"],
+    ["stdbuf", "-oL"],
+    ["env", "-u", "FOO", "echo"],
+    ["env", "--bad", "echo"],
+    ["env", "-i"],
+    ["time", "--", "echo", "ok"],
+    ["nice", "-n", "4", "--", "echo"],
+    ["nice", "-n", "4", "echo"],
+    ["nice", "-4", "--", "echo"],
+    ["nice", "-4", "echo"],
+    ["nice", "--", "echo"],
+    ["nice", "echo"],
+    ["nice"],
+    ["command", "echo", "ok"],
+    ["command", "-p"],
+    ["command", "-x", "echo"],
+    ["builtin", "cd", "one"],
+    ["builtin", "--"],
+    ["noglob", "echo", "ok"],
+    ["noglob"],
     [],
   ],
 } as const;
@@ -45,6 +97,11 @@ export const SEMANTIC_RECORDS = [
   { argv: ["jq", "system(\"id\")"], envVars: [], redirects: [], text: "jq system", hasUnquotedGlob: false },
   { argv: ["find", ".", "-exec", "id", ";"], envVars: [], redirects: [], text: "find . -exec id", hasUnquotedGlob: false },
   { argv: ["awk", "{print $1}"], envVars: [], redirects: [], text: "awk", hasUnquotedGlob: false },
+  { argv: ["awk", "{ system(\"\") }"], envVars: [], redirects: [], text: "awk", hasUnquotedGlob: false },
+  { argv: ["awk", "{ print | \"\" }"], envVars: [], redirects: [], text: "awk", hasUnquotedGlob: false },
+  { argv: ["awk", "@load \"reforge_absent_extension\""], envVars: [], redirects: [], text: "awk", hasUnquotedGlob: false },
+  { argv: ["awk", "{ extension(\"\", \"\") }"], envVars: [], redirects: [], text: "awk", hasUnquotedGlob: false },
+  { argv: ["awk", "{ print > \"/inet/tcp/0/0.0.0.0/0\" }"], envVars: [], redirects: [], text: "awk", hasUnquotedGlob: false },
   { argv: ["set", "-o", "pipefail"], envVars: [], redirects: [], text: "set -o pipefail", hasUnquotedGlob: false },
   { argv: ["jobs", "-x", "echo"], envVars: [], redirects: [], text: "jobs -x echo", hasUnquotedGlob: false },
   { argv: ["cat", "/proc/1/environ"], envVars: [], redirects: [], text: "cat /proc/1/environ", hasUnquotedGlob: false },
@@ -111,6 +168,23 @@ export const PIPE_CASES: readonly {
     ],
   },
   { tag: "no-pipe", command: "echo alpha > out", decisions: [] },
+  { tag: "empty-command", command: "", decisions: [] },
+  { tag: "node-budget", command: NODE_BUDGET_COMMAND, decisions: [] },
+  {
+    tag: "input-redirect-pipe",
+    command: "cat < in | wc",
+    decisions: [{ behavior: "allow" }, { behavior: "allow" }],
+  },
+  {
+    tag: "append-redirect-pipe",
+    command: "echo a >> out | cat",
+    decisions: [{ behavior: "allow" }, { behavior: "allow" }],
+  },
+  {
+    tag: "stderr-redirect-pipe",
+    command: "echo a 2> err | cat",
+    decisions: [{ behavior: "allow" }, { behavior: "allow" }],
+  },
   {
     tag: "bare-redirect",
     command: "> out | cat",
@@ -120,11 +194,34 @@ export const PIPE_CASES: readonly {
     ],
   },
   {
+    tag: "bare-redirect-direct-allow",
+    command: "> out | cat",
+    decisions: [{ behavior: "allow" }, { behavior: "allow" }],
+  },
+  {
     tag: "quoted-redirect",
     command: "echo '>' | cat",
     decisions: [{ behavior: "allow" }, { behavior: "allow" }],
   },
   { tag: "subshell", command: "(echo alpha) | cat", decisions: [] },
+  { tag: "list-subshell", command: "echo a && (echo b)", decisions: [] },
+  { tag: "list-group", command: "echo a && { echo b; }", decisions: [] },
+  { tag: "command-group", command: "{ echo a; } | cat", decisions: [] },
+  {
+    tag: "negated-pipe",
+    command: "! echo a | cat",
+    decisions: [{ behavior: "allow" }, { behavior: "allow" }],
+  },
+  {
+    tag: "control-flow-pipe",
+    command: "if true; then echo a; fi | cat",
+    decisions: [{ behavior: "allow" }, { behavior: "allow" }],
+  },
+  {
+    tag: "test-command-pipe",
+    command: "[[ -f x ]] | cat",
+    decisions: [{ behavior: "allow" }, { behavior: "allow" }],
+  },
   {
     tag: "quoted-subshell",
     command: "echo '(alpha)' | cat",
@@ -150,6 +247,30 @@ export const PIPE_CASES: readonly {
     tag: "one-cd",
     command: "cd one | pwd",
     decisions: [{ behavior: "allow" }, { behavior: "allow" }],
+  },
+  {
+    tag: "two-cd-no-circuit-breaker",
+    command: "cd one | cd two",
+    decisions: [
+      {
+        behavior: "ask",
+        message: "safety without a circuit breaker",
+        decisionReason: {
+          type: "safetyCheck",
+          reason: "controlled safety reason",
+          classifierApprovable: false,
+        },
+      },
+      { behavior: "allow" },
+    ],
+  },
+  {
+    tag: "ask-without-suggestions",
+    command: "echo a | cat",
+    decisions: [
+      { behavior: "ask", message: "ask without suggestions" },
+      { behavior: "allow" },
+    ],
   },
   {
     tag: "duplicate-last-allow",
@@ -184,6 +305,7 @@ export const PIPE_CASES: readonly {
     command: "A=$( (echo hi) )",
     decisions: [],
   },
+  { tag: "trailing-pipe", command: "echo a |", decisions: [] },
   { tag: "over-length", command: "x".repeat(10_001), decisions: [] },
 ] as const;
 
@@ -225,6 +347,22 @@ export const AGGREGATE_CASES = {
     normalized: ["alpha", "beta"],
     original: ["alpha", "beta"],
   },
+  preValidator: [
+    {
+      tag: "missing-command-analyses",
+      input: { command: "cd one | git status" },
+      normalized: ["cd one", "git status"],
+      original: ["cd one", "git status"],
+      decisions: [{ behavior: "allow" }, { behavior: "allow" }],
+    },
+    {
+      tag: "empty-command-message",
+      input: { command: "" },
+      normalized: [""],
+      original: [""],
+      decisions: [{ behavior: "ask", message: "empty command asks" }],
+    },
+  ],
 } as const;
 
 export const EFFECT_STATE = {
@@ -255,6 +393,10 @@ export const ROOT_CASES = {
   failureWithoutClamp: {
     toolName: "Bash",
     permissionContext: { bashCommandClamps: [] },
+  },
+  failureWithoutClampProperty: {
+    toolName: "Bash",
+    permissionContext: {},
   },
 } as const;
 

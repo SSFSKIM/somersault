@@ -830,6 +830,23 @@ for (const argv of HELPER_CASES.peel) {
   );
 }
 
+// Every shared pipe row is graded against the pinned entry, including rows
+// whose dedicated assertions below exist only to name a stronger contract.
+for (const fixture of PIPE_CASES) {
+  const root =
+    fixture.root === "parsed"
+      ? getParser().parse(fixture.command)
+      : fixture.root === "sentinel"
+        ? PARSE_ABORTED
+        : undefined;
+  await comparePipe(
+    `shared pipe corpus/${fixture.tag}`,
+    fixture.command,
+    sharedPipePlan(fixture.tag),
+    { root },
+  );
+}
+
 // PIPE + REDIRECT: output redirection is removed before the first permission
 // check and from the ordered Map key.
 const pipeRedirect = await comparePipe(
@@ -1369,6 +1386,48 @@ mustDiffer("valid and failed parse", validParse, parseFailure);
   eq("direct aggregate decision", owned, upstream);
   eq("direct aggregate trace", ownedSide.trace, upstreamSide.trace);
 }
+for (const fixture of AGGREGATE_CASES.preValidator) {
+  const plan: SidePlan = {
+    decide(_command, call) {
+      return structuredClone(
+        fixture.decisions[call] ?? {
+          behavior: "deny",
+          message: `shared aggregate ${fixture.tag}: permission effect should be unreachable`,
+        },
+      ) as Decision;
+    },
+  };
+  const upstreamSide = makeSide(plan);
+  const ownedSide = makeSide(plan);
+  const upstream = await buildUpstreamAggregate(upstreamSide)(
+    fixture.input,
+    fixture.normalized,
+    fixture.original,
+    upstreamSide.checkPermission,
+    classifiers,
+    undefined,
+    upstreamSide.isCdGitSequenceSafe,
+  );
+  const owned = await aggregateSubcommandPermissions(
+    fixture.input,
+    fixture.normalized,
+    fixture.original,
+    {
+      checkPermission: ownedSide.checkPermission,
+      classifiers,
+      effects: {
+        currentWorkingDirectory: () => EFFECT_STATE.cwd,
+        hasUnsafeGitStructureFromAnalysis: (analyses: unknown) =>
+          ownedSide.hasUnsafeGitStructure("<analysis>", analyses),
+        hasUnsafeGitStructureFromCommand: (command: string) =>
+          ownedSide.hasUnsafeGitStructure(command, undefined),
+        isCdGitSequenceSafe: ownedSide.isCdGitSequenceSafe,
+      },
+    },
+  );
+  eq(`shared aggregate ${fixture.tag} decision`, owned, upstream);
+  eq(`shared aggregate ${fixture.tag} trace`, ownedSide.trace, upstreamSide.trace);
+}
 {
   const command = "echo direct | cat";
   const analysis = createCommandAnalysis(command);
@@ -1605,8 +1664,14 @@ mustDiffer("valid and failed parse", validParse, parseFailure);
     targetLabel("permissionCheckFailureDecision"),
     { [readContext]: () => ROOT_CASES.failureWithoutClamp.permissionContext, [reason]: pinnedReason },
   );
+  const upstreamAbsent = evaluateFunction(
+    source,
+    targetLabel("permissionCheckFailureDecision"),
+    { [readContext]: () => ROOT_CASES.failureWithoutClampProperty.permissionContext, [reason]: pinnedReason },
+  );
   const readEnabled = () => ROOT_CASES.failureWithClamp.permissionContext;
   const readDisabled = () => ROOT_CASES.failureWithoutClamp.permissionContext;
+  const readAbsent = () => ROOT_CASES.failureWithoutClampProperty.permissionContext;
   const enabled = permissionCheckFailureDecision(
     ROOT_CASES.failureWithClamp.toolName,
     {},
@@ -1617,8 +1682,14 @@ mustDiffer("valid and failed parse", validParse, parseFailure);
     {},
     { readPermissionContext: readDisabled },
   );
+  const absent = permissionCheckFailureDecision(
+    ROOT_CASES.failureWithoutClampProperty.toolName,
+    {},
+    { readPermissionContext: readAbsent },
+  );
   eq("XNt active-clamp full decision", enabled, upstreamEnabled("Bash", {}));
   eq("XNt no-clamp full decision", disabled, upstreamDisabled("Bash", {}));
+  eq("XNt absent-clamp-property full decision", absent, upstreamAbsent("Bash", {}));
   eq("XNt active-clamp literal", enabled, {
     behavior: "deny",
     message:
@@ -1626,6 +1697,7 @@ mustDiffer("valid and failed parse", validParse, parseFailure);
     decisionReason: { type: "other", reason: pinnedReason },
   });
   eq("XNt no-clamp literal", disabled, undefined);
+  eq("XNt absent-clamp-property literal", absent, undefined);
   mustDiffer("XNt active clamp versus no clamp", enabled, disabled);
 }
 
