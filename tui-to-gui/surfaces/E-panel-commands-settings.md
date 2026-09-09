@@ -2307,15 +2307,18 @@ and the toggle then works normally. The parity area file still says the opposite
 is stale and superseded by the README and by the errata at `areas/41-tui-rendering.md:5`. A GUI
 that trusts the area file will ship no control at all.
 
-**afleet today.** `routed-only`, and broken end to end. `RouterTable.swift:43` routes `/fast` to
-`.applyFlagSetting(key: "fastMode")` with readback `.fastModeState` — but
-`CommandRouter.picker(for:)` sends the bare form to `.native("fastPicker")`, and
-`SettingPickersModel.pickerSurfaces` is `["modelPicker", "effortPicker"]`
-(`SettingPickers.swift:149`), so the surface does not exist and the command falls through to
-`links.open(.command("fastPicker"))` **with nothing to land on**. Typing `/fast` in afleet today
-opens nothing and reports nothing. Root spec §7.7 has the mechanism right (`/fast` →
-`apply_flag_settings {fastMode: true}` *"as the opt-in, then the toggle"*), so this is an
-implementation hole, not a design one.
+**afleet today.** `built`. `RouterTable.swift:43` routes `/fast` to
+`.applyFlagSetting(key: "fastMode")` with readback `.fastModeState`, and the router only falls
+through to `.native(picker(for:))` when `flagValue` returns nil — which for `fastMode` it never
+does. `CommandRouter.flagValue` (`CommandRouter.swift:154-159`) always returns `.bool(!current)`,
+the toggle, and the comment at `:114` says so: *"`/fast` is a toggle and needs no argument"*. Typing
+`/fast` today sends `apply_flag_settings {fastMode: <toggled>}` and reads `fastModeState` back, and
+has done since 2026-09-05. Root spec §7.7 has the mechanism right (`/fast` →
+`apply_flag_settings {fastMode: true}` *"as the opt-in, then the toggle"*). What is missing is not
+the wiring but the **state**: nothing in the window says whether fast mode is on, and the ten
+disabled reasons have nowhere to render. (An earlier reading of this card had the command falling
+through to a non-existent `fastPicker`; that is what `/agents`, `/tasks` and `/resume` do, not
+`/fast`.)
 
 **GUI form.** A fourth header control beside model, mode and effort — a toggle, not a menu, since
 it has two states. Its label carries the fast model's name exactly as `/config`'s row does
@@ -2332,7 +2335,8 @@ verbatim, the opt-in-then-toggle sequence.
 *Gains:* `[exceeds]` the state is always visible in the header rather than recalled from the last
 message.
 
-**Open.** None. This is a bug fix plus a toggle, and it is the cheapest item in the lane.
+**Open.** None. The command works; what is left is the control that shows its state, and that is
+the cheapest item in the lane.
 
 ### E-31 · `/autocompact`
 
@@ -3820,7 +3824,7 @@ L larger. "afleet" in *depends-on* names a seam that must exist first.
 | E-27 | `/cloud-plugins` | out-of-scope | low | S — one sentence | — |
 | E-28 | `/model` picker | built, stripped | high — descriptions, default, search | S–M — one decode field + layout | `ModelOption` decode |
 | E-29 | `/effort` picker | built, stripped | high — descriptions, `max` reason | S | E-28 |
-| E-30 | `/fast` | **routed to nothing** | med–high — a broken command | S — a toggle | picker surface registry |
+| E-30 | `/fast` | built — the toggle works, its state is invisible | med — a working command with no readback | S — a header toggle | — |
 | E-31 | `/autocompact` | undesigned | med | S — drag the meter's tick | context meter (lane A) |
 | E-32 | `/advisor` | undesigned | low–med | S, after a probe | probe |
 | E-33 | `/powerup`, `/passes` | undesigned | low | S — two sentences | — |
@@ -3848,8 +3852,9 @@ L larger. "afleet" in *depends-on* names a seam that must exist first.
 | E-55 | `/install-github-app` | undesigned | med | M | GitHub panel (C7) |
 | E-56 | `/daemon` | built by another route | low | S — two columns | — |
 
-**If only ten things are built from this lane**, they are E-25, E-41, E-30, E-48, E-39, E-14, E-46,
+**If only nine things are built from this lane**, they are E-25, E-41, E-48, E-39, E-14, E-46,
 E-42, E-15 and E-35 — six of which are wiring or decoding jobs against work that already exists.
+E-30 leaves that list: the toggle already works, and only its visible control is outstanding.
 
 ## For the map
 

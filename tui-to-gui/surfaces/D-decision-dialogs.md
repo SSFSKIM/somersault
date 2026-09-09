@@ -2663,11 +2663,19 @@ approval gate is waived headless: a dangerous remote payload is applied with no 
 `managed_settings_security` among the never-forwarded kinds. This is the sharpest gap in the lane:
 afleet's child applies the payload, and neither afleet nor the user is told.
 
-**afleet today.** `designed`, not built — root spec §6.12, second bullet: afleet reads
-`remote-settings.json` and `remote-settings-consent.json` under `<configHome>` and refuses to spawn
-while a payload is pending approval, with a banner telling the user to open `claude` in a terminal
-once. Nothing in `App/Consent/` implements it: `PrecommitModel` renders exactly two verdicts,
-`consentNeeded` and `untrusted`, and every other precondition draws nothing.
+**afleet today.** `built`, **and wrong**. Root spec §6.12, second bullet has the design right:
+afleet reads `remote-settings.json` and `remote-settings-consent.json` under `<configHome>` and
+refuses to spawn while a payload is pending approval, with a banner telling the user to open
+`claude` in a terminal once. Both halves are on `main`:
+`FleetKit/Sources/FleetSessions/Preconditions/ManagedSettingsReader.swift:12-22` is the reader,
+`SpawnPreconditions.swift` refuses the spawn on `isPending`, and `ChannelState.swift:111` carries
+`managedSettingsPending` as a `ChannelBanner` case. The bug is the hash. The reader SHA-256s the
+**raw bytes** of `remote-settings.json` and looks for a top-level `approvedHash`, where canon hashes
+a canonical string of four *extracted* fields stored at `records[<orgUuid>].dangerousSettingsHash`;
+it also skips canon's `j5()` harmless-payload predicate. Any managed deployment therefore reads
+pending forever and the channel never spawns, even after approval (`spec-defects.md`, lane D,
+*afleet specs and code*). What is genuinely absent is the review sheet: `PrecommitModel` renders
+exactly two verdicts, `consentNeeded` and `untrusted`.
 
 **GUI form.** Region: **Channel banner** plus a review sheet, in D-42's shape. **What afleet shows:**
 "Your organization has sent managed settings that have not been approved on this machine.", secondary
@@ -3248,9 +3256,15 @@ readable through `get_settings.effective` but not writable — `update_settings`
 
 **afleet today.** `built`, partially, and already correct in the design. Root spec §8.4: "An unanswered
 dialog is cancelled by the binary at its dialog deadline — five minutes, configurable (2.1.263) — and
-the card goes inert", which C6.3 implements (`DecisionCardView`'s inert reading, `RetractionRegistry`).
-**What it loses:** the card never says a deadline exists, so an unanswered decision goes inert with no
-warning, and a user who left the window has no way to know a question expired rather than was answered.
+the card goes inert", which C6.3 implements (`DecisionCardView`'s inert reading, `RetractionRegistry`), and `DialogDeadline.text`
+does say a deadline exists.
+**What it loses:** `DialogDeadline.standard` passes `dialogExpiry: nil`
+(`App/Decisions/DialogCardView.swift:44`), so every card states the engine default — *This dialog
+expires in 5 minutes.* — whatever the session is set to. The environment override
+`CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS` is honoured, by `DialogDeadline(environment:dialogExpiry:)`;
+the setting is not, though it is on `get_settings.effective` and §8.6 already polls it. And an
+expiry that fires reads as the generic inert state, so a user who left the window cannot tell a
+question that expired from one that was answered.
 
 **GUI form.** Region: **Decision card** footer plus **Settings window**. Two things. (1) On a card whose
 kind is a forwarded `request_user_dialog`, show the remaining time as a dim relative deadline in the

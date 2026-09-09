@@ -19,9 +19,9 @@ Total cards: 400
 
 | afleet status | Count |
 |---|---|
-| built | 159 |
-| designed | 34 |
-| routed-only | 10 |
+| built | 161 |
+| designed | 33 |
+| routed-only | 9 |
 | undesigned | 157 |
 | superseded | 26 |
 | out-of-scope | 14 |
@@ -161,7 +161,7 @@ Total cards: 400
 | B-54 | Links, hyperlinks and the `owner/repo#123` linkifier | built | timeline | R/T | med | S | yes | GitHub panel |
 | B-55 | Streaming markdown, `textWrap` and the width utilities | built | timeline | R | low | S | yes | — |
 | B-56 | Virtual list, scroll anchoring, the commit cursor and static commitment | built | timeline | R/T | med | S | yes | tracker 132 |
-| B-57 | Untrusted-text sanitising | built | notification | R | high | S | yes | — |
+| B-57 | Untrusted-text sanitising | built | notification | R | med | S | yes | — |
 | B-58 | Selection, `copyOnSelect`, `copyFullResponse` and `/copy` | undesigned | timeline | X/T | high | S |  | B-03 |
 | B-59 | `/export` | undesigned | menu bar | X/R | med | M | yes | B-07 (JSON), menu bar |
 | B-60 | Timestamps, turn duration and the turn-summary row | built | timeline | P/R | med | S | yes | — |
@@ -291,7 +291,7 @@ Total cards: 400
 | D-42 | Workspace trust | built | channel banner | X/D | high | S | yes | D-44 (same banner+sheet shape) |
 | D-43 | The bypass-permissions disclaimer | designed | consent sheet | X | high | M | yes | §7.4 quiescent restart; `get_settings.effective` |
 | D-44 | `.mcp.json` project MCP server approval | built | consent sheet | X | high | S | yes | D-42's banner; C4's local-settings writer |
-| D-45 | Managed settings security | designed | channel banner | X | high | S/M | yes | SPEC 48 §2.9.4 record shape; D-42's handoff |
+| D-45 | Managed settings security | built | channel banner | X | high | S/M | yes | SPEC 48 §2.9.4 record shape; D-42's handoff |
 | D-46 | External CLAUDE.md includes | undesigned | channel banner | X | med | S | yes | D-42's global-config reader |
 | D-47 | Plugin consent and the plugin hint | undesigned | decision card | X/R | low | S |  | a future plugin browser |
 | D-48 | The API-key trust dialog | undesigned | channel banner | X | med | S | yes | §3 login-shell environment resolution |
@@ -343,7 +343,7 @@ Total cards: 400
 | E-27 | `/cloud-plugins` | out-of-scope | none | X/R | low | S |  | — |
 | E-28 | The `/model` picker | built | timeline | P/R/D | high | S/M | yes | `ModelOption` decode |
 | E-29 | The `/effort` picker | built | none | X/P/D | high | S | yes | E-28 |
-| E-30 | `/fast` | routed-only | channel header | P | med/high | S | yes | picker surface registry |
+| E-30 | `/fast` | built | channel header | P | med | S | yes | — |
 | E-31 | `/autocompact` | undesigned | channel header | P/X/D | med | S | yes | context meter (lane A) |
 | E-32 | `/advisor` | undesigned | Settings | X/D | low/med | S | yes | probe |
 | E-33 | `/powerup` and `/passes` | undesigned | composer | X/T | low | S |  | — |

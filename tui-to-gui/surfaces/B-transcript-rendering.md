@@ -154,14 +154,16 @@ compaction display (SPEC 13 → B-66…B-68).
    `Output arrives when the command finishes` — never an empty five-line box shaped like the
    terminal's.
 
-7. **Two divergences from canon are deliberate and one is a gap.** afleet **escapes** raw HTML
-   where SPEC 41.17.2 passes `token.text` through unescaped, and sanitises host-side where the CLI
-   sanitises at paint time; both are correct, recorded in source, and must survive review (B-48,
-   B-57). The gap: `TextSanitiser.swift` implements the control-character strip but **not** the
-   bidi-override and zero-width pass the terminal iterates up to ten times, and afleet applies no
-   clamp at all to strings it hands `UNUserNotification`. That is the one security regression in
-   the lane. Separately, there is **no copy affordance anywhere** in `App/Timeline/` — no pasteboard
-   write, no context menu, no cross-row selection (B-58).
+7. **Two divergences from canon are deliberate and must survive review.** afleet **escapes** raw
+   HTML where SPEC 41.17.2 passes `token.text` through unescaped, and sanitises host-side where the
+   CLI sanitises at paint time; both are correct and recorded in source (B-48, B-57).
+   `TextSanitiser.swift`'s single pass covers canon's **whole** strip set, second stage included:
+   the bidi overrides, the isolates, the zero-width marks and U+FEFF are `Cf` or default-ignorable
+   and fall in the same pass, and the file's header explains why one pass is the same fixed point as
+   canon's ten. The one thing left open is whether the strings afleet hands `UNUserNotification`
+   carry canon's stricter clamp; that was not read. Separately, the timeline has no **cross-row**
+   selection, no copy action and no context menu, though four subviews are individually selectable
+   (B-58).
 
 ---
 
@@ -2939,24 +2941,30 @@ passes, do not copy the passthrough)*".
 
 **afleet today.** `built`, and **deliberately better than canon** — the one card in this lane whose
 recommendation is to stay unfaithful. `App/Timeline/Rendering/TextSanitiser.swift` implements the
-strip set as a single pass, exempting `\n` and `\t` (`:36-46`), and its doc comment states the
-stakes: "*This is security-relevant and it is nobody else's in this cut. The engine sanitises at
-paint time and the host receives the raw text*" (`:5-7`).
+**whole** strip set in a single pass, exempting `\n` and `\t` (`:36-46`): the five `C` categories
+(`.control`, `.format`, `.surrogate`, `.privateUse`, `.unassigned`), every default-ignorable scalar,
+U+2028, U+2029 and U+2800. Canon's second stage is inside that set — the bidi overrides
+(U+202A–U+202E), the isolates (U+2066–U+2069), the zero-width marks (U+200B–U+200F) and U+FEFF are
+all `Cf` or default-ignorable — and the file's header says why one pass reaches the same fixed point
+as canon's ten: "*removing a scalar cannot create one, so a second pass has nothing left to find*".
+Its doc comment states the stakes: "*This is security-relevant and it is nobody else's in this cut.
+The engine sanitises at paint time and the host receives the raw text*" (`:5-7`).
 `ToolCallRow.swift:29-30, :88-92` records that **everything** derived from engine text goes through
 it, not only `raw`. And `MarkdownText` **escapes** raw HTML where canon passes it through
 (`TimelineRendering.swift:701-708`, `:858-861`, divergence noted at `:624-625`).
 
-**GUI form.** Keep, and close three gaps.
+**GUI form.** Keep, and check one thing.
 
-1. **Add the bidi pass.** afleet implements `ZU`'s strip set but not `up`'s second stage —
-   bidi overrides (U+202A–U+202E, U+2066–U+2069) and zero-width marks are not removed. A right-to
-   -left override in a file path or a tool result is the classic display-spoofing attack and it is
-   exactly what the terminal's ten-iteration loop exists to defeat. This is the one substantive
-   security gap in the lane.
-2. **Sanitise notification text separately.** The terminal has a distinct, stricter pass for
-   notification strings (everything below 32 and 127–159 → space). afleet hands strings to
-   `UNUserNotification` with no equivalent clamp. A notification is rendered by the OS, outside
-   afleet's control, and it is the surface where a control character does the most damage.
+1. **The strip set is complete; leave it alone.** afleet's one pass covers `up`'s second stage as
+   well as `ZU`'s — the bidi overrides, the isolates, the zero-width marks, U+FEFF and the
+   private-use planes are `Cf` or default-ignorable and go with the rest. A right-to-left override
+   in a file path is the classic display-spoofing attack, and afleet already removes it. A later
+   "faithfulness" pass that added a second iteration would buy nothing.
+2. **Sanitise notification text separately — unverified.** The terminal has a distinct, stricter
+   pass for notification strings (everything below 32 and 127–159 → space). Whether the strings
+   afleet hands `UNUserNotification` carry an equivalent clamp was not read. A notification is
+   rendered by the OS, outside afleet's control, and it is the surface where a control character
+   does the most damage, so it is worth one grep.
 3. **Keep the HTML escaping** permanently and record it, as afleet already does, as an intentional
    divergence from canon.
 
@@ -2965,10 +2973,12 @@ content had characters stripped can carry a small dim `sanitised` marker with a 
 what was removed, rather than silently altering what the user sees.
 
 **Drops / keeps / gains.** Drops: the ten-iteration loop shape (one fixed-point pass is
-equivalent). Keeps: the full strip set, `\n`/`\t` exemption, the single-source rule, HTML escaping.
-Gains: bidi and zero-width removal; a notification-specific clamp; visible evidence of sanitising.
+equivalent). Keeps: the full strip set including bidi and zero-width, `\n`/`\t` exemption, the
+single-source rule, HTML escaping. Gains: a notification-specific clamp; visible evidence of
+sanitising.
 
-**Open.** None. This is a bug to fix, not a decision to take.
+**Open.** Are the strings handed to `UNUserNotification` clamped? One grep answers it. Nothing here
+is a decision to take.
 
 ## 10. Copy, export, time
 
@@ -3654,7 +3664,7 @@ this card proposes, not for the terminal behaviour.
 | B-54 | Links and the `owner/repo#123` linkifier | built (links), undesigned (linkifier) | med | S — ~30 lines | GitHub panel |
 | B-55 | Streaming markdown, `textWrap`, width | built, well evidenced | low — done | S | — |
 | B-56 | Virtual list, anchoring, static commitment | built, most complete area | med — width freeze | S — freeze + scale + dedupe | tracker 132 |
-| B-57 | Untrusted-text sanitising | built, exceeds canon; **bidi gap** | **high** — security | S — one more pass | — |
+| B-57 | Untrusted-text sanitising | built, exceeds canon; strip set complete | med — one unverified notification clamp | S — one clamp | — |
 | B-58 | Selection, copy, `/copy` | undesigned — nothing at all | **high** — expected of any window | S — selection + 3 menu items | B-03 |
 | B-59 | `/export` | undesigned | med | M — 4 formats + a panel | B-07 (JSON), menu bar |
 | B-60 | Timestamps, turn duration, turn summary | built, different defaults | med | S — merge two rows | — |
@@ -3716,8 +3726,8 @@ this card proposes, not for the terminal behaviour.
 8. **Two divergences from canon are deliberate and must be protected in review**: afleet **escapes**
    raw HTML where the terminal passes it through, and afleet **sanitises host-side** where the
    terminal sanitises at paint time. Both are recorded in source. A future "faithfulness" pass could
-   plausibly undo either. B-57 also names the one place afleet is *less* safe than canon: no bidi
-   or zero-width pass.
+   plausibly undo either. B-57 also settles the sanitiser question: the strip set is complete,
+   bidi and zero-width included, and the only unverified thing is the notification clamp.
 
 9. **Copy that names a terminal mechanism has to be retargeted, and the study should say so once
    rather than per card.** `ctrl+o to expand`, `↓ to manage`, `esc to cancel`,

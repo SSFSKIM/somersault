@@ -135,11 +135,14 @@ how to rank Pane; only first-party factual details were cited and every vendor r
    structurally safe from that, and the rule belongs in the composer's contract before someone adds the
    convenience.
 7. **Where afleet already leads, and should not trade away.** Its permission card with a three-scope
-   destination picker is matched only by Nimbalyst among the wrappers. Its Agents tab — a task-id-keyed
-   tree with locally ticked elapsed time, per-node transcripts, and a four-state delivery model for relayed
-   messages — exceeds every agent surface found. Its live thinking-token estimate is something no surveyed
-   product claims. The gaps are not in fidelity; they are the peek rung, the comment mechanism, the queue
-   verbs, and per-channel cost attribution — the four places the *fleet*, not the channel, needs a surface.
+   destination picker is matched only by Nimbalyst among the wrappers, and it is built. Two more lead on
+   paper and are not yet shipped: the Agents tab — a task-id-keyed tree with locally ticked elapsed time,
+   per-node transcripts, and a four-state delivery model for relayed messages — is designed (root §8.8,
+   C6.4 not dispatched) and exceeds every agent surface found; and the live thinking-token estimate, which
+   no surveyed product claims, is likewise a design — `ThinkingDisclosure.swift:29-36` renders a duration,
+   not a token count (tracker 127). The gaps are not in fidelity; they are the peek rung, the comment
+   mechanism, the queue verbs, and per-channel cost attribution — the four places the *fleet*, not the
+   channel, needs a surface.
 
 ---
 
