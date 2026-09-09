@@ -151,10 +151,13 @@ additions:
    (`/rewind` returns `.notARequest` without an argument, `CommandRouter.swift:327`) and a target
    picker — the `Edit` button — that only ever rewinds the conversation
    (`EditAndRewind.swift:9`: "**This is not `/rewind`**"). Canon offers six choices with a dry-run
-   diffstat per candidate message. Join the two and the app gains real undo. **But first check one
-   thing:** file checkpointing is off headless unless `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1`
-   is in the engine's environment (tui-parity README finding 8) — if afleet does not set it, every
-   code-restore option is dead on arrival.
+   diffstat per candidate message. Join the two and the app gains real undo — and the enabling
+   condition is already met: `ClaudeWire/Sources/WireTransport/LaunchConfiguration.swift:151` sets
+   `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1` on every engine afleet launches (pinned by
+   `LaunchConfigurationTests.swift:157` and `:205`), which is what turns `rewind_files` on
+   headless (tui-parity README finding 8). The code half of rewind is live on afleet's own children;
+   the only channels it cannot serve are **adopted** ones, started outside afleet and therefore
+   keeping no checkpoints.
 3. **`§7.7` promises three native destinations that do not exist.** `/tasks`, `/agents` and
    `/resume` route to `.native("tasks" | "agents" | "switcher")` and
    `App/Header/SettingPickers.swift:492` accepts only `modelPicker` and `effortPicker`. afleet's own
@@ -1753,7 +1756,14 @@ the *enumeration* of which messages have checkpoints. Workaround: read the `file
 from the session JSONL, or attempt `rewind_files` with `dryRun` and treat the error as 'no
 checkpoint here'." And README finding 8: **file checkpointing is off headless unless
 `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1` is in the environment**; without it every
-`rewind_files` answers `File rewinding is not enabled.`
+`rewind_files` answers `File rewinding is not enabled.` **afleet sets it.**
+`ClaudeWire/Sources/WireTransport/LaunchConfiguration.swift:151` scrubs every inherited `CLAUDE*`
+variable and then writes `env["CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING"] = "1"` unconditionally,
+pinned by `LaunchConfigurationTests.swift:157` and `:205`. So on every engine afleet launches, the
+code half of rewind is live — and the residual question is narrower: an **adopted** session,
+started from a terminal or another tool and picked up through the sidebar's `Adopt` / `Attach`,
+was launched without the flag and keeps no checkpoints, so `rewind_files` will answer
+`File rewinding is not enabled.` for its whole life.
 
 **afleet today.** `built`, differently, and the difference is the biggest functional loss in the
 lane. There is **no message selector**: grepping the Swift for `open_message_selector` or
@@ -1794,10 +1804,12 @@ ignored quirk. *Keeps:* the title `Rewind`, `Nothing to rewind to yet.`, the `(c
 transcript order, the four activation conditions. *Gains:* rewind from the message you are looking
 at, without a mode.
 
-**Open.** The wire gap is real and blocking for the code half: file checkpointing requires
-`CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1` in the launched engine's environment. Does afleet set
-it? If not, every code-restore option in F-29 is dead on arrival and the sheet should not offer
-them. This is a one-line check and the highest-priority unknown in this lane.
+**Open.** Not the flag — afleet sets it on every child it launches (above). What is open is the
+**adopted session**: a channel afleet attached to rather than started has no file checkpoints, so
+every code-restore option in F-29 must be absent, not disabled-with-an-error, for that channel. The
+sheet needs to know which kind of session it is in. That is a host-side capability flag afleet can
+derive at attach time, and it should be decided before F-29 is built, because it changes whether
+the option list has three rows or one.
 
 ### F-28 · The per-row dry-run summaries
 
@@ -1845,7 +1857,9 @@ terminal has a basename and two integers.
 the compute-before-selection behaviour, windowed sequential loading. *Gains:* file list on hover,
 diff on click.
 
-**Open.** None beyond F-27's environment question.
+**Open.** None. The dry-run probe works on afleet-launched children; on an adopted session every
+probe returns the same error, so the summaries column should collapse to a single explanatory row
+rather than repeating `⚠ No code restore` forty times.
 
 ### F-29 · The restore choices and their consequence blurbs
 
@@ -1922,7 +1936,9 @@ the manual-edit warning as a persistent footnote.
 
 Keep the availability rule verbatim — the two code options vanish (not disable) when there is no
 restorable checkpoint — and keep the default focus rule (`both` when code is restorable, else
-`conversation`). **Fix the copy trap**: `Restore code` should read `The conversation will be
+`conversation`). That rule does the right thing for adopted sessions for free: a session afleet did
+not launch has no checkpoints at all (F-27), so the list collapses to `Restore conversation`,
+the two summarize options and Cancel, with no explanation needed. **Fix the copy trap**: `Restore code` should read `The conversation will be
 unchanged; files return to this point.` The clone kept canon's line because it was building a
 faithful clone; this study's stance is faithful-by-default-and-say-what-you-changed, and a blurb
 that describes the option next to it is a defect, not a style.
@@ -2060,7 +2076,7 @@ sheet when it happens. Group them by what the user should do:
 | stale view — reload | `stale target`, `unseen later turn`, `state changed` | "The conversation moved since this list was built." with a Refresh button |
 | not found | `target not found`, `poll tool_result target`, `delivered poll events in range` | disable the row rather than fail on click |
 | persistence | `failed to persist rewind anchor` | show verbatim; it is a real disk problem |
-| files off | `File rewinding is not enabled.` | the *actionable* one — it means the engine was launched without checkpointing; the copy should say afleet can enable it and restart the channel |
+| files off | `File rewinding is not enabled.` | on an afleet-launched channel this should never fire (`LaunchConfiguration.swift:151` sets the flag); reaching it means an **adopted** session, and the copy should say so — "this session was started outside afleet, so it keeps no file checkpoints" — with no retry, because restarting it would end the session the user adopted |
 | no checkpoint | `No file checkpoint found for this message.` | already covered by the row's `⚠ No code restore` (F-28); never reached from a well-built list |
 | cloud | `Rewind is not yet available in cloud sessions` | out of scope for afleet |
 
@@ -2834,9 +2850,9 @@ a description getter nobody reads.
 | F-24 | `/branch` | undesigned | med — the sanctioned alternative to fork | M — transcript copy + new channel | F-27 (branch from a message) |
 | F-25 | `/fork` | built | low — works; four guards missing | S — pre-flight reasons | header menu (built) |
 | F-26 | `/session`, `/recap`, `tag` | undesigned (`/session` out-of-scope) | low–med — focus-triggered recap is a real gain | S | window focus events |
-| F-27 | Rewind selector + gesture | built differently (Edit only) | **high** — undo is the highest-stakes affordance | M — sheet + hover action | **blocked:** `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING` |
+| F-27 | Rewind selector + gesture | built differently (Edit only) | **high** — undo is the highest-stakes affordance | M — sheet + hover action | unblocked: `LaunchConfiguration.swift:151` sets the checkpointing flag; needs an owned-vs-adopted capability flag |
 | F-28 | Per-row dry-run summaries | undesigned | **high** — without them the list is unusable | M — windowed sequential `rewind_files` dry runs | F-27 |
-| F-29 | Restore choices + blurbs | built (3 of 6, unreachable) | **high** — three mechanisms, one decision | M — compose three requests | F-27, F-28; summarize pair unverified |
+| F-29 | Restore choices + blurbs | built (3 of 6, unreachable) | **high** — three mechanisms, one decision | M — compose three requests | F-27, F-28; owned-vs-adopted flag; summarize pair unverified |
 | F-30 | Rewind outcomes + fork fallback | built (best-in-lane) | med — carry skipped-links and the failure ladder | S — surface what the answer already carries | `EditAndRewind.swift` |
 | F-31 | Rewind refusals | undesigned | med — twelve error values, no copy | S — a copy table | F-29 |
 | F-32 | `/diff` | undesigned (tab exists) | med — Source Control tab needs the modes and states | M — modes computed host-side (wire D) | `sourceControl` tab; lane B |
@@ -2896,11 +2912,13 @@ a description getter nobody reads.
   `/stop` ends a background session; afleet's routes to `.interrupt`. Same name, different verb,
   and the header menu already has both. A naming pass across lanes F and G is cheap and prevents a
   destructive surprise.
-- **Three cards are blocked on one environment variable.** F-27, F-28 and F-29 — the whole rewind
-  family's code half — depend on the engine being launched with
-  `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1` (README finding 8). Whether afleet sets it is a
-  one-line check that decides whether half this sub-family is buildable at all. It should be the
-  first thing the roadmap resolves.
+- **Owned and adopted channels are two capability classes, and this lane is where it first bites.**
+  afleet launches its own engines with `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1`
+  (`LaunchConfiguration.swift:151`), so file rewind works on them; a session adopted from a terminal
+  was launched without it and never will. The rewind sheet (F-27–F-29) is the first surface that
+  must render differently for the two, and it will not be the last — the same split governs any
+  affordance that depends on how the engine was started. A single host-side capability flag,
+  derived at attach time, is worth defining once at the map level rather than per surface.
 
 ## Spec defects
 

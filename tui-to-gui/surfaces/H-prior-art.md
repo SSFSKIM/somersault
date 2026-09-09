@@ -82,13 +82,28 @@ how to rank Pane; only first-party factual details were cited and every vendor r
    `tmux` with a `PATH` shim; Omnara shipped terminal-output parsing, called it "fragile and hard to
    maintain", and rewrote onto the SDK. afleet should say this out loud in its own docs, because it is the
    reason its decision cards can exist at all.
-2. **But the same split carries a cost risk afleet has not priced.** Zed shipped Terminal Threads on
-   2026-05-20 and gave the reason: Agent SDK usage on subscription plans moved to a separate limited
-   credit system, making ACP-hosted Claude Code "15-30x more [expensive] for heavy usage", and Terminal
-   Threads are "now the only way to keep using Claude Code in Zed with your existing Claude subscription"
-   (https://zed.dev/blog/terminal-threads, read 2026-09-10) `[observed]`. afleet's headless stream-json
-   hosting is Agent SDK usage. This is an owner decision about the product's economics, and it should be
-   verified against current pricing before the architecture hardens.
+2. **But the same split carries a standing policy risk — not a live cost.** On 2026-05-14 Anthropic
+   announced that Agent SDK usage on subscription plans would move to a separate capped credit billed at
+   full API rates; Zed's post put the stakes plainly, saying subscriptions "previously subsidized agent
+   usage at roughly 15-30x compared to API pricing" and calling it "a major cost increase" for heavy
+   agent users, and Zed shipped Terminal Threads — a PTY-hosted `claude` in the thread sidebar — as its
+   mitigation. **The change was then paused on 2026-06-15 and has not taken effect.** Anthropic's help
+   centre article, dated 2026-06-16, says "We're pausing the changes to Claude Agent SDK usage described
+   below", that "Claude Agent SDK, `claude -p`, and third-party app usage still draw from your
+   subscription's usage limits", that the announced monthly credit "isn't available", and "When we have
+   an update, we'll share it before anything takes effect"; Zed's June 16 update agrees — "There is no
+   separate Agent SDK credit to claim, and subscription limits are unchanged"
+   (https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan and
+   https://zed.dev/blog/anthropic-subscription-changes, both read 2026-09-10) `[observed]`.
+   So the finding for afleet is not "headless hosting is expensive today" — it is that **the commercial
+   terms under which afleet hosts the binary are the vendor's to change, a revision is explicitly
+   promised, and afleet has no mitigation designed**. Zed's Terminal Threads is the field's only worked
+   answer: a second, non-protocol hosting path kept alongside the structured one. Whether afleet wants
+   that escape hatch is an owner decision; whether it wants to be *able* to build one is an architectural
+   one, and it is cheaper to keep the seam than to retrofit it. (A coordinator note frames this as the
+   third such intervention this year, after a January OAuth block and a February terms-of-service change;
+   neither is corroborated by the two sources above, so treat the pattern as `[unverified in this lane]`
+   and the pause itself as the observed fact.)
 3. **The single strongest idea found is peek-before-attach, and afleet's Activity view is one rung short
    of it.** Claude Code's own agent view opens a panel on `Space` showing the untruncated sentence the row
    cuts off, the linked PR, `waiting 3m`, and a reply box, with `↑`/`↓` between waiting sessions and `→`
@@ -1036,6 +1051,8 @@ github.com/microsoft/vscode/issues/317195 · github.com/microsoft/vscode-copilot
 zed.dev/docs/ai/agent-panel · /ai/agents · /ai/tool-permissions · /ai/sandboxing · /ai/agent-profiles ·
 /ai/agent-settings · /ai/external-agents · /ai/mcp · /ai/skills · /ai/instructions · /ai/tools ·
 /ai/parallel-agents · /ai/terminal-threads · zed.dev/blog/terminal-threads · /blog/parallel-agents ·
+zed.dev/blog/anthropic-subscription-changes ·
+support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan ·
 github.com/zed-industries/zed/issues/57546 · /62077 · /62631 · /62892 · /63085 · /63355 · /63741 ·
 /63796 · /63943 · cursor.com/docs/agent/overview.md · /agent/plan-mode.md · /agent/agents-window.md ·
 /agent/agent-review.md · /agent/security/run-modes.md · /subagents.md · /mcp.md · /hooks.md · /rules.md ·
